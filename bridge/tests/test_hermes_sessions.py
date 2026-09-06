@@ -45,12 +45,12 @@ def check(name, cond):
 
 # ── hermes_sessions_normalize ────────────────────────────────────────────────
 row = {"id": "abc123", "title": "My chat", "preview": "hello there",
-       "started_at": 1753900000, "message_count": 7, "source": "harness"}
+       "started_at": 1753900000, "message_count": 7, "source": "motdeck"}
 out = NORM([row])
 check("row id kept", out[0]["id"] == "abc123")
 check("title wins over preview", out[0]["name"] == "My chat")
 check("message_count int", out[0]["message_count"] == 7)
-check("source forwarded", out[0]["source"] == "harness")
+check("source forwarded", out[0]["source"] == "motdeck")
 check("epoch seconds → ISO UTC", out[0]["updated_at"].startswith("2025")
       or out[0]["updated_at"].startswith("2026"))
 check("ISO carries tz offset", "+00:00" in out[0]["updated_at"])

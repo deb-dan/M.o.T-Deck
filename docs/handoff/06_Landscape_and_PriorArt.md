@@ -3,12 +3,12 @@
 ## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
 
 The build-vs-adopt verdict below ("keep building the hybrid") was correct and is now settled by
-evidence — the harness does things no surveyed app does. Living references: `CLAUDE.md`,
-`docs/HARNESS-INTERNALS.md`.
+evidence — MOT Deck does things no surveyed app does. Living references: `CLAUDE.md`,
+`docs/MOT-DECK-INTERNALS.md`.
 
 - **Keep Odysseus / keep Hermes** both held. Both have since been pin-bumped in place under
   contract tests (Odysseus `25c9e73`, Hermes `v2026.7.30`) with no fork and no vendor edit.
-- **Jan is no longer in the comparison** — it was removed from the harness in July 2026 and
+- **Jan is no longer in the comparison** — it was removed from MOT Deck in July 2026 and
   replaced by our own llama.cpp + MLX runner. Any "Jan as runner" reasoning below is historical.
 - **Cherry Studio / LM-Studio-style chat surface:** the deferred layer got built ourselves — the
   panel now has a four-lane chat, a model-picker popover, artifacts + editable canvas, per-message
@@ -18,7 +18,7 @@ evidence — the harness does things no surveyed app does. Living references: `C
 ---
 
 
-*Part of the Harness handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture: [02_Architecture.md](02_Architecture.md). Licensing: [03_Licensing.md](03_Licensing.md). Roadmap: [04_Roadmap.md](04_Roadmap.md).*
+*Part of the MOT Deck handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture: [02_Architecture.md](02_Architecture.md). Licensing: [03_Licensing.md](03_Licensing.md). Roadmap: [04_Roadmap.md](04_Roadmap.md).*
 
 This pass answers four questions you asked: (1) can the runner tap desktop Jan as well as headless Jan (answered in [02_Architecture.md](02_Architecture.md) §Dual-mode runner — designed and written in); (2) is anything better than Odysseus; (3) is anything better than Hermes; (4) what is "CherryIN"/Cherry Studio, what does the prior-art field look like, and does it change the build-vs-adopt decision. Everything below was researched fresh in July 2026, with sources inline.
 
@@ -30,7 +30,7 @@ The 03/05 docs recorded Odysseus as AGPL-3.0. **Verified today against the LICEN
 
 Practical consequences, all in your favor:
 - You may now **lift Odysseus patterns AND code** (with attribution), same as Hermes. The "ideas not code" restriction is lifted.
-- The AGPL components in the harness shrink to **SearXNG alone** (further correction 2026-07-20: Jan is Apache-2.0 too, verified root LICENSE + README — this line originally also listed Jan's app). You only ever talk to it over APIs anyway, so nothing about the architecture changes; the hygiene rules just got cheaper again.
+- The AGPL components in MOT Deck shrink to **SearXNG alone** (further correction 2026-07-20: Jan is Apache-2.0 too, verified root LICENSE + README — this line originally also listed Jan's app). You only ever talk to it over APIs anyway, so nothing about the architecture changes; the hygiene rules just got cheaper again.
 - A dated correction note has been added to [03_Licensing.md](03_Licensing.md); the boundary rules stay as-is (they're good engineering regardless of license).
 
 Also worth knowing: Odysseus turned out to be a phenomenon. It launched publicly May 31, 2026 (yes, it's PewDiePie's project) and passed **77,000 GitHub stars and 10,000 forks within about three weeks** ([XDA review](https://www.xda-developers.com/tried-pewdiepie-open-source-ai-workspace-odysseus-weirdly-great/), [Medium coverage](https://medium.com/@creativeaininja/pewdiepies-odysseus-blew-past-50-000-github-stars-in-days-a53bedb8285e)). Upstream scope is broader than our docs described: chat, autonomous agents, DeepResearch, email/calendar/notes, image generation, and a "Cookbook" recommending models for your hardware from 270+ options ([launch coverage](https://letsdatascience.com/news/pewdiepie-releases-open-source-odysseus-ai-workspace-ccad3aef)). Maintenance risk has inverted: three months ago the question was "will this niche repo survive"; now it's one of the most-watched local-AI projects alive.
@@ -39,7 +39,7 @@ Also worth knowing: Odysseus turned out to be a phenomenon. It launched publicly
 
 ## 1. Is there something better than Odysseus? (research workspace / DeepResearch slot)
 
-What Odysseus is in the harness: a **synchronous, user-driven research workspace** — chat + DeepResearch over your shared SearXNG, native Python, FastAPI on :7860, embedded as a webview tab. The candidates below were checked for: local-model support, SearXNG support, license, Docker posture, maintenance health, and fit for that exact slot.
+What Odysseus is in MOT Deck: a **synchronous, user-driven research workspace** — chat + DeepResearch over your shared SearXNG, native Python, FastAPI on :7860, embedded as a webview tab. The candidates below were checked for: local-model support, SearXNG support, license, Docker posture, maintenance health, and fit for that exact slot.
 
 | Project | License | Local LLM | SearXNG | No-Docker viable | Health (2026-07) | Fit for the slot |
 |---|---|---|---|---|---|---|
@@ -62,7 +62,7 @@ Sources: [Perplexica/Vane guide (2026)](https://joshuaopolko.com/perplexica-self
 
 ## 2. Is there something better than Hermes? (async coding-agent slot)
 
-What Hermes is in the harness: an **async, autonomous, headless-daemon coding agent** — MIT, points at any OpenAI-compatible endpoint via `~/.hermes/config.yaml`, edits files, runs commands, writes SKILL.md skills. Candidates checked for: daemon-vs-IDE shape, local-endpoint support, tool-calling requirements, skills/memory, license, health.
+What Hermes is in MOT Deck: an **async, autonomous, headless-daemon coding agent** — MIT, points at any OpenAI-compatible endpoint via `~/.hermes/config.yaml`, edits files, runs commands, writes SKILL.md skills. Candidates checked for: daemon-vs-IDE shape, local-endpoint support, tool-calling requirements, skills/memory, license, health.
 
 | Project | License | Shape | Local endpoint | Skills/memory | Health (2026-07) | Fit |
 |---|---|---|---|---|---|---|
@@ -72,7 +72,7 @@ What Hermes is in the harness: an **async, autonomous, headless-daemon coding ag
 | **OpenHands** (ex-OpenDevin) | MIT (core) | Headless CLI (`--headless`, always-approve) + SDK; Docker default but **LocalRuntime runs on host** | Yes — recommends Qwen3.6-35B-A3B locally via LM Studio/Ollama | Microagents/repo memory | Very active; strong SDK paper | Capable but heavy; Docker-culture even if avoidable |
 | **Aider** | Apache-2.0 | Sync CLI pair-programmer, no daemon | Yes | Conventions files, no skills | **Maintenance mode** — v0.86.2 (Feb 2026) after long gap; slowdown acknowledged in [issue #4751](https://github.com/Aider-AI/aider/issues/4751) | Great tool, wrong shape, fading |
 | **Cline / Roo Code / Kilo Code / Continue** | Apache-2.0 (all) | **IDE-bound** (VS Code extensions; Continue has a young CLI) | Yes | Rules files | All active | **Don't fit a headless daemon model** — excluded |
-| **SWE-agent / mini-swe-agent** | MIT | Batch research harness | Yes | No | Academic cadence | Benchmark harness, not a coworker |
+| **SWE-agent / mini-swe-agent** | MIT | Batch research motdeck | Yes | No | Academic cadence | Benchmark motdeck, not a coworker |
 | **Tabby** | Apache-2.0 | Completion/chat server | Is one | No | Active | Not an agent at all |
 
 Sources: [Hermes ecosystem report (214k stars, release cadence)](https://the-agent-report.com/2026/06/hermes-agent-ecosystem-2026-pillar/), [Hermes Desktop launch](https://www.marktechpost.com/2026/06/03/nous-research-releases-hermes-desktop-a-native-cross-platform-front-end-for-hermes-agent-v0-15-2-with-streaming-tool-output/), [Nous $1.5B funding talks (TechCrunch, 2026-07-13)](https://techcrunch.com/2026/07/13/hermes-agent-maker-nous-research-in-talks-for-new-funding-at-1-5b-valuation/), [OpenCode developer guide](https://www.developersdigest.tech/blog/opencode-developer-guide-2026), [opencode env.dev profile](https://env.dev/ai/opencode), [Goose docs](https://block-goose.mintlify.app/), [Goose post-Linux-Foundation review](https://pickuma.com/for-dev/goose-cli-review-block-open-source-agent/), [OpenHands local-LLM docs](https://docs.openhands.dev/openhands/usage/llms/local-llms), [OpenHands CLI repo](https://github.com/OpenHands/OpenHands-CLI), [Aider releases](https://github.com/Aider-AI/aider/releases).
@@ -83,7 +83,7 @@ Sources: [Hermes ecosystem report (214k stars, release cadence)](https://the-age
 - **Fallback/augment, logged as an open question:** OpenCode's client/server split is architecturally the best match to your Bridge (a supervised local server the Swift app could even talk to directly), and it's MIT. If Hermes ever turns hostile to the daemon use-case, OpenCode is the swap. Goose is the second-best swap and its Apache-2.0 **recipes** format is worth reading when you design your skills convention — a recipe (goal + required extensions + structured inputs + sub-recipes) is a more formal cousin of SKILL.md.
 - The IDE-bound family (Cline/Roo/Kilo/Continue) is confirmed out of scope for this slot: they assume an open editor and a human in the loop. Note that tool-calling remains mandatory across every serious candidate — your locked model policy holds for all of them.
 
-## 3. Prior-art "does-everything" harness apps — and Cherry Studio
+## 3. Prior-art "does-everything" motdeck apps — and Cherry Studio
 
 ### The field at a glance
 
@@ -102,7 +102,7 @@ The question behind this table: **who already combines multi-provider + local mo
 | **LobeChat** | Custom/verify (moved off plain permissive) | Yes | Yes | Assistants market | Yes | Web + desktop wrapper | Cloud-first gravity |
 | **BoltAI / Enconvo** | Proprietary, paid | Yes (endpoints) | Partial/plugins | Light | Light | macOS native | Closest to your *aesthetic native macOS* lane, closed |
 | **Odysseus** | MIT | Via endpoints | (n/a — own tools) | **Yes** | Notes/own stack | Self-hosted web | Already yours |
-| **Your Harness** | Yours | **Manages the runner itself** | Planned via fan-out | Hermes + Odysseus | Odysseus + future KB | **Native Swift** | The only one that *supervises other programs* |
+| **Your MOT Deck** | Yours | **Manages the runner itself** | Planned via fan-out | Hermes + Odysseus | Odysseus + future KB | **Native Swift** | The only one that *supervises other programs* |
 
 (Comparison sources beyond those linked: [ClickHouse survey of MCP-capable chat UIs](https://clickhouse.com/blog/llm-chat-mcp-support), [AnythingLLM vs Open WebUI vs LibreChat 2026](https://runaihome.com/blog/anythingllm-vs-open-webui-vs-librechat-2026/), [Mac local-AI platform comparison](https://modelpiper.com/blog/local-ai-platforms-compared-mac).)
 
@@ -120,7 +120,7 @@ Direct answers to your two sub-questions:
 1. **Assistants-as-presets.** Their single best idea: an "assistant" is a cheap bundle of system prompt + model choice + params + enabled tools/KB, switchable per-chat, with a large browsable library. This costs almost nothing to implement above your runner endpoint and maps perfectly onto ⌘K ("new chat as *researcher*…"). If Mission Control ever grows a chat pane, this is its data model. It's also the right shape for your Bridge config: named roles (`primary`, `fast`) generalize naturally to named *assistants*.
 2. **Provider abstraction with capability tags.** Their model registry treats every provider uniformly and tags models by capability (vision/tools/embedding). Your runner-slot contract is the same instinct applied one level deeper — but their UX (one unified searchable model list regardless of origin) is exactly what your M2 native model browser should feel like.
 3. **MCP handling UX.** Ship a curated starter set of MCP servers pre-wired, check for `npx`/`uv` at add-time, per-assistant tool enablement, and a marketplace on the roadmap. Your Bridge's planned "one MCP list fanned out to all hosts" is stronger architecture; steal their *onboarding* (pre-wired defaults + dependency checks in the install dialog).
-4. **Knowledge base attached to assistants.** KB-per-assistant with a configurable embedding model is a clean pattern. Don't build this now — Odysseus covers research memory — but if you ever add a harness KB, copy this shape rather than a global monolithic index.
+4. **Knowledge base attached to assistants.** KB-per-assistant with a configurable embedding model is a clean pattern. Don't build this now — Odysseus covers research memory — but if you ever add a motdeck KB, copy this shape rather than a global monolithic index.
 5. **Multi-model simultaneous chat** (one prompt fanned to N models side-by-side) is a genuinely useful evaluation tool and trivial to build against `/v1/models` + parallel requests — a candidate ⌘K verb ("compare models…") for M2/M3.
 6. **A warning, not a lesson:** Cherry Studio is what happens when a chat client absorbs features for three years — 40+ sidebar surfaces, Electron heft, cloud-gateway monetization. Your one-window, few-verbs editorial discipline is the *opposite* bet. Keep it.
 
@@ -130,7 +130,7 @@ The discovery question: Cherry Studio (or Jan, or AnythingLLM) is "~80% of the v
 
 **No, it isn't 80%. It's ~80% of one layer — the chat surface — which is the layer you explicitly deferred.** Line up your vision against the field:
 
-| Vision element | Cherry Studio | AnythingLLM | Jan | Your Harness |
+| Vision element | Cherry Studio | AnythingLLM | Jan | Your MOT Deck |
 |---|---|---|---|---|
 | Multi-provider chat + assistants | ✅ best-in-class | ✅ | ✅ | deferred on purpose |
 | Knowledge base | ✅ | ✅ | ❌ | via Odysseus |
@@ -142,12 +142,12 @@ The discovery question: Cherry Studio (or Jan, or AnythingLLM) is "~80% of the v
 | Git pin/rollback of upstreams, config fan-out, health | ❌ | ❌ | ❌ | ✅ built |
 | Native Swift, one window, your aesthetic | ❌ Electron | ❌ Electron | Tauri | ✅ |
 
-**Verdict: (c), the hybrid — which is what you're already building.** Keep the composed Harness: the Bridge is not duplicated by *anything* in this survey — every app in the table is an endpoint **consumer**; your product is the endpoint **orchestrator** plus the shell you love. Adopting Cherry Studio as the shell would mean: Electron (you chose Jan partly for *not* being Electron), AGPL (your shell code would live inside an AGPL app — the exact trap the compose decision avoids), zero component supervision (you'd still need the Bridge, now without a home), and abandoning the part of the project you've said brings you joy. That trade loses on your three stated values — one tool, personal-first, compose-not-fork — simultaneously.
+**Verdict: (c), the hybrid — which is what you're already building.** Keep the composed MOT Deck: the Bridge is not duplicated by *anything* in this survey — every app in the table is an endpoint **consumer**; your product is the endpoint **orchestrator** plus the shell you love. Adopting Cherry Studio as the shell would mean: Electron (you chose Jan partly for *not* being Electron), AGPL (your shell code would live inside an AGPL app — the exact trap the compose decision avoids), zero component supervision (you'd still need the Bridge, now without a home), and abandoning the part of the project you've said brings you joy. That trade loses on your three stated values — one tool, personal-first, compose-not-fork — simultaneously.
 
 What the discovery *should* change:
 1. **Kill any ambition to hand-build the commodity layer.** Chat panes, KB ingestion, assistant libraries are commoditized — three open-source teams ship them full-time. Your "where does daily chat live" open decision gets a sharper answer: **an existing client pointed at your endpoint, never a from-scratch build.** Jan's UI already fills this; Cherry Studio is worth installing *as a user* the way desktop Jan is — a manual convenience client aimed at `:6767` (or :1337), zero Bridge involvement, adopted or deleted freely.
 2. **Mine Cherry Studio for the five patterns above** when you reach M2 (model browser, ⌘K verbs) and any future chat pane.
-3. **Add a cheap tripwire, mirroring the Jan fork tripwire:** if you ever find yourself speccing a Mission Control feature that is really "rebuild a chat client feature" (threads, message editing, KB ingestion, prompt library), stop and check whether pointing an existing client at the endpoint covers it. The Harness's identity is supervision + orchestration + the editorial shell — guard that boundary from both directions.
+3. **Add a cheap tripwire, mirroring the Jan fork tripwire:** if you ever find yourself speccing a Mission Control feature that is really "rebuild a chat client feature" (threads, message editing, KB ingestion, prompt library), stop and check whether pointing an existing client at the endpoint covers it. The MOT Deck's identity is supervision + orchestration + the editorial shell — guard that boundary from both directions.
 
 And to not be a yes-man about it: **the one scenario where adopting wins** is if your joy in the Swift shell fades and the project degrades into a chore. On pure capability-per-hour, "Jan + Cherry Studio + hand-run Hermes/Odysseus" gets maybe 70% of the outcome for 5% of the remaining effort. The other 30% — one window, silent supervised daemons, pin/rollback, no Docker, everything green at a glance — is precisely the itch that started this. As long as opening Mission Control still makes you happy, the math favors building. If it stops, this doc is your permission slip to collapse to the 70% and lose nothing important.
 
@@ -157,7 +157,7 @@ One 2-axis scatter map, editorial-dark styling if rendered in your aesthetic:
 
 - **X-axis: Capability breadth** — "single-purpose → all-in-one → orchestrates other programs" (left to right).
 - **Y-axis: Local-first depth** — "cloud client with BYOK → runs local models → manages the local stack (runner lifecycle, search, daemons)" (bottom to top).
-- Points (x, y on a 0–10 scale): LibreChat (6, 3) · LobeChat (6, 2.5) · Chatbox (5, 3.5) · Open WebUI (6.5, 5.5) · Cherry Studio (7.5, 4.5) · Witsy (4, 4.5) · Msty (5.5, 6) · BoltAI (4.5, 4) · AnythingLLM (7, 6.5) · LM Studio (4, 7.5) · Jan (5, 8) · Odysseus (7, 7.5) · **The Harness (target) (9, 9.5)** — annotate: "only occupant of the top-right: supervises Jan + Odysseus + Hermes + SearXNG behind one native window."
+- Points (x, y on a 0–10 scale): LibreChat (6, 3) · LobeChat (6, 2.5) · Chatbox (5, 3.5) · Open WebUI (6.5, 5.5) · Cherry Studio (7.5, 4.5) · Witsy (4, 4.5) · Msty (5.5, 6) · BoltAI (4.5, 4) · AnythingLLM (7, 6.5) · LM Studio (4, 7.5) · Jan (5, 8) · Odysseus (7, 7.5) · **The MOT Deck (target) (9, 9.5)** — annotate: "only occupant of the top-right: supervises Jan + Odysseus + Hermes + SearXNG behind one native window."
 - Optional shape/color encoding: circle = open source, diamond = proprietary; gold ring = MCP host.
 
 ---

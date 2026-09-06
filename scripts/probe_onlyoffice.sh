@@ -539,7 +539,7 @@ write_index_html() {
   .ok { background: #dff0d8 } .no { background: #f6d9d9 }
 </style>
 <h1>ONLYOFFICE static-editors probe</h1>
-<p class="sub">Throwaway. Nothing here is installed into the harness. One
+<p class="sub">Throwaway. Nothing here is installed into MOT Deck. One
 <code>rm -rf data/office-probe</code> removes all of it.</p>
 
 <div class="warn">
@@ -763,7 +763,7 @@ checklist() {
 
 ──────────────────────────────────────────────────────────────────────
   READY. Start the server, then open it in SAFARI (WebKit — the engine
-  the harness's own tabs use; Chrome would decide nothing):
+  MOT Deck's own tabs use; Chrome would decide nothing):
 
     cd "$ROOT" && ./scripts/probe_onlyoffice.sh serve
 
@@ -775,7 +775,7 @@ checklist() {
     2. New sheet: type values + a formula. Does it calculate?
     3. Save/export .xlsx. Does a file come out?
     4. Import one of your OWN .xlsx files from
-       ~/Library/Application Support/Harness/data/office/
+       ~/Library/Application Support/MOT Deck/data/office/
        Do formulas, merges and number formats survive?
     5. Same for a .docx if the bundle carries the documents editor.
     6. Note the load time and the RAM in Activity Monitor.

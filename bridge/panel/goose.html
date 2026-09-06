@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script src="/assets/identity-migration.js"></script>
 <!-- The boot beacon: the title starts in the booting state and the inline script below
      changes it, so "the scripts never ran" is answerable from the shell (webView.title)
      as well as from the static banner in the body. -->
 <title>Goose CLI · booting…</title>
-<meta name="harness-build" content="goose-2026-08-29b">
+<meta name="motdeck-build" content="goose-2026-08-29b">
 <!-- The Goose CLI tab is its OWN document, deliberately not the panel: it is a terminal,
      it loads xterm.js, and it must not carry the panel's poll loops.
      ⚠️ THE NAME ON THIS PAGE IS "Goose CLI" (Debi's naming ruling 2026-08-29) because
@@ -19,8 +20,8 @@
   // on this page ON PURPOSE: a tab that could disagree with the app it lives in is
   // exactly the complaint that produced this pattern.
   //
-  //   harness-theme  ∈ {light, gold, cyber}  → data-theme="…"  (Editorial = no attribute)
-  //   harness-chrome === 'studio'            → data-chrome="studio"
+  //   motdeck-theme  ∈ {light, gold, cyber}  → data-theme="…"  (Editorial = no attribute)
+  //   motdeck-chrome === 'studio'            → data-chrome="studio"
   //
   // ⚠️ THE WHITELIST IS THE POINT. An unknown or corrupt value falls through to
   // Editorial (no attribute) rather than stamping an attribute no stylesheet answers —
@@ -32,7 +33,7 @@
   //
   // ⚠️ IT NEVER WRITES. Leaving a theme in the panel restores this tab with it.
   //
-  // ⚠️ WHY THIS PAGE DOES *NOT* READ `harness-design`. That third axis is not a palette
+  // ⚠️ WHY THIS PAGE DOES *NOT* READ `motdeck-design`. That third axis is not a palette
   // — it is a whole layout/type/shape sheet, and it is per-surface: the panel has
   // /assets/studio-design.css, LOffice has /assets/studio-office.css, and there is no
   // goose sheet to load. Reading the key and stamping data-design without one would
@@ -43,8 +44,8 @@
     window.syncSkin = function () {
       var theme = null, chrome = null;
       try {
-        theme = localStorage.getItem('harness-theme');
-        chrome = localStorage.getItem('harness-chrome');
+        theme = localStorage.getItem('motdeck-theme');
+        chrome = localStorage.getItem('motdeck-chrome');
       } catch (e) { return; }        // private mode: the defaults stand, silently
       var d = document.documentElement;
       if (theme === 'light' || theme === 'gold' || theme === 'cyber')
@@ -342,7 +343,7 @@ let logOpen = false, pollTimer = 0, lastErr = null;
 // visibilitychange cover the case where the two are not both alive at that moment.
 // Idempotent and two localStorage reads, so calling it often costs nothing.
 window.addEventListener('storage', ev => {
-  if (!ev || !ev.key || ev.key === 'harness-theme' || ev.key === 'harness-chrome')
+  if (!ev || !ev.key || ev.key === 'motdeck-theme' || ev.key === 'motdeck-chrome')
     syncSkin();
 });
 window.addEventListener('focus', () => syncSkin());

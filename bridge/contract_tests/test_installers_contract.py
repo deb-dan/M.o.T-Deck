@@ -148,7 +148,7 @@ def test_stamp_dies_before_the_bundle_does():
 # row that matters most is the last one, which pins the ADMISSION.
 def test_deepseek_pins_the_top_level_and_refuses_a_moved_version():
     s = src(DSH)
-    assert "dsh_pin" in s, "the pin is single-sourced in harness.yaml, not inline"
+    assert "dsh_pin" in s, "the pin is single-sourced in motdeck.yaml, not inline"
     assert "--save-exact" in s, "the top-level dependency is written exactly, not as ^"
     # ⚠️ THE PRE-FLIGHT THAT REPLACES A DIGEST. npm verifies dist.integrity itself, but
     # only against what the registry serves NOW; reading the metadata FIRST and
@@ -218,7 +218,7 @@ def test_llamacpp_cleans_debris_on_extract_failure():
 
 # ── A11-A13: every remaining floating/download-only source is immutable ──────
 def test_searxng_fetches_and_verifies_the_manifest_commit():
-    manifest = src(os.path.join(ROOT, "harness.yaml"))
+    manifest = src(os.path.join(ROOT, "motdeck.yaml"))
     assert re.search(r"^  searxng:\n(?:^    .*\n)*?^    pin: [0-9a-f]{40}(?:\s|$)",
                      manifest, re.M)
     s = src(SEARX)
@@ -231,7 +231,7 @@ def test_searxng_fetches_and_verifies_the_manifest_commit():
 
 
 def test_acestep_weights_use_the_recorded_snapshot_not_huggingface_main():
-    manifest = src(os.path.join(ROOT, "harness.yaml"))
+    manifest = src(os.path.join(ROOT, "motdeck.yaml"))
     assert re.search(r'^  music_acestep_gguf_pin: "[0-9a-f]{40}"$', manifest, re.M)
     s = src(MUSIC)
     assert "music_acestep_gguf_pin" in s
@@ -274,7 +274,7 @@ def test_every_browser_asset_has_a_digest_and_cached_bytes_are_rechecked():
 
 
 def test_portable_firstrun_verifies_the_installer_script_before_execution():
-    manifest = src(os.path.join(ROOT, "harness.yaml"))
+    manifest = src(os.path.join(ROOT, "motdeck.yaml"))
     assert re.search(r'^  uv_installer_sha256: "[0-9a-f]{64}"$', manifest, re.M)
     s = src(FIRSTRUN)
     assert 'refusing an unpinned installer' in s

@@ -261,7 +261,7 @@ def sampling_saved(entry: dict) -> dict:
 
 
 def sampling_merge(entry: dict) -> dict:
-    """PURE. harness defaults → per-model overrides → engine key translation.
+    """PURE. motdeck defaults → per-model overrides → engine key translation.
     Returns the request-body fragment the direct lane merges in. NEVER raises, and
     ALWAYS contains a `max_tokens` (that absence is the MLX truncation bug).
 
@@ -290,7 +290,7 @@ def sampling_merge(entry: dict) -> dict:
 def sampling_view(entry: dict) -> dict:
     """PURE. What the Models detail pane renders: the engine, and one row per field
     this engine can actually honour, carrying its wire name (the honest label), the
-    harness default, and the per-model override (None = running the default).
+    motdeck default, and the per-model override (None = running the default).
 
     Engine-conditional by construction: a field the engine cannot honour is ABSENT,
     not greyed out — a control that cannot work must not be drawn."""
@@ -427,7 +427,7 @@ LOAD_WIRE = {
     "mlxvlm": {},
 }
 # Displayed as the "default" beside each row. These are what the runner does TODAY
-# with nothing saved, not a harness opinion: ctx falls back to the registry entry's
+# with nothing saved, not a motdeck opinion: ctx falls back to the registry entry's
 # own ctx (start_component.sh:89-91), and the rest are llama.cpp's own documented
 # defaults (help :117 auto, :39 auto, :75-82 f16, :7 -1/auto, :29 2048, :31 512,
 # :87 off, :89 enabled, :51/:54 loaded from the model).

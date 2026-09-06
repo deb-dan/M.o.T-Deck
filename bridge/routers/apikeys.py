@@ -519,7 +519,7 @@ def api_keys_list() -> dict:
         "remaining": max(0, MAX_KEYS - len(rows)),
         "pending": pending(st),
         # The built-in is REPORTED, never REVEALED: not its value and not its prefix.
-        # It lives in harness.yaml, it is what every internal caller and the readiness
+        # It lives in motdeck.yaml, it is what every internal caller and the readiness
         # poll use, and it cannot be revoked from here — saying so is the whole point.
         "builtin": bool(rc.get("api_key")),
         "keyfile": KEYFILE,

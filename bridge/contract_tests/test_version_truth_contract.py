@@ -3,7 +3,7 @@
 THE INCIDENT. The deck's Version tile showed **0.1.0 at release 1.5.72**. There were two
 version numbers in the tree and the app displayed the dead one:
 
-  · `harness.yaml` had `version: "0.1.0"  # bump on release`. Nothing bumped it in 72
+  · `motdeck.yaml` had `version: "0.1.0"  # bump on release`. Nothing bumped it in 72
     releases, and `routers/version.py` read it and NOTHING ELSE.
   · the top-level `VERSION` file held `1.5.72` — QA bumps it in the same commit as every
     slice, ship.sh and every commit message name it — and NO RUNTIME CODE READ IT.
@@ -12,12 +12,12 @@ It also poisoned the update check: `_assemble_update` compared a GitHub release 
 against 0.1.0, so any tag on the repo would have read as "newer" for ever.
 
 THE FIX IS SINGLE-SOURCING, NOT SYNCING: `VERSION` is the release truth, the runtime
-reads it (`core/procs.harness_version`), the update check compares against it, and
-`harness.yaml version:` is gone. What this file pins:
+reads it (`core/procs.motdeck_version`), the update check compares against it, and
+`motdeck.yaml version:` is gone. What this file pins:
 
   1. `VERSION` exists, is readable, and parses as a release number.
-  2. `harness_version()` returns exactly its contents.
-  3. NO runtime module reads a version out of harness.yaml, and the repo manifest has no
+  2. `motdeck_version()` returns exactly its contents.
+  3. NO runtime module reads a version out of motdeck.yaml, and the repo manifest has no
      top-level `version:` key to read (the shape of the whole bug: a second copy of a
      fact is a second answer).
   4. ship.sh copies VERSION into the snapshot — without that line the app's number
@@ -57,19 +57,19 @@ def test_version_file_exists_and_is_a_release_number():
         f"VERSION should be a dotted release number, got {raw!r}"
 
 
-def test_harness_version_returns_the_version_file_verbatim():
-    from bridge.core.procs import harness_version
-    assert harness_version() == _read(os.path.join(ROOT, "VERSION")).strip()
+def test_motdeck_version_returns_the_version_file_verbatim():
+    from bridge.core.procs import motdeck_version
+    assert motdeck_version() == _read(os.path.join(ROOT, "VERSION")).strip()
 
 
 # ── 3. no second copy of the fact ────────────────────────────────────────────
-def test_harness_yaml_has_no_version_key():
+def test_motdeck_yaml_has_no_version_key():
     import yaml
-    cfg = yaml.safe_load(_read(os.path.join(ROOT, "harness.yaml"))) or {}
+    cfg = yaml.safe_load(_read(os.path.join(ROOT, "motdeck.yaml"))) or {}
     assert "version" not in cfg, (
-        "harness.yaml grew a `version:` key again. That key IS U56: it was frozen at "
+        "motdeck.yaml grew a `version:` key again. That key IS U56: it was frozen at "
         "0.1.0 for 72 releases while the app displayed it. The release number lives in "
-        "the top-level VERSION file, and bridge/core/procs.py::harness_version is its "
+        "the top-level VERSION file, and bridge/core/procs.py::motdeck_version is its "
         "one reader.")
 
 
@@ -89,7 +89,7 @@ def test_no_runtime_module_reads_a_version_out_of_the_manifest():
             p = os.path.join(base, f)
             for m in pat.finditer(_code(p)):
                 bad.append(f"{os.path.relpath(p, ROOT)}: {m.group(0)!r}")
-    assert not bad, ("a runtime module is reading a version out of harness.yaml again "
+    assert not bad, ("a runtime module is reading a version out of motdeck.yaml again "
                      "(U56): " + "; ".join(bad))
 
 
@@ -113,13 +113,13 @@ def test_api_version_serves_the_version_file_and_degrades_honestly(tmp_path, mon
     from bridge.routers import version as vmod
 
     monkeypatch.setattr(procs, "ROOT", tmp_path)
-    (tmp_path / "harness.yaml").write_text("components: {}\n")
+    (tmp_path / "motdeck.yaml").write_text("components: {}\n")
 
     (tmp_path / "VERSION").write_text("9.9.9\n")
-    assert procs.harness_version() == "9.9.9"
+    assert procs.motdeck_version() == "9.9.9"
 
     (tmp_path / "VERSION").unlink()
-    assert procs.harness_version() == "", "an absent VERSION must read as unknown"
+    assert procs.motdeck_version() == "", "an absent VERSION must read as unknown"
     # The route is async and hits the network; the two pure halves it is made of are
     # what carry the contract, so they are what is asserted (the live endpoint is
     # walked in the report, not here).
@@ -138,7 +138,7 @@ def test_update_comparison_is_conservative():
     assert u("1.5", {"tag_name": "1.5.0", "html_url": ""})["available"] is False, \
         "1.5 and 1.5.0 are the same release — zero-pad, do not compare tuple lengths"
 
-    # THE ORIGINAL BUG: 0.1.0 (harness.yaml's frozen key) vs any tag → "newer for ever".
+    # THE ORIGINAL BUG: 0.1.0 (motdeck.yaml's frozen key) vs any tag → "newer for ever".
     # It cannot recur through the caller, but the helper must also refuse to guess when
     # the local version is genuinely UNKNOWN (a pre-v1.5.70 install with no VERSION).
     for unknown in (None, "", "   "):

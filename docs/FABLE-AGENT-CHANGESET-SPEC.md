@@ -49,7 +49,7 @@ verify: re-read of touched ranges}`, and the editor reloads the document (existi
 ooExtReload path). Dismiss → bridge drops it.
 
 **The model never gets to say "Done":**
-- The panel appends a harness-authored status line under every agent reply that staged
+- The panel appends a MOT Deck-authored status line under every agent reply that staged
   something: "⏳ staged — nothing is written until you press Apply." Narration never
   stands alone.
 - A success badge renders ONLY from a receipt in an actual apply response — never from
@@ -96,7 +96,7 @@ asserted unchanged); catalog holds exactly 4 tools, all readOnlyHint; apply is a
 receipt verifies by re-read; dismiss drops; TTL expiry; checkpoint stack push/prune/restore
 + mtime fence; the session system-line on both outcomes. Panel (test_office_ai.js):
 card renders from a staged changeset, Apply posts and renders the receipt badge, Dismiss
-posts, the harness status line always accompanies staging turns, ✗ chips on isError
+posts, MOT Deck status line always accompanies staging turns, ✗ chips on isError
 results, no page-side writers added (fence intact). Live proof in the real page with the
 27B model: one intention ("add a Purchases row of 200 and update the total") → ONE card →
 Apply → sheet shows it → receipt badge → "Undo this change" restores.

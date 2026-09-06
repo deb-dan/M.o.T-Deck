@@ -16,7 +16,7 @@ is being created server-side. All investigation was read-only.**
 
 ### 1a. Zero sessions exist server-side
 
-* OpenCode's sqlite (`~/Library/Application Support/Harness/data/opencode/xdg/data/opencode/opencode.db`,
+* OpenCode's sqlite (`~/Library/Application Support/MOT Deck/data/opencode/xdg/data/opencode/opencode.db`,
   inspected on a **copy** in the session scratchpad): `select count(*) from session` → **0**.
   `message`, `session_input`, `workspace`: all **0** rows. WAL was empty (0 bytes).
 * Live API (GET only): `GET http://127.0.0.1:4096/session` → `[]`.
@@ -32,7 +32,7 @@ touches the server. The phantoms live entirely in the webview.
 ### 1b. The phantoms are persisted client-side draft tabs
 
 WKWebView localStorage for the 127.0.0.1:4096 origin
-(`~/Library/WebKit/local.harness.app/WebsiteData/Default/pnzjpC5Z…/LocalStorage/localstorage.sqlite3`,
+(`~/Library/WebKit/local.motdeck.app/WebsiteData/Default/pnzjpC5Z…/LocalStorage/localstorage.sqlite3`,
 again read from a copy) holds:
 
 ```

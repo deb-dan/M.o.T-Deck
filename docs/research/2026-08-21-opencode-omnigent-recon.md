@@ -78,7 +78,7 @@ model write a JS program that calls tools, which is *worse* for a 4B.
 This is the one item in this report that is strictly more capable than aider and still fits the
 doctrine. `opencode web` is exactly our tab shape: one process, loopback, own port, its own SPA —
 no xterm.js, no PTY relay, no WebSocket origin gate of ours to write. Integration shape:
-`components.opencode` in harness.yaml, pin `build.opencode_pin: "1.18.19"` (npm version; resolve the
+`components.opencode` in motdeck.yaml, pin `build.opencode_pin: "1.18.19"` (npm version; resolve the
 darwin-arm64 tarball or `npm i -g opencode-ai@<pin>` into `data/opencode/`), start with
 `opencode web --port <yaml> --hostname 127.0.0.1`, health = GET on that port.
 **Three mandatory conditions:** (1) write `~/.config/opencode/opencode.json` from OUR runner facts
@@ -132,13 +132,13 @@ spawn env pinned at `tests/runtime/test_acp_spawn_env.py:28`). Local models: sup
 `http://localhost:11434/v1` as the local example (README.md:345). So our :6767 would work, but only
 for the child harnesses that accept a base_url. **No relation to Unsloth.**
 
-**Verdict: PARK.** One paragraph: it is genuinely the same product class as the New Harness itself —
+**Verdict: PARK.** One paragraph: it is genuinely the same product class as the New MOT Deck itself —
 an orchestration layer that owns sessions, policies, approvals and the UI, with Hermes demoted to
 one swappable child process — so adopting it means adopting a rival whole-app rather than a
 capability we lack (the exact reasoning that rejected mindshub and LibreChat). It also arrives
 Databricks-shaped (cloud sandboxes, `docs/databricks.md` is the deepest integration doc,
 Modal/Daytona/E2B extras), needs Node 22 + pnpm + tmux + `uv`, and is self-declared **alpha**.
-Nothing stops Debi running it *outside* the harness. **Worth watching for one reason:** its policy
+Nothing stops Debi running it *outside* MOT Deck. **Worth watching for one reason:** its policy
 engine (`docs/POLICIES.md` — pause-for-approval on risky actions, spend caps, tool allowlists,
 scoped to server/agent/chat) is a more general version of our path-guard + approval cards, and its
 per-harness adapters are a free survey of how six coding agents actually behave. Idea-quarry, not a

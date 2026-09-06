@@ -24,7 +24,7 @@ shared by both bars (built in the panel from a static table + the components lis
 - Rules: Mission Control is fixed first on the topbar and cannot be hidden (it is the
   bridge-wait surface); Chat is fixed first on the sidebar; an entry hidden on BOTH
   bars is refused with a note (nothing may become unreachable).
-- Persistence two-tier like Unsloth: `localStorage['harness-nav'] v1` (instant) AND
+- Persistence two-tier like Unsloth: `localStorage['motdeck-nav'] v1` (instant) AND
   `data/nav.json` via `GET/POST /api/nav` (atomic write) so the SHELL can read it at
   launch (the shell cannot read localStorage). The shell polls /api/nav generation on
   the existing /api/status carrier (a `nav_gen` counter, same pattern as the hermes

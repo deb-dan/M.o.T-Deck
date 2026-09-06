@@ -3,7 +3,7 @@
 **2026-08-28. Deep research for the RAM fit advisor.** Primary sources throughout: upstream code
 (llama.cpp master ≈ our b10662, ollama main + v0.5.7, gguf-parser-go), local readable source
 (mlx 0.32.0 / mlx-lm 0.31.3 in `data/mlx-venv`, Unsloth Studio vendored at
-`~/Library/Application Support/Harness/vendor/unsloth`), and **measurements taken on this machine
+`~/Library/Application Support/MOT Deck/vendor/unsloth`), and **measurements taken on this machine
 today** with our own b10662 `llama-fit-params` binary. Machine of record: Apple M5 Pro, 64 GiB
 unified (`hw.memsize` 68719476736), Metal `max_recommended_working_set_size` **55,662,788,608 B =
 51.84 GiB (~81% of RAM)**, `iogpu.wired_limit_mb = 0` (system default).
@@ -328,7 +328,7 @@ blocking) verdict:
 
 ## 6. Unsloth (scope addition) — and the discovery that it's our richest local reference
 
-The vendored tree at `~/Library/Application Support/Harness/vendor/unsloth/studio/backend` contains
+The vendored tree at `~/Library/Application Support/MOT Deck/vendor/unsloth/studio/backend` contains
 a **complete, production-hardened GGUF+MLX fit engine** — the most architecture-complete estimator
 found anywhere in this research, llama.cpp's own fitter included. All refs below are that tree.
 
@@ -538,7 +538,7 @@ sizing), `src/llama-context.cpp` (ctx padding, graph reserve, V-quant/FA constra
 `src/llama-mmap.cpp` (MAP_SHARED/madvise/mlock, Darwin wire-limit sysctls),
 `ggml/src/ggml-metal/ggml-metal-device.m` (newBufferWithBytesNoCopy, MTLResidencySet,
 recommendedMaxWorkingSetSize warning), `common/fit.cpp` (`common_params_fit_impl`); local:
-`~/Library/Application Support/Harness/data/llama-server.help.txt` (lines 25-165, 426-460:
+`~/Library/Application Support/MOT Deck/data/llama-server.help.txt` (lines 25-165, 426-460:
 `--fit*`, `--load-mode`, `--swa-full`, `--ctx-checkpoints`, `--kv-unified-per-slot`),
 `data/llamacpp/build/bin/llama-fit-params` runs of 2026-08-28.
 
@@ -575,7 +575,7 @@ get_active_memory/get_peak_memory/device_info`), `mlx_lm/generate.py:230-266,714
 [KolosalAI/model-memory-calculator](https://github.com/KolosalAI/model-memory-calculator),
 [LocalAI VRAM management](https://localai.io/docs/advanced/vram-management/).
 
-**Unsloth**: vendored `~/Library/Application Support/Harness/vendor/unsloth/studio/backend/` —
+**Unsloth**: vendored `~/Library/Application Support/MOT Deck/vendor/unsloth/studio/backend/` —
 `core/inference/llama_cpp.py` (:3026, :3030, :3050-3100, :3156-3183, :8209, :9954-10044,
 :10866-11048, :11297-11463), `routes/inference.py` (:9039, :9915), `core/inference/
 memory_contract.py`, `core/inference/mlx_inference.py` (:1408-1426), `core/training/

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install DEEPSEEK HARNESS (`dsh`) — the harness's third coding lane, run as a TAB.
+# Install DEEPSEEK HARNESS (`dsh`) — MOT Deck's third coding lane, run as a TAB.
 #
 #   ./scripts/install_deepseek.sh [--yes]
 #
@@ -47,7 +47,7 @@ say() { echo "[deepseek] $*"; }
 die() { echo "[deepseek] ERROR: $*" >&2; exit 1; }
 
 # ── pin reader (identical awk shape to install_opencode.sh / install_aider.sh) ──
-_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' harness.yaml; }
+_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' motdeck.yaml; }
 
 resolve_py() {
   local p
@@ -65,11 +65,11 @@ main() {
   local pin py free_gb node npm_bin have
 
   pin="$(_yb dsh_pin)"
-  [[ -n "$pin" ]] || die "build.dsh_pin missing from harness.yaml"
+  [[ -n "$pin" ]] || die "build.dsh_pin missing from motdeck.yaml"
   py="$(resolve_py)" || die "no python3 found — it is only used to read npm's JSON."
   say "pin: ${PKG}@${pin}"
 
-  # ── PREFLIGHT 1: the platform. macOS only, like install_opencode.sh — the harness
+  # ── PREFLIGHT 1: the platform. macOS only, like install_opencode.sh — MOT Deck
   # is a Mac product, and dsh's own sandbox backend table names macOS (Seatbelt) as a
   # first-class platform, but nothing here has ever been walked anywhere else.
   [[ "$(uname -s)" == "Darwin" ]] || die "the DeepSeek lane is wired for macOS here (uname says $(uname -s))."
@@ -143,10 +143,10 @@ main() {
   # and `private: true` is what stops any accidental publish path dead.
   [[ -f "$PREFIX/package.json" ]] || cat > "$PREFIX/package.json" <<'JSON'
 {
-  "name": "harness-deepseek-prefix",
+  "name": "motdeck-deepseek-prefix",
   "version": "0.0.0",
   "private": true,
-  "description": "Private npm prefix for the harness DeepSeek Harness lane. Managed by scripts/install_deepseek.sh — do not edit by hand.",
+  "description": "Private npm prefix for MOT Deck DeepSeek Harness lane. Managed by scripts/install_deepseek.sh — do not edit by hand.",
   "dependencies": {}
 }
 JSON
@@ -225,7 +225,7 @@ seed_workspace_dir() {
   mkdir -p "$WS"
   if [[ ! -f "$WS/README.md" ]]; then
     printf '%s\n' \
-      "# Harness workspace — DeepSeek Harness lane" \
+      "# MOT Deck workspace — DeepSeek Harness lane" \
       "" \
       "This is the working directory the DeepSeek Harness lane is started in, and the" \
       "folder to pick the first time its UI asks you to \"Add workspace\"." \
@@ -261,13 +261,13 @@ post_install() {
   seed_workspace_dir
 
   # ── THE MANIFEST FLAG. Mission Control's card reads components.deepseek.installed
-  # from harness.yaml (bridge/routers/components.py::status), NOT the disk — so
+  # from motdeck.yaml (bridge/routers/components.py::status), NOT the disk — so
   # without this the install lands, the script says "installed", and the card still
   # offers Install. That was the 2026-08-21 install_opencode.sh bug, recorded in that
   # flipper's own header. It runs on the "already installed at the pin" path too, so a
   # plain re-run repairs a stale flag.
   # $ROOT is this script's OWN root, which is what makes it edit the SNAPSHOT's
-  # manifest when the bridge spawns it from ~/Library/Application Support/Harness.
+  # manifest when the bridge spawns it from ~/Library/Application Support/MOT Deck.
   # ⚠️ THE FAILURE BRANCH BELOW IS NOT OPTIONAL, and bridge/tests/test_installed_flip.py
   # fences it by asserting the word ERROR appears within 600 characters of the call:
   # an installer that ignores a failed flip is exactly how a card comes to lie.
@@ -275,7 +275,7 @@ post_install() {
   py_flip="$(resolve_py)" || py_flip="python3"
   "$py_flip" "$ROOT/scripts/flip_installed.py" deepseek || {
     say "ERROR: dsh is installed but components.deepseek.installed could not be set in"
-    say "  harness.yaml, so the card will still say 'Not installed'. Fix with:"
+    say "  motdeck.yaml, so the card will still say 'Not installed'. Fix with:"
     say "  python3 scripts/flip_installed.py deepseek"
     exit 1; }
 
@@ -286,14 +286,14 @@ post_install() {
   say "  therefore the boundary on what it edits by default."
   say "provider:  Start writes an OpenAI-compatible provider named 'MOT Deck (local)'"
   say "  into data/deepseek/home/settings.yaml under llm-pi-ai.providers, pointing at"
-  say "  the harness runner, with your registry's models enumerated. In dsh it shows"
+  say "  MOT Deck runner, with your registry's models enumerated. In dsh it shows"
   say "  up in Settings -> Models and in the composer's model picker."
   say "FIRST RUN, two things that surprise people, both upstream's own behaviour:"
   say "  1. an 'Internal Testing Notice' modal — click Continue, it is shown once."
   say "  2. it asks you to choose a WORKSPACE before it will take a message. Click"
   say "     'Add workspace' in its sidebar and pick data/deepseek-workspace. That"
   say "     opens macOS's OWN folder chooser, launched by dsh itself — if it does not"
-  say "     come forward, click the Harness icon in the Dock. (Ledger U67.)"
+  say "     come forward, click the MOT Deck icon in the Dock. (Ledger U67.)"
   say "NOTE: pre-1.0 developer preview, pinned at build.dsh_pin (${pin}). It ships no"
   say "  auto-updater (grepped, at this pin), so nothing moves under the pin on its"
   say "  own — but never 'npm update' this prefix by hand for the same reason."

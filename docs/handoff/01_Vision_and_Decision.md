@@ -2,7 +2,7 @@
 
 ## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
 
-The vision held; the cast changed. Living references: `CLAUDE.md`, `docs/HARNESS-INTERNALS.md`,
+The vision held; the cast changed. Living references: `CLAUDE.md`, `docs/MOT-DECK-INTERNALS.md`,
 `docs/USER-GUIDE.md`.
 
 - **"Jan is the kitchen" is obsolete.** Jan was removed entirely in July 2026 (app uninstalled,
@@ -19,12 +19,12 @@ The vision held; the cast changed. Living references: `CLAUDE.md`, `docs/HARNESS
   a Bridge panel that has its own chat with four lanes (Agent via Odysseus, Chat direct to the
   runner, Hermes via its JSON-RPC gateway, plus a Browse capability toggle), a Models pane, a
   Capabilities pane, artifacts/canvas, and a Logs pane.
-- **Dropped:** the gearbox (policy-based local↔cloud routing) is **shelved** — the harness is
+- **Dropped:** the gearbox (policy-based local↔cloud routing) is **shelved** — MOT Deck is
   local-only by choice. Cloud keys remain an unused `.env` concept.
 ---
 
 
-*Part of the Harness handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture: [02_Architecture.md](02_Architecture.md). Licensing: [03_Licensing.md](03_Licensing.md).*
+*Part of the MOT Deck handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture: [02_Architecture.md](02_Architecture.md). Licensing: [03_Licensing.md](03_Licensing.md).*
 
 ---
 
@@ -32,13 +32,13 @@ The vision held; the cast changed. Living references: `CLAUDE.md`, `docs/HARNESS
 
 If the component names ever blur together, start here. There are six pieces. Two are yours; four are other people's projects that you install and use. Think of the whole thing as a restaurant:
 
-- **Jan is the kitchen — the engine.** It is the *only* piece that actually loads an AI model into memory and generates text. Nothing else in the harness can "think." Every other component, when it needs intelligence, sends its question to Jan over a local connection and gets the model's answer back.
+- **Jan is the kitchen — the engine.** It is the *only* piece that actually loads an AI model into memory and generates text. Nothing else in MOT Deck can "think." Every other component, when it needs intelligence, sends its question to Jan over a local connection and gets the model's answer back.
 - **Odysseus and Hermes are specialist staff who order from that kitchen.** Odysseus is your research workspace (chat + DeepResearch); Hermes is your background coding agent. Neither runs a model itself — they are *apps that use the engine*. Two appliances plugged into one generator.
 - **SearXNG is your private librarian.** It's a small search engine running on your own machine: when DeepResearch (or an MCP web-search tool) needs web results, it asks SearXNG, which queries the public search engines and hands back combined results. No accounts, no API keys, and only one copy of it needs to exist.
 - **The Bridge (yours) is the manager.** It doesn't chat and doesn't run models. It installs the four components (git clone + Python venv), starts and stops them as background processes, checks their health, and writes their config files so every piece knows every other piece's address.
 - **Mission Control (yours) is the dining room — the one window you actually look at.** It talks only to the Bridge, and shows you status cards, the activity feed, the ⌘K palette, and Odysseus's UI in a tab.
 
-**What "the harness houses them" actually means.** The Bridge does not contain Jan, Odysseus, or Hermes inside itself — they are not compiled into one program. Each is a separate, ordinary program installed side by side in its own folder. "Houses" means the Bridge *supervises* them the way a manager supervises staff: it hires them (installs), schedules them (starts/stops), takes their pulse (health checks) — but never does their jobs and never absorbs them. That is the whole "compose, don't merge" idea in one sentence: several small programs cooperating over local connections, instead of one giant merged codebase. (It's also exactly why the licensing stays clean — see [03_Licensing.md](03_Licensing.md).)
+**What "MOT Deck houses them" actually means.** The Bridge does not contain Jan, Odysseus, or Hermes inside itself — they are not compiled into one program. Each is a separate, ordinary program installed side by side in its own folder. "Houses" means the Bridge *supervises* them the way a manager supervises staff: it hires them (installs), schedules them (starts/stops), takes their pulse (health checks) — but never does their jobs and never absorbs them. That is the whole "compose, don't merge" idea in one sentence: several small programs cooperating over local connections, instead of one giant merged codebase. (It's also exactly why the licensing stays clean — see [03_Licensing.md](03_Licensing.md).)
 
 **Ports and endpoints, demystified.** Your machine has an internal address, `127.0.0.1` (also called "localhost" — literally "this computer"). A **port** is like an apartment number at that address: Jan answers the door at 6767, Odysseus at 7860, SearXNG at 8080. An **endpoint** is just the full written-out address another program calls — e.g. `http://127.0.0.1:6767/v1`. So "point Hermes at the runner endpoint" means: put that one URL in Hermes's config file. All of this traffic stays inside your Mac; nothing touches the network.
 
@@ -48,7 +48,7 @@ If the component names ever blur together, start here. There are six pieces. Two
 3. Odysseus and Hermes → **the runner endpoint** (Jan, `:6767`) for every model answer.
 4. Odysseus's DeepResearch and MCP search → **SearXNG** (`:8080`) for web results.
 
-**What you see vs. what's hidden.** Only Mission Control has a window. Jan runs *headless* — meaning "no head," i.e. no window, just a background server (`jan serve --detach`). Odysseus is a local web page that appears *inside* a Mission Control tab. Hermes and SearXNG are invisible background processes. One window, five quiet workers. (Jan's desktop app stays installed as an occasional convenience — when you open it, its own API happens to live on `:1337` — but the harness's engine is the headless one on `:6767`.)
+**What you see vs. what's hidden.** Only Mission Control has a window. Jan runs *headless* — meaning "no head," i.e. no window, just a background server (`jan serve --detach`). Odysseus is a local web page that appears *inside* a Mission Control tab. Hermes and SearXNG are invisible background processes. One window, five quiet workers. (Jan's desktop app stays installed as an occasional convenience — when you open it, its own API happens to live on `:1337` — but MOT Deck's engine is the headless one on `:6767`.)
 
 **No Docker — decided.** Every component installs the same way: git clone plus a Python venv, all handled by the Bridge. Docker (a tool that runs software inside pre-packaged mini-Linux boxes) is popular for servers, but it's a heavy extra layer you don't want on a personal Mac, and you've ruled it out. Native installs cover every component, including SearXNG — details in [02_Architecture.md](02_Architecture.md).
 
@@ -66,7 +66,7 @@ Each has its own install, window, config, and vocabulary. The seams are the prod
 
 **Unified PRODUCT, composed ARCHITECTURE.**
 
-The unification you want lives in the **experience layer**, not the repo layer. You do not fork or merge any of these projects. You orchestrate them — over their standard APIs — from the thing you already built: the **Harness** (Bridge + Swift Mission Control). The Harness IS the product. Everything else is a managed component behind it.
+The unification you want lives in the **experience layer**, not the repo layer. You do not fork or merge any of these projects. You orchestrate them — over their standard APIs — from the thing you already built: the **MOT Deck** (Bridge + Swift Mission Control). The MOT Deck IS the product. Everything else is a managed component behind it.
 
 The precedents are strong: VS Code doesn't fork compilers, it orchestrates language servers. Docker Desktop is a shell over an engine. Claude Desktop is a shell over MCP servers. In every case the orchestrating shell — not the engine — is where the product identity lives. Your editorial dark UI, your ⌘K verbs, your status cards: that's the product. Jan is a component.
 
@@ -113,7 +113,7 @@ That's the whole tax. Four habits. Everything else about shipping can be deferre
 
 **Mid-term (M2–M3 done):** You browse and download models in a native, editorial-styled browser that's *better than LM Studio's* because it's runner-agnostic and yours. ⌘K verbs span components: "download model…", "deep research…", "assign to Hermes…". Hermes tasks show in the activity feed; Hermes uses DeepResearch and the runner as tools; one SKILL.md corpus serves everything.
 
-**Long-term (open option, not a commitment):** If the harness becomes something others want, the composed architecture means shipping is a packaging-and-licensing exercise on code you fully own — not an untangling.
+**Long-term (open option, not a commitment):** If MOT Deck becomes something others want, the composed architecture means shipping is a packaging-and-licensing exercise on code you fully own — not an untangling.
 
 ## What this project is NOT
 

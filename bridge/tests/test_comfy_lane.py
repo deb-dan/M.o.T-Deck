@@ -569,8 +569,8 @@ try:
     ok("width" not in used,
        "…and a value for a knob this workflow does not have is dropped, never injected")
     ok(CUR.retarget_outputs(api) == 1
-       and api["8"]["inputs"]["filename_prefix"] == "harness/image",
-       "every Save node is retargeted under <output>/harness/ — otherwise the run "
+       and api["8"]["inputs"]["filename_prefix"] == "motdeck/image",
+       "every Save node is retargeted under <output>/motdeck/ — otherwise the run "
        "succeeds and the gallery, which only looks there, shows nothing")
 
     # ── THE WALKED CONVERTER BUG (2026-08-29, LIE class) ─────────────────────

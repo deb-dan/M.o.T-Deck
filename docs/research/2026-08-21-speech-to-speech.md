@@ -65,7 +65,7 @@ Sources: [repo README](https://github.com/kyutai-labs/moshi) · HF API trees · 
 - **Integration shape — better than expected:** `python -m moshi_mlx.local_web` runs an **aiohttp
   server on `--port 8998` (`--host localhost`)** serving its own web UI and a **WebSocket at
   `/api/chat`** carrying **Opus** frames both ways (`sphn.OpusStreamReader/Writer`, `local_web.py:279,
-  305, 317-318, 327, 389-390`). That is *exactly* the component shape the harness already knows:
+  305, 317-318, 327, 389-390`). That is *exactly* the component shape MOT Deck already knows:
   loopback port + health + a tab. The bundled web UI also does **echo cancellation**, which the
   README says materially improves quality — and which our own barge-in research (2026-08-15) found we
   do not have.

@@ -6,7 +6,7 @@ Covers:
                        active runner model (2026-08-06 MLX "runner 400" fix): the
                        registry id for llama.cpp (--alias), the model PATH for the
                        MLX servers (which would resolve our id on HF → 404 → 400).
-  * _reconcile_live  — runner-probe vs registry vs harness.yaml intent (ISSUE C).
+  * _reconcile_live  — runner-probe vs registry vs motdeck.yaml intent (ISSUE C).
   * busy-lock        — a second concurrent switch/load is rejected (409); the busy
                        flag is cleared in `finally` on BOTH the success and failure
                        paths of _do_switch (ISSUE A/E: no stuck-busy wedge).
@@ -114,7 +114,7 @@ def _ok_script(name, *a, **k):
 
 # ⚠️ U64: _do_switch runs the RUNNER start through `_script_tracked` (same command, its
 # pid recorded in data/switch-runner.pid so Cancel can stop THAT process instead of
-# pattern-matching "start_component.sh runner" across every harness root on the
+# pattern-matching "start_component.sh runner" across every motdeck root on the
 # machine). Every fake below therefore has to stand in for BOTH seams — a fake that
 # covered only `_script` would leave this unit test shelling out to the real script.
 def _fake_script(fn):

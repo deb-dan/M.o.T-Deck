@@ -21,7 +21,7 @@ Apple-Silicon timing anywhere**:
 | Risk | bus factor 1, self-labelled "Experimental" | bus factor 1, no CI, no releases |
 | Quality prior | the demo Debi actually liked | good, but a step below Music3 on vocals |
 
-**Whichever wins becomes the harness's own music lane** — our page, our controls, our
+**Whichever wins becomes MOT Deck's own music lane** — our page, our controls, our
 registry entry, in the shape the voice lane already established. This is **not** ComfyUI
 and not the Video/Audio tab milestone; it is a native lane like `▶ speak`.
 
@@ -29,7 +29,7 @@ and not the Video/Audio tab milestone; it is a native lane like `▶ speak`.
 48GB recommended, and `memory.budget_gb` is 48 — one render can claim the entire ledger.
 This script sits *outside* the ledger (deliberately — it adopts nothing), so the only
 thing preventing a swap storm is the click:
-**Harness panel → Models → the row with the gold `live` pill → Eject**
+**MOT Deck panel → Models → the row with the gold `live` pill → Eject**
 (and Models → Aux runner → Stop, if it is up).
 
 ---
@@ -40,7 +40,7 @@ Downloads ~11.9GB, builds a throwaway venv, renders a 60-second song at 30 flow 
 Expect a long first run: most of it is the download.
 
 ```
-cd ~/"Claude Proj Rootz/New Harness/harness" && ./scripts/measure_music.sh minimax
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck" && ./scripts/measure_music.sh minimax
 ```
 
 ## Paste block 2 — acestep.cpp (GGML/Metal)
@@ -50,7 +50,7 @@ Clones + builds with cmake (Metal and Accelerate auto-enable on macOS), download
 Needs `cmake` (`brew install cmake`) and Xcode command line tools.
 
 ```
-cd ~/"Claude Proj Rootz/New Harness/harness" && ./scripts/measure_music.sh acestep
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck" && ./scripts/measure_music.sh acestep
 ```
 
 Each run ends with a `RESULT` line carrying wall seconds, max RSS in GB, and the path
@@ -60,7 +60,7 @@ the numbers.
 ## Cleanup, after both
 
 ```
-rm -rf ~/"Claude Proj Rootz/New Harness/harness/data/music-trial" ~/"Claude Proj Rootz/New Harness/harness/data/music-trial-venv" ~/"Claude Proj Rootz/New Harness/harness/data/tmp/music-trial"
+rm -rf "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck/data/music-trial" "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck/data/music-trial-venv" "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck/data/tmp/music-trial"
 ```
 
 The weights stay in `~/.cache/huggingface` on purpose, so adopting the winner does not

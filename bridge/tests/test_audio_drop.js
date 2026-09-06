@@ -23,8 +23,8 @@ function check(name, cond) {
 }
 
 // ── the panel handler ──
-const at = html.indexOf('window.harnessNativeAudioDrop');
-check('the panel defines window.harnessNativeAudioDrop', at > 0);
+const at = html.indexOf('window.motdeckNativeAudioDrop');
+check('the panel defines window.motdeckNativeAudioDrop', at > 0);
 // body = from the assignment to the closing "};" of the function expression
 const body = at > 0 ? html.slice(at, html.indexOf('\n};', at) + 3) : '';
 
@@ -54,11 +54,11 @@ check('NO auto-pin: the handler never posts to /api/voice/entry-ref',
       body.indexOf('entry-ref') < 0);
 
 check('the image drop path is untouched (still its own hook)',
-      /window\.harnessNativeDrop = function\(name, dataUrl\)/.test(html));
+      /window\.motdeckNativeDrop = function\(name, dataUrl\)/.test(html));
 
 // ── the Swift half ──
-check('the shell routes audio drops to harnessNativeAudioDrop',
-      /harnessNativeAudioDrop/.test(swift));
+check('the shell routes audio drops to motdeckNativeAudioDrop',
+      /motdeckNativeAudioDrop/.test(swift));
 check('the shell accepts the same four suffixes',
       /audioMimes = \["wav": "audio\/wav", "mp3": "audio\/mpeg",[\s\S]{0,80}"flac": "audio\/flac", "m4a": "audio\/mp4"\]/
         .test(swift));
@@ -84,20 +84,20 @@ check('exactly ONE tab strip is built from the titles array',
 // Every tab must inherit every tab behaviour BY CONSTRUCTION. These pin the absence of
 // hardcoded counts, not the presence of any particular tab.
 check('one table declares every tab (id + title + url together)',
-      /struct HarnessTab \{[\s\S]{0,120}let title: String[\s\S]{0,120}let url: URL/.test(swift) &&
+      /struct MOTDeckTab \{[\s\S]{0,120}let title: String[\s\S]{0,120}let url: URL/.test(swift) &&
       /let id: String/.test(swift) &&
       // PHASE 2: the table split in two — the REGISTRY (everything that CAN be a tab)
       // and the strip, which is a var rebuilt from the nav model.
-      /let tabRegistry: \[HarnessTab\] = \[/.test(swift) &&
+      /let tabRegistry: \[MOTDeckTab\] = \[/.test(swift) &&
       // …and since the 9+3 ruling the strip's first draw is the PINS PLUS THE WINDOW,
       // because the window's seed is on the default strip.
-      /var tabs: \[HarnessTab\] = tabsFor\(navDefaultTopbar \+ navDefaultMru\)/.test(swift));
+      /var tabs: \[MOTDeckTab\] = tabsFor\(navDefaultTopbar \+ navDefaultMru\)/.test(swift));
 check('the two optional component tabs are rows in that table',
-      /HarnessTab\(id: "comfyui", title: "ComfyUI", url: URL\(string: "http:\/\/127\.0\.0\.1:8188"\)!\)/.test(swift) &&
+      /MOTDeckTab\(id: "comfyui", title: "ComfyUI", url: URL\(string: "http:\/\/127\.0\.0\.1:8188"\)!\)/.test(swift) &&
       // 8899, NOT upstream's 8888: that port belongs to Debi's standalone Unsloth app and
       // the start script's listener-scoped port clear would kill it. Same number as
-      // harness.yaml (contract test pins that side).
-      /HarnessTab\(id: "unsloth", title: "Unsloth", url: URL\(string: "http:\/\/127\.0\.0\.1:8899"\)!\)/.test(swift));
+      // motdeck.yaml (contract test pins that side).
+      /MOTDeckTab\(id: "unsloth", title: "Unsloth", url: URL\(string: "http:\/\/127\.0\.0\.1:8899"\)!\)/.test(swift));
 check('...and the shell never points a tab at :8888 again',
       !/127\.0\.0\.1:8888/.test(swift));
 // ⚠️ TITLED "Music Classic" SINCE THE CONSOLIDATION SLICE (Debi 2026-08-29: ONE Music
@@ -107,10 +107,10 @@ check('...and the shell never points a tab at :8888 again',
 // v1.5.60: the Classic shell tab is GONE (Debi hit ⋯ -> a second Music tab).
 // Classic loads ?solo=music IN the one Music tab via the header dropdown.
 check('Music Classic has NO shell tab (v1.5.60) — Classic rides the Music tab in place',
-      !/HarnessTab\(id: "music"/.test(swift) && /solo=music/.test(swift) === false
-      || (!/HarnessTab\(id: "music"/.test(swift)));
+      !/MOTDeckTab\(id: "music"/.test(swift) && /solo=music/.test(swift) === false
+      || (!/MOTDeckTab\(id: "music"/.test(swift)));
 check('...and the Studio is THE "Music" tab, at our own /compose page',
-      /HarnessTab\(id: "compose", title: "Music", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/compose"\)!\)/.test(swift));
+      /MOTDeckTab\(id: "compose", title: "Music", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/compose"\)!\)/.test(swift));
 check('special tabs are looked up BY ID, never written as a literal index',
       // PHASE 2: by ID rather than by title — the strip can be reordered now, and an id
       // survives a rename as well as a reorder. Strictly stronger than the title lookup.
@@ -154,10 +154,10 @@ check('no hardcoded tab count anywhere (the old `% 5` class of bug)',
 check('the right pane\'s mini strip is gone',
       !/rightSeg/.test(swift) && !/rightTabChanged/.test(swift));
 check('the split state is persisted under all four v2 keys',
-      /"harness\.split\.on"/.test(swift) && /"harness\.split\.right"/.test(swift) &&
-      /"harness\.split\.left"/.test(swift) && /"harness\.split\.focus"/.test(swift));
+      /"motdeck\.split\.on"/.test(swift) && /"motdeck\.split\.right"/.test(swift) &&
+      /"motdeck\.split\.left"/.test(swift) && /"motdeck\.split\.focus"/.test(swift));
 check('the split view autosaves its divider',
-      /autosaveName = "harness-split"/.test(swift));
+      /autosaveName = "motdeck-split"/.test(swift));
 check('min pane width 420 is enforced on the divider drag',
       /constrainMinCoordinate[\s\S]{0,200}420/.test(swift) &&
       /constrainMaxCoordinate[\s\S]{0,200}420/.test(swift));
@@ -251,7 +251,7 @@ check('a non-colliding drop with the split ON reuses the shared routing rule + s
       /func dropTab\([\s\S]{0,1600}routeTab\(tab, toPane: p\)[\s\S]{0,120}setFocus\(p\)/.test(swift));
 check('the drop persists through the existing keys, no new ones',
       /func dropTab\([\s\S]{0,1000}persistTabs\(\)/.test(swift) &&
-      !/harness\.split\.drag/.test(swift));
+      !/motdeck\.split\.drag/.test(swift));
 check('the ghost + hint are mouse-transparent child windows, cleaned up on every exit',
       /func makeFloater\([\s\S]{0,400}ignoresMouseEvents = true/.test(swift) &&
       /defer \{ tabDragActive = false; endDragVisuals\(\) \}/.test(swift) &&
@@ -320,10 +320,10 @@ check('only primaries are parked; copies are destroyed, never parked',
 // NEGATIVE: ghosts are deliberately NOT persisted — a relaunch restores the swap-based
 // arrangement, so no new defaults key may appear for them.
 check('no ghost state is persisted (no new UserDefaults key)',
-      !/harness\.split\.ghost/.test(swift) &&
-      (swift.match(/"harness\.split\.[a-z]+"/g) || [])
-        .every(k => ['"harness.split.on"', '"harness.split.left"',
-                     '"harness.split.right"', '"harness.split.focus"'].includes(k)));
+      !/motdeck\.split\.ghost/.test(swift) &&
+      (swift.match(/"motdeck\.split\.[a-z]+"/g) || [])
+        .every(k => ['"motdeck.split.on"', '"motdeck.split.left"',
+                     '"motdeck.split.right"', '"motdeck.split.focus"'].includes(k)));
 check('the second-instance path has its own [split] diagnostics',
       /slog\("ghost -> created /.test(swift) &&
       /slog\("ghost -> destroyed /.test(swift) &&
@@ -409,7 +409,7 @@ check('every OTHER Hermes load path records the generation too (first load, ⌘R
 check('the reload announces itself in the house log idiom, saying what triggered it',
       /\[hermes\] reload -> config generation \\\(gen\) \(\\\(why\)\)/.test(swift));
 check('no new UserDefaults key was invented for any of this',
-      !/harness\.hermes\.gen/.test(swift) && !/harness\.hermes\.config/.test(swift));
+      !/motdeck\.hermes\.gen/.test(swift) && !/motdeck\.hermes\.config/.test(swift));
 
 // ── the SPLIT-VIEW gap: a poll, gated on Hermes actually being on screen ──
 // maybeReloadStaleHermes only runs when a tab BECOMES visible, so a Hermes pane sitting
@@ -502,7 +502,7 @@ check('the shell conforms to WKScriptMessageHandler',
 // of the registry loop gated on an explicit id list. THAT GATE IS THE SECURITY PROPERTY:
 // a third-party component page must never be able to drive our tab strip.
 check('the handler is registered on the panel configuration',
-      /let panelCfg = WKWebViewConfiguration\(\)[\s\S]{0,400}panelCfg\.userContentController\.add\(self, name: "harness"\)[\s\S]{0,300}panelWV = DropWebView\(frame: \.zero, configuration: panelCfg\)/.test(swift));
+      /let panelCfg = WKWebViewConfiguration\(\)[\s\S]{0,400}panelCfg\.userContentController\.add\(self, name: "motdeck"\)[\s\S]{0,300}panelWV = DropWebView\(frame: \.zero, configuration: panelCfg\)/.test(swift));
 // ⚠️ WIDENED AT THE GOOSE SLICE, and it is still the same closed gate: the arm names
 // an EXPLICIT list of our own first-party bridge pages, and every other webview gets a
 // bare configuration. Goose is the third (loffice, aider, goose) — a pty terminal in
@@ -525,8 +525,8 @@ check('the handler is registered on the panel configuration',
 // and the one preload script we inject into it. A seventh id may only be added here by
 // someone who can say, at main.swift's arm, why that page is ours.
 check('...and on our own LOffice/Aider/Goose CLI/Generate/Compose/Goose UI pages, on nothing else',
-      (swift.match(/userContentController\.add\(self, name: "harness"\)/g) || []).length === 2
-      && /else if t\.id == "loffice" \|\| t\.id == "aider" \|\| t\.id == "goose"\s*\n?\s*\|\| t\.id == "comfy" \|\| t\.id == "compose" \|\| t\.id == "gooseui" \{[\s\S]{0,400}c\.userContentController\.add\(self, name: "harness"\)/.test(swift));
+      (swift.match(/userContentController\.add\(self, name: "motdeck"\)/g) || []).length === 2
+      && /else if t\.id == "loffice" \|\| t\.id == "aider" \|\| t\.id == "goose"\s*\n?\s*\|\| t\.id == "comfy" \|\| t\.id == "compose" \|\| t\.id == "gooseui" \{[\s\S]{0,400}c\.userContentController\.add\(self, name: "motdeck"\)/.test(swift));
 check('...so no other webview\'s configuration carries it',
       !/odyCfg\.userContentController\.add\(self/.test(swift)
       // the generic arm — every third-party component page — gets a BARE configuration.
@@ -535,15 +535,15 @@ check('...so no other webview\'s configuration carries it',
 // detectable instead of silently no-op (and never falls through to the default browser).
 check('the shell injects its own capability record into its first-party pages',
       /let shellAPI = \d+/.test(swift)
-      && /window\.harnessShell=\{api:\\\(shellAPI\),tabs:\[\\\(shellIds\)\]\};/.test(swift)
+      && /window\.motdeckShell=\{api:\\\(shellAPI\),tabs:\[\\\(shellIds\)\]\};/.test(swift)
       && /let shellIds = tabRegistry\.map \{ "\\"\\\(\$0\.id\)\\"" \}\.joined\(separator: ","\)/.test(swift)
       && /injectionTime: \.atDocumentStart, forMainFrameOnly: true/.test(swift));
 check('...the tab list it publishes is the REGISTRY, not the visible strip',
       /shellIds = tabRegistry\.map/.test(swift) && !/shellIds = tabs\.map/.test(swift));
 check('...and it is added to the panel and to our own bridge pages, nowhere else',
       (swift.match(/addUserScript\(shellScript\)/g) || []).length === 2);
-check('it accepts only the "harness" message name',
-      /message\.name == "harness"/.test(handlerBody));
+check('it accepts only the "motdeck" message name',
+      /message\.name == "motdeck"/.test(handlerBody));
 check('switchTab resolves an ID (title as the fallback) against the REGISTRY',
       // PHASE 2: the id is the stable key and the registry — not the visible strip — is
       // what it resolves against, so a tab the user hid is still reachable from its
@@ -664,7 +664,7 @@ check('...and the shell reads the window back from the bridge, which owns the ru
 // is the assertion below.
 check('hidden tabs collect in a ⋯ overflow menu, which is always reachable',
       /overflowButton = NSButton\(title: "⋯"/.test(swift)
-      && /func hiddenTabs\(\) -> \[HarnessTab\][\s\S]{0,200}tabRegistry\.filter/.test(swift)
+      && /func hiddenTabs\(\) -> \[MOTDeckTab\][\s\S]{0,200}tabRegistry\.filter/.test(swift)
       && /overflowButton\.isHidden = false/.test(swift)
       && /NSMenu\(\)/.test(swift));
 check('...and it SAYS there are none rather than vanishing',
@@ -678,9 +678,9 @@ check('the strip height is ONE constant, held as a constraint so it can be drive
 check('...and a 0pt strip is also isHidden, so it cannot still take a click',
       /tabBar\.isHidden = !show/.test(swift));
 check('the preference is persisted and restored BEFORE the panes lay out (no flash)',
-      /UserDefaults\.standard\.set\(tabBarHidden, forKey: "harness\.tabbar\.hidden"\)/.test(swift)
-      && /tabBarHidden = ud\.bool\(forKey: "harness\.tabbar\.hidden"\)/.test(swift)
-      && swift.indexOf('tabBarHidden = ud.bool(forKey: "harness.tabbar.hidden")')
+      /UserDefaults\.standard\.set\(tabBarHidden, forKey: "motdeck\.tabbar\.hidden"\)/.test(swift)
+      && /tabBarHidden = ud\.bool\(forKey: "motdeck\.tabbar\.hidden"\)/.test(swift)
+      && swift.indexOf('tabBarHidden = ud.bool(forKey: "motdeck.tabbar.hidden")')
          < swift.indexOf('let wasSplit = ud.bool'));
 check('BOTH entry points exist: a View-menu item carrying ⌘⇧T, and the ⋯ menu',
       /NSMenuItem\(title: "Hide Tab Bar",\s*\n?\s*action: #selector\(AppDelegate\.toggleTabBar\(_:\)\), keyEquivalent: "t"\)/.test(swift)
@@ -738,8 +738,8 @@ check('the panel PUSHES a layout change so the strip does not wait for the poll'
 check('applyNav no-ops when nothing changed (the poll can run forever safely)',
       /func applyNav\(_ ids: \[String\], _ window: \[String\]\)[\s\S]{0,400}guard !clean\.isEmpty, clean != navPinned \|\| win != navWindow else \{ return \}/.test(swift));
 check('the arrangement is persisted by ID as well as by index (an index is strip-relative)',
-      /ud\.set\(tabId\(currentTab\), forKey: "harness\.split\.leftId"\)/.test(swift)
-      && /ud\.set\(tabId\(rightTab\), forKey: "harness\.split\.rightId"\)/.test(swift)
+      /ud\.set\(tabId\(currentTab\), forKey: "motdeck\.split\.leftId"\)/.test(swift)
+      && /ud\.set\(tabId\(rightTab\), forKey: "motdeck\.split\.rightId"\)/.test(swift)
       && /tabs\.firstIndex\(where: \{ \$0\.id == savedLeftId \}\)/.test(swift));
 // v1.5.26 — DEBI'S ORDER. The same eleven ids in a new reading order; bridge/nav.py's
 // DEFAULT_TOPBAR and the panel's NAV_DEFAULT_TOPBAR carry the same list, and
@@ -750,9 +750,9 @@ check('the default strip is still the eleven default tabs, in Debi\'s order',
       /let navDefaultTopbar = \["mc", "hermes", "unsloth", "opencode", "odysseus",\s*\n?\s*"voicestudio", "comfyui", "aider", "loffice"\]/.test(swift)
       && /let navDefaultMru = \["compose", "voicebox"\]/.test(swift));
 check('the three pinnable VIEWS load the panel chromeless, one per view',
-      /HarnessTab\(id: "chat", title: "Chat", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=chat"\)!\)/.test(swift)
-      && /HarnessTab\(id: "models",[\s\S]{0,80}\?solo=models/.test(swift)
-      && /HarnessTab\(id: "caps",[\s\S]{0,90}\?solo=caps/.test(swift));
+      /MOTDeckTab\(id: "chat", title: "Chat", url: URL\(string: "http:\/\/127\.0\.0\.1:8700\/\?solo=chat"\)!\)/.test(swift)
+      && /MOTDeckTab\(id: "models",[\s\S]{0,80}\?solo=models/.test(swift)
+      && /MOTDeckTab\(id: "caps",[\s\S]{0,90}\?solo=caps/.test(swift));
 
 // ── solo mode ──
 check('soloView is pure and only knows the views solo mode declares',

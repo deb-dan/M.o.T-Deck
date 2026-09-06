@@ -1,9 +1,8 @@
-# HARNESS INTERNALS — how this system actually works
+# MOT DECK INTERNALS — how this system actually works
 
-> **NAMING (2026-08-21):** the PRODUCT is **MOT Deck** (*Mixture of Tools*) and its home
-> screen is **MOT Main**. The INTERNAL codename stays `harness` — every path, key, env
-> var, route and id in this document is current and correct as written. Where the text
-> says "Harness" as a product name, read "MOT Deck".
+> **IDENTITY (U150, 2026-09-07):** the PRODUCT is **MOT Deck** (*Mixture of Tools*) and
+> its home screen is **MOT Main**. The logo remains `M.O.T`; machine-owned names use
+> `motdeck`, `local.motdeck.app`, `MOTDeck`, `motdeck.yaml`, and `MOT_DECK_*`.
 
 Canonical technical reference. Every claim below was derived by reading the code in
 this repo (paths are repo-relative; `app.py:NNN` = `bridge/app.py` line NNN at the time
@@ -11,7 +10,7 @@ of writing — line numbers drift, symbol names don't, so functions are named to
 If this doc and the code disagree, **the code wins** — and this doc is wrong and should
 be fixed. Do not add claims here from memory or from chat history.
 
-Companion docs: `CLAUDE.md` (session log / decisions / pending QA), `docs/harness-architecture.md`
+Companion docs: `CLAUDE.md` (session log / decisions / pending QA), `docs/motdeck-architecture.md`
 (original design), `docs/handoff/FABLE-*.md` (per-feature specs).
 
 ---
@@ -33,9 +32,9 @@ Doctrine (enforced, not aspirational):
 
 - **Never edit `vendor/`.** Read it for recon. Integrate through config files, HTTP APIs,
   and plugin/extension points. Upstream changes arrive only as a **pin bump** in
-  `harness.yaml`, gated by `bridge/contract_tests/`.
+  `motdeck.yaml`, gated by `bridge/contract_tests/`.
 - **Pins, never branches** for Hermes (release tag) and Odysseus (commit sha) —
-  `harness.yaml` `components.*.pin`. Rollback = check out the old pin + reinstall.
+  `motdeck.yaml` `components.*.pin`. Rollback = check out the old pin + reinstall.
 - **No Docker.** Docker on Apple Silicon cannot reach Metal; everything is native.
 - **Two builds** (§3): a lean dev app that serves the repo live, and a fat/offline
   installer that serves a provisioned snapshot.
@@ -47,7 +46,7 @@ Doctrine (enforced, not aspirational):
 
 ## 2. Process & port map
 
-All bind loopback only. Ports come from `harness.yaml`.
+All bind loopback only. Ports come from `motdeck.yaml`.
 
 | Process | Port | Started by | Health |
 |---|---|---|---|
@@ -67,7 +66,7 @@ component re-wires it:
 
 - **hermes**: patches `~/.hermes/config.yaml` `model.{default,provider,base_url,api_key,context_length}`
   from the `runner:` block (start_component.sh:266-357, YAML-quoted); seeds/refreshes the
-  path-guard plugin into `~/.hermes/plugins/harness-path-guard/` and adds it to
+  path-guard plugin into `~/.hermes/plugins/motdeck-path-guard/` and adds it to
   `plugins.enabled` (start_component.sh:364-443); mints/reads `data/hermes.token` and
   exports `HERMES_DASHBOARD_SESSION_TOKEN` + `HERMES_DESKTOP=1` (cron ticker) at spawn.
 - **odysseus**: runs `scripts/seed_odysseus_jan.py` (start_component.sh:224) which upserts
@@ -77,7 +76,7 @@ component re-wires it:
 - **runner**: launches the engine for the model's format (§7), always on 6767, so
   components never learn which engine is behind it.
 
-Dependency closure lives in `harness.yaml` `depends_on` and is resolved by
+Dependency closure lives in `motdeck.yaml` `depends_on` and is resolved by
 `GET /api/components/{name}/start-plan` (app.py:470) → `POST …/start` provisions the whole
 chain in a background thread with per-step state (`_provision`, app.py:137).
 
@@ -88,18 +87,17 @@ chain in a background thread with per-step state (`_provision`, app.py:137).
 This has cost entire sessions. Read it twice.
 
 - **Lean / dev app** — `./scripts/build_app.sh` (no flags). `build_app.sh` generates
-  `app/Config.swift` with `harnessRoot` = **this repo** and `fatBuild = false`
+  `app/Config.swift` with `motdeckRoot` = **this repo** and `fatBuild = false`
   (build_app.sh:33-40). The app starts the bridge **from the repo**, so the bridge and
   panel you edit are the ones running. Use this for iteration.
 - **Fat / offline app** — `./scripts/build_app.sh --fat` (implies `--dmg`). Bundles a
   standalone CPython + a ~200-wheel arm64 wheelhouse + the pinned `llama-server` + a
   source **seed** tarball. On first launch `scripts/firstrun_fat.sh` extracts the seed to
-  **`~/Library/Application Support/Harness`** and builds all venvs offline
+  **`~/Library/Application Support/MOT Deck`** and builds all venvs offline
   (main.swift:259-276, firstrun_fat.sh:36-158). From then on the app serves the bridge and
   panel **from that snapshot**, not from the repo.
-- **Portable app** — `--portable` uses a *different* root: `~/Harness` (main.swift:126-131,
-  `scripts/firstrun.sh`), provisioned online via `bootstrap.sh`. So "where does Harness
-  live" has two answers depending on build flavor.
+- **Portable app** — `--portable` uses the same Application Support root, provisioned
+  online via `bootstrap.sh`. Packaged builds cannot silently split user state by flavor.
 
 **THE RULE:** a `--fat` rebuild refreshes the bundle's seed but **never** an
 already-provisioned snapshot (`firstrun_fat.sh` only extracts when the target dir is
@@ -107,7 +105,7 @@ absent, and writes a `.provisioned` marker at :158). After any code change the s
 must be refreshed, or the fat app serves stale code:
 
 ```
-DST="$HOME/Library/Application Support/Harness"
+DST="$HOME/Library/Application Support/MOT Deck"
 cp -R bridge/panel "$DST/bridge/panel"      # panel only, instant
 cp bridge/app.py "$DST/bridge/app.py"       # bridge code
 ```
@@ -119,19 +117,19 @@ Symptom of the trap: repo has the change, app shows old behavior.
 
 The panel route sends `Cache-Control: no-store` (app.py `panel`, app.py:162) — added
 because WKWebView heuristically cached `index.html`. If a stale panel persists anyway:
-`rm -rf ~/Library/WebKit/local.harness.app ~/Library/Caches/local.harness.app`
-(bundle id `local.harness.app`).
+`rm -rf ~/Library/WebKit/local.motdeck.app ~/Library/Caches/local.motdeck.app`
+(bundle id `local.motdeck.app`).
 
 ---
 
-## 4. `harness.yaml` key reference
+## 4. `motdeck.yaml` key reference
 
 Single source of truth for pins, ports, endpoints. Read by the bridge (`cfg()`), the
 shell scripts, and the build.
 
 | Key | Read by | Meaning |
 |---|---|---|
-| `version` | `GET /api/version` (app.py:1308) → MC Version tile | local harness version |
+| `version` | `GET /api/version` (app.py:1308) → MC Version tile | local motdeck version |
 | `components.<n>.repo` / `.pin` | `bootstrap.sh`, pin bumps | upstream + exact tag/sha |
 | `components.<n>.installed` | `/api/status`, panel | install state (committed, survives resets) |
 | `components.<n>.port` | bridge health checks, scripts | listen port |
@@ -300,14 +298,14 @@ Odysseus rows can never appear under the Hermes chip. `selectSession` /
 
 **Hermes stored-vs-live sid** — the crucial distinction: `session.resume` returns a **new
 live `session_id`** plus a durable `session_key` (the *stored* id). The panel keeps both
-(`hermesSid` live, `hermesStoredSid` durable, persisted in `localStorage['harness-hermes-sid'
-| 'harness-hermes-stored']`). The rail lists stored ids; prompts go to the live id; the
+(`hermesSid` live, `hermesStoredSid` durable, persisted in `localStorage['motdeck-hermes-sid'
+| 'motdeck-hermes-stored']`). The rail lists stored ids; prompts go to the live id; the
 guard audit records the stored id so an audit row can jump back to the exact conversation.
 
-Panel `localStorage` keys: `harness-chat-sid`, `harness-hermes-sid`, `harness-hermes-stored`,
-`harness-theme`, `harness-chat-rail`, `harness-sessions-rail`, `harness-sessions-width`,
-`harness-artifact-split`, `harness-canvas-split`, `harness-caps-section`,
-`harness-setup-done`, `harness-tour-done`.
+Panel `localStorage` keys: `motdeck-chat-sid`, `motdeck-hermes-sid`, `motdeck-hermes-stored`,
+`motdeck-theme`, `motdeck-chat-rail`, `motdeck-sessions-rail`, `motdeck-sessions-width`,
+`motdeck-artifact-split`, `motdeck-canvas-split`, `motdeck-caps-section`,
+`motdeck-setup-done`, `motdeck-tour-done`.
 
 ---
 
@@ -372,7 +370,7 @@ returns `ledger:{used_bytes,budget_bytes}`; the Models pane stamps `· RAM x / y
 truth** for "what is loaded" (a set `runner.model` with a live port is not enough). `/api/status`
 `running` and the Models pane's `live` pill both key off it. `POST /api/models/switch` runs
 `_do_switch` in a background thread with a busy lock, checks each step's exit code, and
-**rolls `harness.yaml` back** on load failure; `/api/models/switch-status` polls;
+**rolls `motdeck.yaml` back** on load failure; `/api/models/switch-status` polls;
 `/api/models/eject` clears `runner.model` (Stop = pause, Eject = forget — deliberate
 asymmetry). `POST /api/models/delete` only ever deletes under `data/models`
 (`_deletable_target`, app.py:1622, plus a second containment check).
@@ -385,7 +383,7 @@ have **no `--alias` flag**, so sending our registry id caused a 404 on huggingfa
 400. Fix: for `format: mlx` the wire id is the registry **`path`**, byte-identical to the
 `--model` argv, so the already-loaded model resolves with no reload. gguf is unchanged
 (the `--alias` makes id == wire). Applied at every wire site: direct lane, Hermes config
-fan-out, `seed_odysseus_jan.py` (+ `HARNESS_WIRE_MODEL` override). The registry id stays the
+fan-out, `seed_odysseus_jan.py` (+ `MOT_DECK_WIRE_MODEL` override). The registry id stays the
 internal key; four endpoints map back for display. Also: never trust an MLX server's
 `/v1/models` ids — `mlx_lm.server` enumerates the whole shared HuggingFace cache.
 
@@ -401,16 +399,16 @@ Fences Hermes's `write_file` / `patch` tool calls.
   **same** approval gate as dangerous shell commands (`tools/approval.py`,
   `plugin_rule:<key>` allowlist namespace) — so it renders in our existing approval card
   with zero panel work. `block` is a hard veto.
-- **Delivery:** the plugin lives in the repo at `guards/harness-path-guard/`
+- **Delivery:** the plugin lives in the repo at `guards/motdeck-path-guard/`
   (`plugin.yaml`, `__init__.py` with a pure matcher, `policy.yaml`, `README.md`) and is
-  **seeded** to `~/.hermes/plugins/harness-path-guard/` on every Hermes start
-  (copy-if-changed, `{HARNESS_ROOT}` substituted, `__pycache__` cleared) plus added to
+  **seeded** to `~/.hermes/plugins/motdeck-path-guard/` on every Hermes start
+  (copy-if-changed, `{MOT_DECK_ROOT}` substituted, `__pycache__` cleared) plus added to
   `plugins.enabled` via a YAML round-trip + atomic write (start_component.sh:364-443).
   User plugins are opt-in: a missing `plugins.enabled` key loads nothing.
-- **Policy semantics** (`guards/harness-path-guard/policy.yaml`, re-read on every gated
+- **Policy semantics** (`guards/motdeck-path-guard/policy.yaml`, re-read on every gated
   call): `deny` is checked **first and always wins** (`~/.ssh`, `~/.aws`, `~/.gnupg`,
   `~/Library/Keychains`, `~/.hermes/config.yaml`); then `allow` proceeds
-  (`{HERMES_CWD}`, `~/.hermes`, `{HARNESS_ROOT}/data`, `/tmp`, `{TMPDIR}`); anything else
+  (`{HERMES_CWD}`, `~/.hermes`, `{MOT_DECK_ROOT}/data`, `/tmp`, `{TMPDIR}`); anything else
   **escalates** to the approval card. Containment uses `os.path.commonpath` on realpaths —
   never string prefixes (the `/Users/debikEvil` trap). Fail-**closed** on unresolved V4A
   patches, an unreadable policy, or any exception. `rule_key` grain = the target's
@@ -428,7 +426,7 @@ Fences Hermes's `write_file` / `patch` tool calls.
 - **Logs pane:** `GET /api/logs/{name}` accepts `bridge|hermes|odysseus|searxng|runner|guard`
   (app.py:370); the `guard` source renders as an editorial list (time · tool · file rows with
   Reveal and a jump-to-chat via the stored sid) rather than raw JSON. Every source also has
-  Copy / Export (`POST /api/logs/{name}/export` → `~/Downloads/harness-logs/`) / Clear
+  Copy / Export (`POST /api/logs/{name}/export` → `~/Downloads/motdeck-logs/`) / Clear
   (truncate-not-delete, so a component holding the fd keeps appending).
 - **Honest limits:** gates `write_file`/`patch` **only**. Arbitrary writes from
   terminal/`execute_code` still ride upstream's dangerous-pattern gating (full shell coverage
@@ -443,7 +441,7 @@ Fences Hermes's `write_file` / `patch` tool calls.
 ## 9. Capabilities panel
 
 `#view-caps`, sub-tab chips **General / Tools / Skills / Models** (show/hide over one
-snapshot fetch; last section in `localStorage['harness-caps-section']`).
+snapshot fetch; last section in `localStorage['motdeck-caps-section']`).
 
 Backend: `GET /api/ody/caps` (app.py:829) aggregates Odysseus's two stores plus search
 availability, partial-safe with an `errors{}` map; writes go through the pure
@@ -499,7 +497,7 @@ Unit-tested: `bridge/tests/test_caps_map.py`.
   ✎ Edit → editor/preview stack with a persisted split, 600ms-debounced re-render through
   the same renderer, Copy / Revert / Save. `POST /api/artifact/save` (app.py:3465) is
   hardened: basename-only, extension whitelist, 5MB cap, server-built path under
-  `~/Downloads/harness-artifacts/`, never-clobber ` (n)` suffix; tested in
+  `~/Downloads/motdeck-artifacts/`, never-clobber ` (n)` suffix; tested in
   `bridge/tests/test_artifact_save.py`.
 - **`POST /api/open`** (app.py:3385) is the only escape hatch: `{url}` http(s) only, or
   `{path, action:"open"|"reveal"}` whose realpath must exist and start with `$HOME` —
@@ -514,7 +512,7 @@ Derived from the `@app.*` decorators in `bridge/app.py`.
 **Panel / status / logs**
 - `GET /` — the panel (sends `Cache-Control: no-store`)
 - `GET /api/status` — components, provisioning overlay, runner/live model, degraded flags
-- `GET /api/version` — local harness version
+- `GET /api/version` — local motdeck version
 - `GET /api/analytics` — tokens today, turns, avg tok/s, cache-hit %
 - `GET /api/logs/{name}` · `POST /api/logs/{name}/clear` · `POST /api/logs/{name}/export`
 
@@ -569,11 +567,11 @@ Learned the hard way; each one cost real time.
    pidfile first, re-verifies the full command/path identity, and refuses to touch a
    stranger listening on :8700.
 4. **Relaunching the installed app:** ask the stable bundle id to quit, then reopen that
-   same identity: `osascript -e 'tell application id "local.harness.app" to quit'` followed
-   by `open -b local.harness.app`. The installed filename may be `Harness.app` or
-   `M.O.T.app`; `ship.sh` validates and selects the actual bundle before changing anything.
-5. **Stale panel:** `rm -rf ~/Library/WebKit/local.harness.app ~/Library/Caches/local.harness.app`
-   (bundle id `local.harness.app`).
+   same identity: `osascript -e 'tell application id "local.motdeck.app" to quit'` followed
+   by `open -b local.motdeck.app`. The installed filename may be `MOT Deck.app` or
+   user-renamed; `ship.sh` validates and selects the actual bundle before changing anything.
+5. **Stale panel:** `rm -rf ~/Library/WebKit/local.motdeck.app ~/Library/Caches/local.motdeck.app`
+   (bundle id `local.motdeck.app`).
 6. **The snapshot rule** (§3) — the fat app serves the snapshot, not the repo.
 7. **Submodule hygiene:** `git -C vendor/<name> reset --hard` before any pin checkout
    (Odysseus rewrites its own scripts at runtime); remove stale
@@ -596,7 +594,7 @@ Learned the hard way; each one cost real time.
 Audited by reading `scripts/*`, `app/main.swift`, `bridge/app.py`, `guards/` (2026-08-07).
 Motivation: apps that scatter files into system or Homebrew prefixes.
 
-### Everything the harness writes
+### Everything MOT Deck writes
 
 | Path | Written by (file:line) | When |
 |---|---|---|
@@ -609,15 +607,15 @@ Motivation: apps that scatter files into system or Homebrew prefixes.
 | `<repo>/data/logs/*.log` (incl. `guard.log`) | `start.sh:14`, `start_component.sh`, `app.py:2654-2667` | runtime |
 | `<repo>/data/hermes.token` (chmod 600) | `start_component.sh:466-467` | hermes start |
 | `<repo>/data/analytics.db`, `<repo>/data/thinking.db` | `app.py:1055`, `app.py:1150` | runtime |
-| `<repo>/harness.yaml` (in-place line rewrite) | `app.py:1371-1384`, `install_component.sh:72-78` | switch / install |
+| `<repo>/motdeck.yaml` (in-place line rewrite) | `app.py:1371-1384`, `install_component.sh:72-78` | switch / install |
 | `<repo>/bridge/panel/assets/vendor/*` | `fetch_vendor_assets.sh:93-105` | asset fetch |
 | `<repo>/dist/*`, `<repo>/app/Config.swift` (generated) | `build_app.sh:29-245` | build |
-| `~/Library/Application Support/Harness/**` | `main.swift:259-276`, `firstrun_fat.sh:36-158` | **fat** first run |
-| `~/Harness/**` | `main.swift:197-219`, `firstrun.sh` | **portable** first run |
+| `~/Library/Application Support/MOT Deck/**` | `main.swift:259-276`, `firstrun_fat.sh:36-158` | **fat** first run |
+| `~/Library/Application Support/MOT Deck/**` | `main.swift`, `firstrun*.sh` | **portable + fat** first run |
 | `~/.hermes/config.yaml` | `start_component.sh:266-357`, `app.py:3528-3554` (atomic) | hermes start / MCP toggle |
-| `~/.hermes/plugins/harness-path-guard/*` | `start_component.sh:364-443` | hermes start |
-| `~/Downloads/harness-artifacts/<name>` | `app.py:3489-3498` (sanitizer at 3437-3461) | Canvas Save |
-| `~/Downloads/harness-logs/<name>-<ts>.log` | `app.py:401-418` | log export |
+| `~/.hermes/plugins/motdeck-path-guard/*` | `start_component.sh:364-443` | hermes start |
+| `~/Downloads/motdeck-artifacts/<name>` | `app.py:3489-3498` (sanitizer at 3437-3461) | Canvas Save |
+| `~/Downloads/motdeck-logs/<name>-<ts>.log` | `app.py:401-418` | log export |
 | `/tmp`, `$TMPDIR` | `install_llamacpp.sh:79-84` (version probe, removed after) | install |
 | `~/.local/bin` (uv) | `firstrun.sh:31-32` — astral.sh installer's own default | first run, only if `uv` is missing |
 | `vendor/hermes/{node_modules,hermes_cli/web_dist}` | `install_component.sh:44-51`, `build_app.sh:123-130` | hermes install (upstream-gitignored build output) |
@@ -650,18 +648,18 @@ containment check) and download cleanup (`app.py:2027-2043`).
    documented method, but a classic curl-pipe-to-shell with **no checksum verification**. We
    pass no `UV_INSTALL_DIR`/`CARGO_HOME`, so **we do not control where uv lands**; we merely
    assume `~/.local/bin` when extending our own subprocess `PATH`.
-3. **Two provisioned roots** for the same concept: `~/Harness` (portable) vs
-   `~/Library/Application Support/Harness` (fat). Know which build you have before debugging.
+3. **One provisioned root** for both packaged build flavors:
+   `~/Library/Application Support/MOT Deck`. A second root is an identity-migration defect.
 4. `~/.hermes/config.yaml` is written by our own scripts/bridge while the guard's deny-list
-   forbids the **agent** from writing it (`policy.yaml:24`). Intentional (the harness manages
+   forbids the **agent** from writing it (`policy.yaml:24`). Intentional (MOT Deck manages
    Hermes's config; the agent must not), but it reads like a contradiction at first glance.
 5. YAML round-trip writes to `~/.hermes/config.yaml` (`yaml.safe_dump`) **drop comments and
    key ordering** on the writes that add `mcp_servers` / `plugins.enabled`. Accepted property.
 6. The app is **ad-hoc codesigned** (`build_app.sh:235-237`), not notarized — a fresh Mac may
    need a right-click-open / xattr clear.
-7. Odysseus's default admin credentials live in `harness.yaml` in plaintext
+7. Odysseus's default admin credentials live in `motdeck.yaml` in plaintext
    (`admin/admin123`) because the bridge logs in server-side. Loopback-only, personal use.
-8. Secrets posture: cloud keys belong in `.env`, never in `harness.yaml`; the Capabilities
+8. Secrets posture: cloud keys belong in `.env`, never in `motdeck.yaml`; the Capabilities
    writer refuses any `*_api_key` (app.py:788-790); Hermes redacts credentials in approval
    commands upstream before they reach our card.
 

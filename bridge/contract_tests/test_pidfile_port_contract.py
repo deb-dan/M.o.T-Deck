@@ -12,7 +12,7 @@ one "listening on http://127.0.0.1:6767". `_launch_llama`'s speculative-decoding
 arm relaunches and rewrites data/runner.pid with the LAST attempt's `$!` — the one that
 died. Consequences, all quiet: `_reap_pidfile runner` could not stop the real runner (it
 fell through to `_clear_port`, which is why nobody noticed), and the
-"[harness] runner … pid=$(cat data/runner.pid)" line the panel shows was false. Health
+"[motdeck] runner … pid=$(cat data/runner.pid)" line the panel shows was false. Health
 never noticed, because health is probe-based — which is exactly why a dead pidfile could
 sit there for weeks.
 

@@ -10,7 +10,7 @@
      the static fallback banner below and copied into the footer once JS runs. If Debi
      reports a stamp older than the one in this file, the bridge is serving a stale copy
      and the answer is a ship + hard reload — a question that used to be unanswerable. -->
-<meta name="harness-build" content="loffice-2026-08-29b">
+<meta name="motdeck-build" content="loffice-2026-08-29b">
 <!--
   ══ TWO TIERS, AND THAT IS THE WHOLE DESIGN ═══════════════════════════════════
   This page has failed three times on a Mac none of us can reach, and every time the
@@ -46,7 +46,7 @@
      The page reports its own boot, step by step, to the bridge, which writes it down.
      The next report is a read, not a hypothesis:
 
-         cat ~/Library/Application\ Support/Harness/data/logs/loffice-boot.log
+         cat ~/Library/Application\ Support/MOT Deck/data/logs/loffice-boot.log
 
      (or the panel's Logs view → "loffice boot"). The bridge log carries the same
      lines tagged `loffice-diag`, so `grep loffice <bridge.log>` finds ALL of them.
@@ -88,10 +88,30 @@
   // The build is READ from the <meta> above rather than written again here: the stamp
   // exists to answer "is the bridge serving the file I shipped?", and a second copy of
   // it that could drift from the first would make that answer a lie.
-  var bmeta = document.querySelector('meta[name="harness-build"]');
+  var bmeta = document.querySelector('meta[name="motdeck-build"]');
   window.bx('script-start', 'build=' + ((bmeta && bmeta.content) || '?')
             + ' ua=' + navigator.userAgent
             + ' url=' + location.href + ' vis=' + document.visibilityState);
+
+  // U150: LOffice deliberately has no external boot dependency, so its MOT Deck-owned
+  // preference migration lives inside this already-required first script. The new key
+  // wins when both exist; unrelated storage is untouched; storage denial cannot break
+  // the Tier-1 editor. This runs before any theme, chrome or design preference is read.
+  try {
+    Object.keys(localStorage).forEach(function (oldKey) {
+      var newKey = oldKey.indexOf('harness.') === 0
+        ? 'motdeck.' + oldKey.slice(8)
+        : (oldKey.indexOf('harness-') === 0
+            ? 'motdeck-' + oldKey.slice(8) : '');
+      if (!newKey) return;
+      if (localStorage.getItem(newKey) === null) {
+        localStorage.setItem(newKey, localStorage.getItem(oldKey));
+      }
+      localStorage.removeItem(oldKey);
+    });
+  } catch (_) {
+    /* Storage denial must not prevent LOffice from booting. */
+  }
 
   // ══ THEME COHERENCE — "non chrome thing again" ══════════════════════════════
   // This page is served from the SAME ORIGIN as the panel, so the two theme choices
@@ -99,8 +119,8 @@
   // and no toggle on this page ON PURPOSE: a tab that could disagree with the app it
   // lives in is exactly the complaint.
   //
-  //   harness-theme  === 'light'   → data-theme="light"   (the panel's own palette)
-  //   harness-chrome === 'studio'  → data-chrome="studio" (the panel's control shapes)
+  //   motdeck-theme  === 'light'   → data-theme="light"   (the panel's own palette)
+  //   motdeck-chrome === 'studio'  → data-chrome="studio" (the panel's control shapes)
   //
   // ⚠️ IT RUNS HERE, IN THE HEAD, BEFORE THE STYLESHEET IS PARSED, for the same reason
   // the panel does it in its own pre-paint block: applying it later would paint the
@@ -109,8 +129,8 @@
   window.syncSkin = function (why) {
     var theme = null, chrome = null;
     try {
-      theme = localStorage.getItem('harness-theme');
-      chrome = localStorage.getItem('harness-chrome');
+      theme = localStorage.getItem('motdeck-theme');
+      chrome = localStorage.getItem('motdeck-chrome');
     } catch (e) { return ''; }          // private mode: the defaults stand, silently
     var d = document.documentElement;
     if (theme === 'light') d.setAttribute('data-theme', 'light');
@@ -124,7 +144,7 @@
     return now;
   };
 
-  /* ══ THE HARNESS-DESIGN AXIS ON /office (v1.5.25, Debi's GO) ═════════════════
+  /* ══ MOT DECK DESIGN AXIS ON /office (v1.5.25, Debi's GO) ═════════════════
      The THIRD axis, and the only one whose CSS is NOT in this file: a theme is a
      palette, chrome is a control shape, a DESIGN is layout + type + spacing +
      component shape together, so it is a separate asset
@@ -132,7 +152,7 @@
 
      ⚠️ THIS PAGE HAS NO DESIGN BUTTON, ON PURPOSE, exactly as it has no theme
      button: a tab that could disagree with the app it lives in is the original
-     complaint. The panel's ✦ writes `harness-design`; this reads it.
+     complaint. The panel's ✦ writes `motdeck-design`; this reads it.
 
      THE SAME FOUR PROPERTIES THE PANEL'S IMPLEMENTATION IS BUILT FOR (its
      designApply() is the reference — read, not edited):
@@ -142,7 +162,7 @@
          parsing (render-blocking, like any stylesheet) and THE ATTRIBUTES ARE
          STAMPED ONLY IN ITS onload. An unstyled beat in Editorial is
          acceptable; a half-painted studio is not.
-       · IT NEVER WRITES. harness-theme / harness-chrome / harness-design are
+       · IT NEVER WRITES. motdeck-theme / motdeck-chrome / motdeck-design are
          all read-only here, so leaving studio in the panel restores this tab
          to whatever theme and chrome the user had.
        · UNKNOWN → EDITORIAL. Any value that is not 'studio' or 'studio-light'
@@ -199,7 +219,7 @@
   }
   window.syncDesign = function (why) {
     var want = null;
-    try { want = localStorage.getItem('harness-design'); } catch (e) { return 'editorial'; }
+    try { want = localStorage.getItem('motdeck-design'); } catch (e) { return 'editorial'; }
     if (want !== 'studio' && want !== 'studio-light') want = 'editorial';
     var d = document.documentElement;
     if (want === 'editorial') {
@@ -214,7 +234,7 @@
     // a closure would then paint the variant the user has already left.
     var stamp = function () {
       var v = null;
-      try { v = localStorage.getItem('harness-design'); } catch (e) { v = null; }
+      try { v = localStorage.getItem('motdeck-design'); } catch (e) { v = null; }
       if (v !== 'studio' && v !== 'studio-light') {
         d.removeAttribute('data-design'); d.removeAttribute('data-dvariant'); return;
       }
@@ -630,7 +650,7 @@
   #richbar.on{display:block}
   /* ══ right: ASK THE MODEL ═════════════════════════════════════════════════════
      Slice 2. This used to be a vertical label promising a panel in a later slice,
-     which is the thing Debi called out: a spreadsheet tab inside an AI harness with
+     which is the thing Debi called out: a spreadsheet tab inside an AI motdeck with
      no way to reach the model "defeats the purpose".
      ⚠️ IT CAN NOW WRITE, AND IT NEEDS NO CSS OF ITS OWN TO DO IT. A proposed change
      is rendered by actCard() out of the classes already here — .aicode for the box,
@@ -918,7 +938,7 @@
 
   /* ── the START SCREEN — #empty, rebuilt as the Sheets home band ───────────── */
   /* Modelled on docs.google.com/spreadsheets: a "Start a new spreadsheet" row with a
-     Blank card first, then templates, then the recent list. ⚠️ IT KEEPS THE HARNESS
+     Blank card first, then templates, then the recent list. ⚠️ IT KEEPS THE MOT DECK
      PALETTE rather than going white like the strip: this screen is app chrome (no
      document is open), and the card thumbnails carry the white page instead. */
   #home{width:100%;max-width:880px;display:flex;flex-direction:column;gap:26px}
@@ -947,7 +967,7 @@
 
   /* ══ THE TWO PANEL AXES, FOLLOWED — NOT REINVENTED ═════════════════════════════
      Debi's "non chrome thing again": this tab ignored the ◐ theme and the ▣ chrome
-     the rest of the harness obeys, so switching the app to light left one dark
+     the rest of MOT Deck obeys, so switching the app to light left one dark
      rectangle behind. Both attributes are written on <html> by the head script from
      the panel's OWN localStorage keys; these rules are the whole of what they mean
      here.
@@ -1565,7 +1585,7 @@
 bx('boot-inline', 'tier-1 script running');
 
 const el = id => document.getElementById(id);
-const BUILD = (document.querySelector('meta[name="harness-build"]') || {}).content || '';
+const BUILD = (document.querySelector('meta[name="motdeck-build"]') || {}).content || '';
 
 let files = [], current = null, dirty = false, busy = false, armed = null;
 // WHEN the armed delete was armed. It is a timestamp and NOT a timer — see armDelete().
@@ -1916,9 +1936,9 @@ function mi(id, run) {
 
 // ⌂ MOT Deck — the way back, and the reason the menu exists at all.
 //
-// ⚠️ THE SHELL MUST REGISTER THE "harness" SCRIPT HANDLER ON THIS WEBVIEW FOR THIS TO
+// ⚠️ THE SHELL MUST REGISTER THE "motdeck" SCRIPT HANDLER ON THIS WEBVIEW FOR THIS TO
 // WORK. Today it is added to the PANEL's webview only (app/main.swift builds
-// `panelCfg` with `userContentController.add(self, name: "harness")` and gives every
+// `panelCfg` with `userContentController.add(self, name: "motdeck")` and gives every
 // other tab a plain configuration), so on the shipped shell this call finds no handler
 // and says so instead of doing nothing. The one-line shell change is in the session
 // report; this side is written to be correct before and after it.
@@ -1931,7 +1951,7 @@ function goHome() {
   let h = null;
   try {
     h = (window.webkit && window.webkit.messageHandlers
-         && window.webkit.messageHandlers.harness) || null;
+         && window.webkit.messageHandlers.motdeck) || null;
   } catch (e) { h = null; }
   if (h) {
     // id first, title second — the shell resolves the stable id against its registry
@@ -2612,7 +2632,7 @@ function colStats() {
 
 // ── View: zoom and gridlines ─────────────────────────────────────────────────
 const ZOOMS = [50, 75, 100, 125, 150];
-const LS_ZOOM = 'harness-office-zoom', LS_LINES = 'harness-office-lines';
+const LS_ZOOM = 'motdeck-office-zoom', LS_LINES = 'motdeck-office-lines';
 let zoomNow = 100;
 function setZoom(z) {
   zoomNow = ZOOMS.indexOf(Number(z)) >= 0 ? Number(z) : 100;
@@ -2651,7 +2671,7 @@ function fullWidth() {
    ⚠️ THE BUTTONS ARE NOT LISTED HERE. The markup is the list — `#toolbar .tb` in
    document order — because two lists of the same twelve things is one list too many, and
    the one in the markup is the one that has to be right for the row to look right. */
-const LS_TOOLBAR = 'harness-office-toolbar';
+const LS_TOOLBAR = 'motdeck-office-toolbar';
 /* ⚠️ ONE DOCUMENTED EXCEPTION to "the button clicks the row", and it is a genuine
    difference in kind rather than a shortcut: `Edit → Find…` is a VERB (open the find
    bar), while a toolbar button that LIGHTS while the bar is open is a STATE, so pressing
@@ -3328,7 +3348,7 @@ function helpFidelity() {
             + 'mapper.'), 'dim');
 }
 // ⚖️ ABOUT CARRIES THE AGPL ATTRIBUTION — condition #3 of the 2026-08-27 ONLYOFFICE
-// ruling, which says that if this harness is ever handed to anyone else, the About
+// ruling, which says that if this MOT Deck build is ever handed to anyone else, the About
 // surface must name ONLYOFFICE + AGPL-3.0 and link the exact vendored source. It is
 // read from /api/oo/status (bridge/oo.py's ATTRIBUTION) rather than retyped, so this
 // and the editor page's own footer cannot drift apart. It states the licence even
@@ -6079,7 +6099,7 @@ async function importFile(file) {
 // "no way to load model or use model there, which defeats the purpose." Quite.
 //
 // THE ONE ARCHITECTURAL RULE: this panel invents NOTHING on the wire. It speaks the
-// harness's EXISTING direct chat lane — `POST /api/chat/direct`, the same endpoint and
+// MOT Deck's EXISTING direct chat lane — `POST /api/chat/direct`, the same endpoint and
 // the same `{session, message}` body the main panel's CHAT mode posts, and the same
 // `data: {...}` SSE frames — so the model, its sampling settings, the max_tokens fix
 // and every future improvement to that lane arrive here for free. There is no
@@ -6190,7 +6210,7 @@ function aiPaint(recount) {
   const pill = el('ai-model');
   pill.textContent = aiModel || 'no model loaded';
   pill.className = 'pill' + (aiModel ? ' on' : '');
-  pill.title = aiModel ? ('the live model on the harness runner: ' + aiModel)
+  pill.title = aiModel ? ('the live model on MOT Deck runner: ' + aiModel)
                        : 'Load a model in Models (MOT Deck) to use this';
   el('ai-send').disabled = aiBusy || agentHistoryLoading || !aiModel;
   el('ai-in').disabled = aiBusy || agentHistoryLoading;
@@ -6293,7 +6313,7 @@ function aiPreamble(file, sheet, stale) {
        + 'last-saved version if it matters to the answer.\n')
     : '';
   return 'You are the assistant built into LOffice, a spreadsheet editor for Excel '
-       + '(.xlsx) workbooks inside the Harness workspace.\n'
+       + '(.xlsx) workbooks inside the MOT Deck workspace.\n'
        + where + '\n' + staleness
        + 'Answer as a spreadsheet expert. Unless the user names a programming '
        + 'language, a question about a "function" means a SPREADSHEET function with '
@@ -8012,7 +8032,7 @@ async function aiSend() {
   } else {
     bx('ai-reply-ok', 'chars=' + out.length + ' thinking=' + think.length);
     aiRenderBody(turn.body.parentNode, out);
-    if (think) {                      // kept, collapsed — the harness shows its working
+    if (think) {                      // kept, collapsed — MOT Deck shows its working
       const det = document.createElement('details');
       det.className = 'aidet';
       const sum = document.createElement('summary');
@@ -8053,7 +8073,7 @@ function aiGrow() {
 // any of that.
 //
 // ⚠️ THE ONE ARCHITECTURAL RULE IS THE SAME ONE THE QUICK LANE ALREADY OBEYS: this
-// page invents NOTHING on the wire. The Agent lane speaks the harness's EXISTING
+// page invents NOTHING on the wire. The Agent lane speaks MOT Deck's EXISTING
 // Hermes lane — `POST /api/hermes/chat` with `{session_id, message, stored_sid}` and
 // the SAME `data: {...}` SSE frames the main panel's Hermes mode reads — plus
 // `POST /api/hermes/approve` `{session_id, choice}` to answer a card. There is no
@@ -8083,9 +8103,9 @@ const AGENT_SESSION_NAME = 'loffice';          // spec §4: ONE dedicated sessio
 // LOffice projection recover the human question without guessing where a workbook dump
 // ends. The bridge separately fences legacy sessions created before this marker.
 const AGENT_USER_MARKER = '\n\n--- M.O.T LOffice user question ---\n\n';
-const LS_LANE = 'harness-office-lane';
-const LS_AGENT_SID = 'harness-office-agent-sid';
-const LS_AGENT_STORED = 'harness-office-agent-stored';
+const LS_LANE = 'motdeck-office-lane';
+const LS_AGENT_SID = 'motdeck-office-agent-sid';
+const LS_AGENT_STORED = 'motdeck-office-agent-stored';
 // ⚠️ TWO VARIABLES, NOT ONE, AND THE SECOND ONE IS A BUG FIX FOUND ON THE REAL PAGE.
 // `aiLane` is the lane IN EFFECT; `laneWant` is the lane Debi ASKED for. They have to be
 // separate because the gate is probed ASYNCHRONOUSLY: for the first few hundred
@@ -8797,7 +8817,7 @@ function agentExpire(wrap) {
 //   · the model said "Done … new planned total 1,635" while the sheet said 1,435, and
 //     NOTHING in the panel contradicted it. → Three rules here, and they are the
 //     product:
-//       1. csStatusLine() is HARNESS-AUTHORED and goes under EVERY agent reply that
+//       1. csStatusLine() is MOT-DECK-AUTHORED and goes under EVERY agent reply that
 //          staged something: "⏳ staged — nothing is written until you press Apply."
 //          Narration never stands alone.
 //       2. a success badge renders ONLY from a receipt — an actual apply response with
@@ -9209,7 +9229,7 @@ function csStamp(card, text) {
   card._bar.appendChild(grow);
 }
 
-// THE HARNESS-AUTHORED STATUS LINE. It is not the model's sentence and it is not
+// THE MOT-DECK-AUTHORED STATUS LINE. It is not the model's sentence and it is not
 // optional: every turn that staged something carries it, under the reply.
 function csStatusLine(wrap) {
   const d = document.createElement('div');
@@ -9511,7 +9531,7 @@ function extAct(plan, name) {
 
 function aiSetOpen(open, why) {
   document.body.classList.toggle('aioff', !open);
-  try { localStorage.setItem('harness-office-ai', open ? '1' : '0'); } catch (e) { /* private mode */ }
+  try { localStorage.setItem('motdeck-office-ai', open ? '1' : '0'); } catch (e) { /* private mode */ }
   bx(open ? 'ai-open' : 'ai-collapse', why || '');
   if (open) { aiEmpty(); aiPaint(true); aiRefreshModel(); }
   aiPaint();
@@ -9594,8 +9614,8 @@ function pageTickStart() {
 // can make a page feel worse than no resize handle.
 const RAIL_W_DEF = 236, RAIL_W_MIN = 160, RAIL_W_MAX = 420;
 const AI_W_DEF = 334, AI_W_MIN = 260, AI_W_MAX = 560;
-const LS_RAIL = 'harness-office-rail', LS_RAIL_W = 'harness-office-rail-w';
-const LS_AI_W = 'harness-office-ai-w';
+const LS_RAIL = 'motdeck-office-rail', LS_RAIL_W = 'motdeck-office-rail-w';
+const LS_AI_W = 'motdeck-office-ai-w';
 
 // Total: a stored value can be anything (hand-edited, a stale key from another
 // build, "NaN"), and a pane 3 px wide would be indistinguishable from the bug being
@@ -9717,7 +9737,7 @@ el('ai-ctx').onclick = () => {
 el('ai-in').oninput = aiGrow;
 el('ai-in').onkeydown = ev => {
   // Enter asks, Shift+Enter is a newline — the composer convention everywhere else
-  // in the harness.
+  // in MOT Deck.
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); aiSend(); }
 };
 
@@ -10044,11 +10064,11 @@ window.addEventListener('beforeunload', ev => {
 // two are not both alive at the same moment. It is idempotent and reads two
 // localStorage keys, so calling it too often costs nothing.
 window.addEventListener('storage', ev => {
-  // harness-design joined the list at v1.5.25 — the ✦ in the panel has to reach this
+  // motdeck-design joined the list at v1.5.25 — the ✦ in the panel has to reach this
   // tab the same way the ◐ and the ▣ already do, or one window would sit in a design
   // the rest of the app has left.
-  if (!ev || !ev.key || ev.key === 'harness-theme' || ev.key === 'harness-chrome'
-      || ev.key === 'harness-design') {
+  if (!ev || !ev.key || ev.key === 'motdeck-theme' || ev.key === 'motdeck-chrome'
+      || ev.key === 'motdeck-design') {
     syncSkin('storage');
   }
 });
@@ -10127,7 +10147,7 @@ async function boot() {
   let railWant = true, aiWant = true;
   try {
     railWant = localStorage.getItem(LS_RAIL) !== '0';
-    aiWant = localStorage.getItem('harness-office-ai') !== '0';
+    aiWant = localStorage.getItem('motdeck-office-ai') !== '0';
     // ⚠️ THE LANE IS REMEMBERED BUT NEVER TRUSTED: it is only ADOPTED once agentProbe
     // has said the gate is open (lanePaint drops back to Quick otherwise), so a
     // remembered Agent lane on a machine where Hermes has since stopped lands you in

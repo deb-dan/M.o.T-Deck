@@ -12,7 +12,7 @@ M0. The STANDALONE installers (opencode, searxng) never learned to, and ship.sh'
 manifest merge is additive-only, so nothing downstream would ever fix it.
 
 The rule this file enforces, derived rather than listed: every scripts/install_<x>.sh
-whose <x> IS a component in harness.yaml must flip that component's flag. Installers
+whose <x> IS a component in motdeck.yaml must flip that component's flag. Installers
 for things that are not components (install_music.sh — the music lane has its own
 disk-probe status endpoint; install_aider.sh — a lane, not a card; install_mlx.sh,
 install_llamacpp.sh — runtimes) are exempt BY CONSTRUCTION, with no exemption list to
@@ -41,7 +41,7 @@ from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 
 SCRIPTS = os.path.join(ROOT, "scripts")
 FLIP = os.path.join(SCRIPTS, "flip_installed.py")
-MANIFEST_PATH = os.path.join(ROOT, "harness.yaml")
+MANIFEST_PATH = os.path.join(ROOT, "motdeck.yaml")
 MANIFEST = yaml.safe_load(open(MANIFEST_PATH, encoding="utf-8").read())
 COMPONENTS = list(MANIFEST["components"])
 APP = _APP_SOURCE
@@ -119,7 +119,7 @@ def test_every_installable_component_has_an_installer_that_flips():
     ok(allow, "the allowlist parsed empty")
     standalone = _component_installers()
     for name in allow:
-        ok(name in COMPONENTS, f"{name} is installable but is not in harness.yaml")
+        ok(name in COMPONENTS, f"{name} is installable but is not in motdeck.yaml")
         if name in standalone:
             continue                       # covered above
         # …otherwise it must be a branch of install_component.sh, whose tail flips.
@@ -133,7 +133,7 @@ def test_every_installable_component_has_an_installer_that_flips():
 def test_flip_runs_on_a_copy_of_the_real_manifest():
     src = open(MANIFEST_PATH, encoding="utf-8").read()
     with tempfile.TemporaryDirectory() as td:
-        p = os.path.join(td, "harness.yaml")
+        p = os.path.join(td, "motdeck.yaml")
         open(p, "w", encoding="utf-8").write(src)
         for name, comp in MANIFEST["components"].items():
             r = run_flip(name, p)
@@ -170,7 +170,7 @@ def test_flip_runs_on_a_copy_of_the_real_manifest():
 
 def test_flip_is_loud_when_it_cannot_work():
     with tempfile.TemporaryDirectory() as td:
-        p = os.path.join(td, "harness.yaml")
+        p = os.path.join(td, "motdeck.yaml")
         open(p, "w", encoding="utf-8").write(
             "components:\n  alpha:\n    port: 1\n  beta:\n    installed: false\n")
         r = run_flip("nosuch", p)
@@ -214,7 +214,7 @@ def test_flip_never_round_trips_yaml():
 
 def test_flip_defaults_to_its_own_root():
     """$ROOT is the install that is RUNNING: the snapshot when the bridge spawns the
-    installer from ~/Library/Application Support/Harness, the repo when run there."""
+    installer from ~/Library/Application Support/MOT Deck, the repo when run there."""
     src = open(FLIP, encoding="utf-8").read()
     ok("os.path.dirname(os.path.abspath(__file__))" in src and "os.pardir" in src,
        "the default manifest is no longer resolved relative to the script itself")
@@ -245,7 +245,7 @@ def test_card_lifecycle_live():
         with socket.socket() as _s:
             _s.bind(("127.0.0.1", 0))
             free_port = _s.getsockname()[1]
-        open(os.path.join(td, "harness.yaml"), "w", encoding="utf-8").write(
+        open(os.path.join(td, "motdeck.yaml"), "w", encoding="utf-8").write(
             "components:\n"
             "  opencode:\n"
             "    pin: \"1.18.19\"\n"
@@ -264,7 +264,7 @@ def test_card_lifecycle_live():
                "a false flag must read as NOT installed (this is the bug's surface)")
 
             # The installer's flip, run exactly as install_opencode.sh runs it.
-            r2 = run_flip("opencode", os.path.join(td, "harness.yaml"))
+            r2 = run_flip("opencode", os.path.join(td, "motdeck.yaml"))
             ok(r2.returncode == 0, f"the flip failed: {r2.stderr}")
 
             comp = client.get("/api/status").json()["components"]["opencode"]

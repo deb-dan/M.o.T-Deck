@@ -52,9 +52,9 @@ def clients(state: AuthState):
 
 
 def make_manifest(root: Path, *, installed=True):
-    (root / "harness.yaml").write_text(yaml.safe_dump({
-        "runner": {"api_key": "harness-local", "model": "m"},
-        "aux": {"api_key": "harness-aux"},
+    (root / "motdeck.yaml").write_text(yaml.safe_dump({
+        "runner": {"api_key": "motdeck-local", "model": "m"},
+        "aux": {"api_key": "motdeck-aux"},
         "components": {"odysseus": {
             "installed": installed, "port": 7860,
             "admin_user": "admin", "admin_password": "admin123",
@@ -64,10 +64,10 @@ def make_manifest(root: Path, *, installed=True):
 
 def generated():
     return {
-        "MOT_RUNNER_API_KEY": "runner.new!$key",
-        "MOT_AUX_API_KEY": "aux new:#key",
-        "MOT_ODYSSEUS_ADMIN_USER": "generated-user",
-        "MOT_ODYSSEUS_ADMIN_PASSWORD": "new$password!",
+        "MOT_DECK_RUNNER_API_KEY": "runner.new!$key",
+        "MOT_DECK_AUX_API_KEY": "aux new:#key",
+        "MOT_DECK_ODYSSEUS_ADMIN_USER": "generated-user",
+        "MOT_DECK_ODYSSEUS_ADMIN_PASSWORD": "new$password!",
     }
 
 
@@ -80,12 +80,12 @@ def test_rotating_existing_install_verifies_odysseus_then_scrubs(monkeypatch, tm
     assert result["ok"] is True
     assert state.password == "new$password!"
     stored = localsecrets.read(tmp_path)
-    assert stored["MOT_RUNNER_API_KEY"] == "runner.new!$key"
+    assert stored["MOT_DECK_RUNNER_API_KEY"] == "runner.new!$key"
     # Aux has a user-owned Odysseus Background Tasks consumer.  Migration moves its
     # key into the protected store but cannot rotate it without a managed endpoint
     # transaction that proves the dependent setting was changed too.
-    assert stored["MOT_AUX_API_KEY"] == "harness-aux"
-    assert stored["MOT_ODYSSEUS_ADMIN_USER"] == "admin"
+    assert stored["MOT_DECK_AUX_API_KEY"] == "motdeck-aux"
+    assert stored["MOT_DECK_ODYSSEUS_ADMIN_USER"] == "admin"
     assert result["credentials"] == "rotated-managed-secrets; aux-preserved"
     assert result["restart_required"] == ["runner", "odysseus", "hermes"]
     assert all(not value for value in localsecrets.manifest_secret_values(tmp_path).values())
@@ -93,14 +93,14 @@ def test_rotating_existing_install_verifies_odysseus_then_scrubs(monkeypatch, tm
 
 def test_auth_cutover_failure_restores_yaml_owned_state(monkeypatch, tmp_path):
     make_manifest(tmp_path)
-    before = (tmp_path / "harness.yaml").read_bytes()
+    before = (tmp_path / "motdeck.yaml").read_bytes()
     monkeypatch.setattr(localsecrets, "generate", generated)
     state = AuthState(fail_change=True)
     with pytest.raises(RuntimeError, match="password cutover"):
         migration.apply_migration(tmp_path, rotate=True,
                                    client_factory=clients(state))
     assert not (tmp_path / "data" / ".env.local").exists()
-    assert (tmp_path / "harness.yaml").read_bytes() == before
+    assert (tmp_path / "motdeck.yaml").read_bytes() == before
     assert state.password == "admin123"
 
 
@@ -109,16 +109,16 @@ def test_uninstalled_odysseus_needs_no_network_and_custom_values_survive(tmp_pat
     result = migration.apply_migration(tmp_path, rotate=False,
         client_factory=lambda **_: (_ for _ in ()).throw(AssertionError("network")))
     assert result["ok"] is True
-    assert localsecrets.read(tmp_path)["MOT_RUNNER_API_KEY"] == "harness-local"
+    assert localsecrets.read(tmp_path)["MOT_DECK_RUNNER_API_KEY"] == "motdeck-local"
     assert all(not value for value in localsecrets.manifest_secret_values(tmp_path).values())
 
 
 def test_plan_only_names_installed_managed_consumers(tmp_path):
     make_manifest(tmp_path, installed=False)
-    data = yaml.safe_load((tmp_path / "harness.yaml").read_text())
+    data = yaml.safe_load((tmp_path / "motdeck.yaml").read_text())
     data["components"]["deepseek"] = {"installed": True}
     data["components"]["opencode"] = {"installed": False}
-    (tmp_path / "harness.yaml").write_text(yaml.safe_dump(data, sort_keys=False))
+    (tmp_path / "motdeck.yaml").write_text(yaml.safe_dump(data, sort_keys=False))
 
     result = migration.plan(tmp_path, rotate=True)
 
@@ -156,16 +156,16 @@ def test_active_managed_rotation_preserves_aux_and_identity(monkeypatch, tmp_pat
     migration.apply_migration(tmp_path, rotate=False,
                                client_factory=clients(state))
     before = localsecrets.read(tmp_path)
-    assert before["MOT_AUX_API_KEY"] == "harness-aux"
+    assert before["MOT_DECK_AUX_API_KEY"] == "motdeck-aux"
 
     result = migration.apply_migration(
         tmp_path, rotate=False, rotate_active_managed=True,
         client_factory=clients(state))
     after = localsecrets.read(tmp_path)
-    assert after["MOT_RUNNER_API_KEY"] == "runner.new!$key"
-    assert after["MOT_ODYSSEUS_ADMIN_PASSWORD"] == "new$password!"
-    assert after["MOT_AUX_API_KEY"] == before["MOT_AUX_API_KEY"]
-    assert after["MOT_ODYSSEUS_ADMIN_USER"] == before["MOT_ODYSSEUS_ADMIN_USER"]
+    assert after["MOT_DECK_RUNNER_API_KEY"] == "runner.new!$key"
+    assert after["MOT_DECK_ODYSSEUS_ADMIN_PASSWORD"] == "new$password!"
+    assert after["MOT_DECK_AUX_API_KEY"] == before["MOT_DECK_AUX_API_KEY"]
+    assert after["MOT_DECK_ODYSSEUS_ADMIN_USER"] == before["MOT_DECK_ODYSSEUS_ADMIN_USER"]
     assert result["credentials"] == "rotated-managed-secrets; aux-preserved"
     assert result["restart_required"] == ["runner", "odysseus", "hermes"]
 

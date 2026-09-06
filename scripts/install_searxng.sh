@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
-_yc() { awk -v k="    $1:" '/^  searxng:/{f=1;next} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[\",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^  [a-z]/{exit}' harness.yaml; }
+_yc() { awk -v k="    $1:" '/^  searxng:/{f=1;next} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[\",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^  [a-z]/{exit}' motdeck.yaml; }
 REPO="$(_yc repo)"
 PIN="$(_yc pin)"
 [[ "$PIN" =~ ^[0-9a-f]{40}$ ]] || {
@@ -23,14 +23,14 @@ if [[ -e vendor/searxng && ! -d vendor/searxng/.git ]]; then
   echo "ERROR: vendor/searxng exists but is not a git checkout; refusing to modify it"
   exit 1
 elif [[ ! -d vendor/searxng/.git ]]; then
-  echo "[harness] fetching searxng @ ${PIN:0:12}..."
+  echo "[motdeck] fetching searxng @ ${PIN:0:12}..."
   mkdir -p vendor/searxng
   git -C vendor/searxng init -q
   git -C vendor/searxng remote add origin "$REPO"
   if git -C vendor/searxng fetch --depth 1 origin "$PIN"; then
     git -C vendor/searxng checkout -q --detach FETCH_HEAD
   else
-    echo "[harness] exact shallow fetch refused — fetching full history in place..."
+    echo "[motdeck] exact shallow fetch refused — fetching full history in place..."
     git -C vendor/searxng fetch origin
     git -C vendor/searxng checkout -q --detach "$PIN"
   fi
@@ -40,11 +40,11 @@ else
     echo "ERROR: vendor/searxng origin is ${ORIGIN:-missing}, expected $REPO"; exit 1; }
   HAVE=$(git -C vendor/searxng rev-parse HEAD)
   if [[ "$HAVE" != "$PIN" ]]; then
-    echo "[harness] searxng is at ${HAVE:0:12}; moving to ${PIN:0:12}..."
+    echo "[motdeck] searxng is at ${HAVE:0:12}; moving to ${PIN:0:12}..."
     git -C vendor/searxng fetch --depth 1 origin "$PIN"
     git -C vendor/searxng checkout -q --detach FETCH_HEAD
   else
-    echo "[harness] vendor/searxng already at the pin."
+    echo "[motdeck] vendor/searxng already at the pin."
   fi
 fi
 HAVE=$(git -C vendor/searxng rev-parse HEAD)
@@ -52,7 +52,7 @@ HAVE=$(git -C vendor/searxng rev-parse HEAD)
   echo "ERROR: searxng checkout is ${HAVE}, expected ${PIN}"; exit 1; }
 
 # 2. venv + build deps + editable install (this compiles some C deps — can take a few minutes).
-echo "[harness] creating venv + installing searxng (compiles deps; be patient)..."
+echo "[motdeck] creating venv + installing searxng (compiles deps; be patient)..."
 uv venv data/searxng-venv --python "$PY" 2>/dev/null || true
 # shellcheck disable=SC1091
 source data/searxng-venv/bin/activate
@@ -79,19 +79,19 @@ search:
     - json
 EOF
 
-# Mission Control reads components.searxng.installed from harness.yaml, never the disk
+# Mission Control reads components.searxng.installed from motdeck.yaml, never the disk
 # (bridge/app.py::status). This installer is standalone — it is NOT a branch of
 # install_component.sh, whose tail has flipped that flag since M0 — so it has to do it
-# itself. Latent until now only because harness.yaml already ships searxng as
+# itself. Latent until now only because motdeck.yaml already ships searxng as
 # installed: true; on a fresh manifest (ship.sh forces a NEW component to false) the
 # card would have stayed "Not installed" exactly like OpenCode's did.
 "$PY" "$ROOT/scripts/flip_installed.py" searxng || {
-  echo "[harness] ERROR: searxng installed on disk but the harness.yaml flag could not"
-  echo "[harness]   be set — its card will still say 'Not installed'. Fix with:"
-  echo "[harness]   python3 scripts/flip_installed.py searxng"
+  echo "[motdeck] ERROR: searxng installed on disk but motdeck.yaml flag could not"
+  echo "[motdeck]   be set — its card will still say 'Not installed'. Fix with:"
+  echo "[motdeck]   python3 scripts/flip_installed.py searxng"
   exit 1; }
 
-echo "[harness] searxng installed."
-echo "[harness] settings: $ROOT/data/searxng/settings.yml"
-echo "[harness] test-run it with:"
+echo "[motdeck] searxng installed."
+echo "[motdeck] settings: $ROOT/data/searxng/settings.yml"
+echo "[motdeck] test-run it with:"
 echo "  SEARXNG_SETTINGS_PATH=$ROOT/data/searxng/settings.yml $ROOT/data/searxng-venv/bin/python -m searx.webapp"

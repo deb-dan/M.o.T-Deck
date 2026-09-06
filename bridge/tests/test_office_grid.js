@@ -42,7 +42,7 @@ function eq(name, got, want) {
 // ── the extractor ────────────────────────────────────────────────────────────
 // String/comment/template aware, so an apostrophe in a comment cannot truncate a
 // function body and leave a test that passes by measuring nothing. (That exact defect
-// was found in this repo's own harness once; it does not get to happen twice.)
+// was found in this repo's own motdeck once; it does not get to happen twice.)
 function grab(name) {
   const at = html.indexOf('function ' + name + '(');
   if (at < 0) throw new Error('function ' + name + ' not found in office.html');
@@ -288,7 +288,7 @@ eq('…and ignores a junk merge entry',
 // at all, so it cannot be blocked by one.
 const HEAD = html.split('</head>')[0];
 // comments necessarily TALK about link and script tags to explain why there are none
-// ⚠️ AND SO DOES SCRIPT BODY PROSE, SINCE v1.5.25: the harness-design axis appends a
+// ⚠️ AND SO DOES SCRIPT BODY PROSE, SINCE v1.5.25: MOT Deck-design axis appends a
 // stylesheet AT RUNTIME (bridge/panel/assets/studio-office.css, only when the key says
 // so), and the block that does it has to be able to say the word "<link>" in its own
 // comment. So the MARKUP check strips script bodies as well as HTML comments — what it
@@ -630,20 +630,20 @@ eval(grab('clampW'));
   const bx = (s, d) => beacons.push(s + ':' + d);
   let railW, aiW, paneDrag;
   // the constants the setters close over
-  const LS_RAIL = "harness-office-rail", LS_RAIL_W = "harness-office-rail-w",
-        LS_AI_W = "harness-office-ai-w";
+  const LS_RAIL = "motdeck-office-rail", LS_RAIL_W = "motdeck-office-rail-w",
+        LS_AI_W = "motdeck-office-ai-w";
   eval(grab('setRailW')); eval(grab('setAiW')); eval(grab('loadPaneWidths'));
   eval(grab('paneHandle')); eval(grab('paneDown')); eval(grab('paneMove')); eval(grab('paneUp'));
   eval(grab('paneReset')); eval(grab('railSetOpen')); eval(grab('railIsOpen'));
 
   // the storage KEYS, asserted as literals: a renamed key silently forgets every
   // width the user ever set, and looks exactly like "it did not persist".
-  eq('the persistence keys are the four harness-office-* ones',
-     [LS_RAIL, LS_RAIL_W, LS_AI_W], ['harness-office-rail', 'harness-office-rail-w',
-                                     'harness-office-ai-w']);
+  eq('the persistence keys are the four motdeck-office-* ones',
+     [LS_RAIL, LS_RAIL_W, LS_AI_W], ['motdeck-office-rail', 'motdeck-office-rail-w',
+                                     'motdeck-office-ai-w']);
   check('…and the AI panel keeps the key it already shipped with, so an existing '
         + 'collapse preference is not thrown away by this change',
-        html.includes("'harness-office-ai'"));
+        html.includes("'motdeck-office-ai'"));
 
   // setters write the variable the stylesheet reads
   setRailW(300, false);
@@ -998,7 +998,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
        So the three things asserted here are location, breadth and honesty — and the
        last one is the one that keeps the other two from becoming a lie: a menu bar is
        only worth having if every row in it either works or says why not. */
-    const STAMP = (html.match(/<meta name="harness-build" content="([^"]+)">/) || [])[1] || '';
+    const STAMP = (html.match(/<meta name="motdeck-build" content="([^"]+)">/) || [])[1] || '';
     // ⚠️ A LITERAL, AND IT HAS TO BE BUMPED BY HAND EVERY SLICE — which is exactly what
     // it is for (it fails loudly when someone changes the page and forgets the stamp).
     // Bumped to k by the AI-actions slice, which owns the AI panel and the stamp with
@@ -2167,7 +2167,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
         eval(grab('toolbarPaint'));
 
         eq('the localStorage key is this page\'s own namespace, like every other pref',
-           LS_TOOLBAR, 'harness-office-toolbar');
+           LS_TOOLBAR, 'motdeck-office-toolbar');
         // ── the View toggle and its persistence ──
         check('the toolbar is on by default — a fast path nobody can see is not one',
               toolbarOn());

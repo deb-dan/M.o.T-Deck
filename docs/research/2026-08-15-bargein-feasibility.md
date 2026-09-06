@@ -503,7 +503,7 @@ decisive rather than suggestive.
 The panel is served on `http://127.0.0.1:8700`, which Safari can open and which is a
 secure context, so `getUserMedia` works there and Safari has a real console.
 
-1. Make sure the harness is running and a **TTS default is set** (Models → Audio).
+1. Make sure MOT Deck is running and a **TTS default is set** (Models → Audio).
 2. In **Safari**: open `http://127.0.0.1:8700`, then Develop → Show JavaScript Console
    (enable the Develop menu in Safari → Settings → Advanced if needed).
 3. **Turn the speakers up to the volume you would actually use for conversation mode,

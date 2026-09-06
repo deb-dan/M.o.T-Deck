@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Flip `components.<name>.installed` to true in harness.yaml.
+"""Flip `components.<name>.installed` to true in motdeck.yaml.
 
 WHY THIS IS ITS OWN FILE. Mission Control decides whether a component's card says
 "Not installed" from the MANIFEST FLAG, never from disk:
@@ -11,7 +11,7 @@ the bug that shipped with OpenCode on 2026-08-21: install_opencode.sh printed
 "installed: opencode 1.18.19" (twice, on the idempotent re-run) while the card still
 offered an Install button. install_component.sh had carried the flip inline in its own
 tail since M0, so only the STANDALONE installers were affected — and there were two of
-them (opencode and searxng; searxng escaped notice solely because harness.yaml already
+them (opencode and searxng; searxng escaped notice solely because motdeck.yaml already
 shipped it as installed: true).
 
 One implementation, called by all of them. A second copy of a writer that can drift is
@@ -19,9 +19,9 @@ the defect class this project has been bitten by more than once.
 
     python3 scripts/flip_installed.py <component> [manifest]
 
-The manifest defaults to <this script>/../harness.yaml, so it always edits the ROOT OF
+The manifest defaults to <this script>/../motdeck.yaml, so it always edits the ROOT OF
 THE INSTALL THAT IS RUNNING — the snapshot's copy when the bridge spawns it from
-~/Library/Application Support/Harness, the repo's when run from the repo. That matters:
+~/Library/Application Support/MOT Deck, the repo's when run from the repo. That matters:
 ship.sh's manifest merge is ADDITIVE ONLY (it never changes an existing key's value), so
 nothing downstream will ever flip this flag later on the user's behalf.
 
@@ -46,9 +46,9 @@ _INSTALLED = re.compile(r"^(    installed:[ \t]*)(\S+)(.*)$")
 def _yamlfile_module():
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
                         "bridge", "yamlfile.py")
-    spec = importlib.util.spec_from_file_location("harness_yamlfile", path)
+    spec = importlib.util.spec_from_file_location("motdeck_yamlfile", path)
     if spec is None or spec.loader is None:
-        raise RuntimeError("shared harness.yaml transaction helper is unavailable")
+        raise RuntimeError("shared motdeck.yaml transaction helper is unavailable")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -88,7 +88,7 @@ def main(argv: "list[str]") -> int:
         return 2
     name = argv[1]
     path = argv[2] if len(argv) == 3 else os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), os.pardir, "harness.yaml")
+        os.path.dirname(os.path.abspath(__file__)), os.pardir, "motdeck.yaml")
     path = os.path.abspath(path)
     try:
         txn = _yamlfile_module()
@@ -105,23 +105,23 @@ def main(argv: "list[str]") -> int:
         status = txn.transform_file(path, edit)
     except ValueError as exc:
         if str(exc) == "no-component":
-            print(f"[harness] ERROR: components.{name} is not in {path} — the Mission "
+            print(f"[motdeck] ERROR: components.{name} is not in {path} — the Mission "
                   f"Control card reads that flag, so it would stay 'Not installed'.",
                   file=sys.stderr)
         elif str(exc) == "no-key":
-            print(f"[harness] ERROR: components.{name} has no `installed:` key in {path} "
+            print(f"[motdeck] ERROR: components.{name} has no `installed:` key in {path} "
                   f"— add `installed: false` to the block.", file=sys.stderr)
         else:
-            print(f"[harness] ERROR: the edit would break {path} ({exc}) — nothing written.",
+            print(f"[motdeck] ERROR: the edit would break {path} ({exc}) — nothing written.",
                   file=sys.stderr)
         return 1
     except Exception as exc:                                      # noqa: BLE001
-        print(f"[harness] ERROR: cannot safely update {path}: {exc}", file=sys.stderr)
+        print(f"[motdeck] ERROR: cannot safely update {path}: {exc}", file=sys.stderr)
         return 1
     if status == "already":
-        print(f"[harness] {name}: installed flag already true.")
+        print(f"[motdeck] {name}: installed flag already true.")
         return 0
-    print(f"[harness] {name}: installed -> true in {path}")
+    print(f"[motdeck] {name}: installed -> true in {path}")
     return 0
 
 

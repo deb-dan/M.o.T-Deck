@@ -130,7 +130,7 @@ config-resident-provider pattern than to Hermes's probe-based one.
   llm-pi-ai:
     providers:
       mot-deck:
-        apiKeyEnv: HARNESS_RUNNER_API_KEY   # or apiKey inline via the UI's key field
+        apiKeyEnv: MOT_DECK_RUNNER_API_KEY  # or apiKey inline via the UI's key field
         api: openai-completions
         baseURL: http://127.0.0.1:6767/v1
         models:
@@ -265,7 +265,7 @@ merge-never-overwrite, enumerate registry models as facts, verify through its ow
    `compat.maxTokensField: max_tokens` set defensively per model. Match/update by
    provider-id stability, never blind-replace (the provider ID is permanent per §3, so our
    own id `mot-deck` is the stable key across seeds).
-3. `harness.yaml` component block, `depends_on: []` (same reasoning as OpenCode — usable
+3. `motdeck.yaml` component block, `depends_on: []` (same reasoning as OpenCode — usable
    against any provider it has configured; start the runner yourself for the local lane),
    `port: 3080` (or a harness-chosen port passed via `--port` at spawn, matching the
    OpenCode `--port` override precedent since upstream's doc default is a fixed 3080 not an
@@ -280,7 +280,7 @@ merge-never-overwrite, enumerate registry models as facts, verify through its ow
    same discipline as OpenCode's `autoupdate: false` + env var double-lock).
 
 **Effort size:** comparable to the OpenCode integration — one new install script, one new
-seed script (near-identical structure to `seed_opencode_config.py`), one `harness.yaml`
+seed script (near-identical structure to `seed_opencode_config.py`), one `motdeck.yaml`
 block, one `start_component.sh` arm, one Swift tab registration, one bridge router
 registration. Estimate **6-7 files touched, 1 new component**, plus the fifteen-minute
 compat-flag experiment against our actual runner before locking the seed script's

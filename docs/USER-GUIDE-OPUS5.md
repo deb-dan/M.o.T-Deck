@@ -1,7 +1,7 @@
 # MOT Deck — User Guide
 
 > Renamed 2026-08-21: the app is **MOT Deck** (*Mixture of Tools*), its home screen
-> **MOT Main**. Older text below may say "Harness" / "Mission Control" — same thing.
+> **MOT Main**. Older text below may say "MOT Deck" / "Mission Control" — same thing.
 
 > **⟳ STALE (as of v1.5.72, 2026-09-02):** written before Goose, LOffice, Music/Compose,
 > the local API page, and several other components/surfaces existed. See
@@ -12,9 +12,9 @@ A plain-language guide to using the app. No setup knowledge required.
 
 ---
 
-## 1. What Harness is
+## 1. What MOT Deck is
 
-Harness is a private AI workstation that runs entirely on your Mac.
+MOT Deck is a private AI workstation that runs entirely on your Mac.
 
 The models live on your disk. Your conversations live on your disk. Even web search
 runs through your own private search engine. Nothing is sent to a cloud service, and
@@ -30,21 +30,21 @@ Inside one window you get:
 - **Files and artifacts** — things the assistant produces (web pages, charts, tables,
   diagrams, code) render live next to the chat, and you can edit and save them.
 
-Harness is one window with **three tabs** along the top. That's the whole app.
+MOT Deck is one window with **three tabs** along the top. That's the whole app.
 
 ---
 
 ## 2. The three tabs
 
-**Mission Control** — Harness's own control panel. This is home. It has the chat, the
+**Mission Control** — MOT Deck's own control panel. This is home. It has the chat, the
 model library, the settings, the health cards for everything that's running, and the
 logs. Most of the time this is the only tab you need.
 
-**Odysseus** — the full web workspace that Harness wraps: chat, documents, sessions,
+**Odysseus** — the full web workspace that MOT Deck wraps: chat, documents, sessions,
 web search, deep research. Use it when you want its own richer document and research
 surface rather than the streamlined chat in Mission Control.
 
-**Hermes** — the full agent dashboard that Harness wraps: tools, skills, memory,
+**Hermes** — the full agent dashboard that MOT Deck wraps: tools, skills, memory,
 scheduled jobs, configuration. Use it when you want to configure the agent in depth or
 watch a long agent run in its native interface.
 
@@ -101,7 +101,7 @@ to switch to Chat to use it. (Drop an image while in Agent mode and you'll get a
 note explaining the same thing.)
 
 If the model thinks before answering, its reasoning streams into a **thinking** section
-that collapses once the real answer begins — click it open any time. Harness keeps that
+that collapses once the real answer begins — click it open any time. MOT Deck keeps that
 reasoning, so reopening the conversation later shows a `thinking · restored` section
 rather than losing it.
 
@@ -210,7 +210,7 @@ indicator (Fits / May be slow / Won't fit for your machine). Press **Get** on th
 you want. Downloads show a live progress bar with **pause / resume / cancel**, and they
 keep running while you navigate elsewhere in the app. `← LIBRARY` takes you back.
 
-**RAM budget.** The pane stamps `· RAM 18 / 48 GB`. Harness reserves headroom for the
+**RAM budget.** The pane stamps `· RAM 18 / 48 GB`. MOT Deck reserves headroom for the
 rest of your Mac, so if loading a model would blow the budget it refuses and tells you
 to eject something first.
 
@@ -260,7 +260,7 @@ reach out or interfere with the app.
 - **Expand** to fill the window.
 - **✎ Edit** turns it into a live canvas — an editor on top, the preview below, updating
   as you type. Copy, Revert, or **Save** to a file (saved files land in
-  `Downloads/harness-artifacts`, and you get a Show-in-Folder button).
+  `Downloads/motdeck-artifacts`, and you get a Show-in-Folder button).
 - **⌖ Pin** keeps the artifact open across chats. Unpinned artifacts close when you
   switch conversations or leave the chat view.
 
@@ -315,7 +315,7 @@ anything about a write can't be resolved, it's refused rather than waved through
 straight back to the conversation where it happened.
 
 **All logs are viewable** the same way — the bridge, each component, the runner — with
-**Copy**, **Export** (to `Downloads/harness-logs`), and **Clear**.
+**Copy**, **Export** (to `Downloads/motdeck-logs`), and **Clear**.
 
 **Honest limits.** The path guard covers the agent's file-writing tools. An agent that
 writes a file by running a shell command instead rides Hermes's own dangerous-command
@@ -381,7 +381,7 @@ vision-capable). If the pill reads `vision · chat mode`, just switch to Chat.
 **A download seems to have vanished** → it hasn't. Downloads live in the Models pane and
 keep running while you use the rest of the app. Go back to Models to see the progress bar.
 
-**Hermes offers an in-app "Update now"** → dismiss it. Harness manages Hermes's version
+**Hermes offers an in-app "Update now"** → dismiss it. MOT Deck manages Hermes's version
 itself; updating from inside would break the pairing.
 
 **A dangerous command ran without asking** → Hermes's approvals mode is probably still on
@@ -396,4 +396,4 @@ background chores stop competing with your main model.
 ## 10. For developers
 
 The technical reference — architecture, ports, APIs, the model registry, the path guard's
-internals, and the test suite — is in **`docs/HARNESS-INTERNALS.md`**.
+internals, and the test suite — is in **`docs/MOT-DECK-INTERNALS.md`**.

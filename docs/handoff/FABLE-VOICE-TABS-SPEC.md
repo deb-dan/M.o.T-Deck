@@ -48,7 +48,7 @@ anything in this spec, THE RECON WINS — update the spec notes and tag it.
 Mechanical, mirrors existing components (read start_component.sh's odysseus branch
 + install_component.sh first):
 
-1. `harness.yaml`: `components.voicestudio` / `components.voicebox` blocks —
+1. `motdeck.yaml`: `components.voicestudio` / `components.voicebox` blocks —
    repo, pin, port (from recon; avoid collisions with 8700/7860/9119/8080/6767/6768),
    `installed: false`, `depends_on: []` (add `runner` ONLY if recon shows it can use
    an OpenAI-compatible LLM endpoint — then wire it to :6767 like the others).

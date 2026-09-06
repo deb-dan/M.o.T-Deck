@@ -150,7 +150,7 @@ ok('the walker parsed the whole stylesheet (' + RULES.length + ' rules)', RULES.
   eq('…and the asset href is a single named constant, written once',
      (html.match(/var CSS_HREF = '\/assets\/studio-office\.css';/g) || []).length, 1);
   ok('…and the key is read exactly once per sync, guarded by try/catch',
-     /localStorage\.getItem\('harness-design'\)/.test(html));
+     /localStorage\.getItem\('motdeck-design'\)/.test(html));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -201,7 +201,7 @@ function headSandbox(stored) {
     visibilityState: 'visible',
   };
   const store = {};
-  if (stored !== null && stored !== undefined) store['harness-design'] = stored;
+  if (stored !== null && stored !== undefined) store['motdeck-design'] = stored;
   const win = {
     document: doc,
     localStorage: {
@@ -266,7 +266,7 @@ function headSandbox(stored) {
 
   // the flip-while-in-flight case the stamp() re-read exists for
   const g = headSandbox('studio');
-  g.store['harness-design'] = 'studio-light';
+  g.store['motdeck-design'] = 'studio-light';
   g.appended[0].onload();                      // the sheet lands after the ◐ flip
   g.win.syncDesign('storage');
   eq('a variant flip while the sheet is in flight lands on the variant the user is '
@@ -274,7 +274,7 @@ function headSandbox(stored) {
 
   // leaving studio
   const h = headSandbox('studio');
-  h.store['harness-design'] = 'editorial';
+  h.store['motdeck-design'] = 'editorial';
   h.win.syncDesign('leave');
   eq('leaving studio removes both attributes', [h.root.attrs['data-design'],
      h.root.attrs['data-dvariant']], [undefined, undefined]);
@@ -282,13 +282,13 @@ function headSandbox(stored) {
   // it must never WRITE any of the three keys
   const i2 = headSandbox('studio');
   eq('the axis is READ-ONLY on this page — no key was written',
-     Object.keys(i2.store), ['harness-design']);
-  ok('…and there is no setItem for any harness- key in the head script',
-     !/setItem\('harness-(design|theme|chrome)'/.test(html.split('</style>')[0]));
+     Object.keys(i2.store), ['motdeck-design']);
+  ok('…and there is no setItem for any motdeck- key in the head script',
+     !/setItem\('motdeck-(design|theme|chrome)'/.test(html.split('</style>')[0]));
 }
 // the storage listener has to carry the third key or one window sits in a stale design
-ok('the storage listener reacts to harness-design as well as theme/chrome',
-   /ev\.key === 'harness-design'/.test(html));
+ok('the storage listener reacts to motdeck-design as well as theme/chrome',
+   /ev\.key === 'motdeck-design'/.test(html));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 console.log('4. the seam — the editor is not touched, in either direction');
@@ -694,7 +694,7 @@ function grab(name) {
 console.log('10. the build stamp');
 // ═══════════════════════════════════════════════════════════════════════════════
 {
-  const stamp = /name="harness-build" content="([^"]+)"/.exec(html)[1];
+  const stamp = /name="motdeck-build" content="([^"]+)"/.exec(html)[1];
   eq('office.html carries this slice\'s stamp', stamp, 'loffice-2026-08-29b');
   ok('…and the boot banner says the same one', html.indexOf('loffice-2026-08-29b</code>') > 0);
 }

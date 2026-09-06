@@ -8,8 +8,8 @@ Jan class of look — switched by its OWN new button, instantly, everything at o
 ## 1. The axis
 
 - New root attribute `data-design="studio"` (absence = Editorial, byte-identical today).
-- Persisted in NEW localStorage key `harness-design`. The existing `harness-theme` and
-  `harness-chrome` keys and their buttons are NOT touched, NOT repurposed, NOT read by the
+- Persisted in NEW localStorage key `motdeck-design`. The existing `motdeck-theme` and
+  `motdeck-chrome` keys and their buttons are NOT touched, NOT repurposed, NOT read by the
   new axis beyond graceful coexistence (below).
 - ONE new button in the top-right chrome cluster (distinct glyph — suggest ✦ — with a
   tooltip "Studio design"), plus an Appearance row and a ⌘K entry. One click = the whole

@@ -27,7 +27,7 @@
 
 ## 1. The headline finding: we already own it
 
-`data/mlx-venv` (pinned `mlx-audio==0.4.7`) already contains a full STT subsystem that nothing in the harness currently uses.
+`data/mlx-venv` (pinned `mlx-audio==0.4.7`) already contains a full STT subsystem that nothing in MOT Deck currently uses.
 
 ```
 data/mlx-venv/bin/mlx_audio.stt.generate          ← console script, already installed
@@ -154,7 +154,7 @@ The decision it justified (ride the one-shot endpoint for v1) was still the **ri
 
 ### 3.4 The corrected Gate 2 — the measurement that actually decides R6
 
-Run **in one process**, from the SNAPSHOT dir (`~/Library/Application Support/Harness`), timing a load-once/transcribe-twice:
+Run **in one process**, from the SNAPSHOT dir (`~/Library/Application Support/MOT Deck`), timing a load-once/transcribe-twice:
 
 ```
 data/mlx-venv/bin/python - <<'PY'

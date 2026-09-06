@@ -12,10 +12,10 @@
      · EVERY selector in this file contains `html[data-design="studio"]`.
        There is no unscoped rule, no bare `:root`, no @media that escapes it.
        With the attribute absent this file cannot match one element.
-     · Two variants, on ONE new localStorage key `harness-design`:
+     · Two variants, on ONE new localStorage key `motdeck-design`:
          'studio'       → studio-dark   (no variant attribute)
          'studio-light' → studio-light  (`data-dvariant="light"`)
-       The existing `harness-theme` / `harness-chrome` keys are never written
+       The existing `motdeck-theme` / `motdeck-chrome` keys are never written
        by this axis, so leaving studio restores the user's theme and chrome
        exactly as they were.
      · Theme packs do not apply here: the token block below covers EVERY

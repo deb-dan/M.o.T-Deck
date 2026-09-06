@@ -14,7 +14,7 @@ changed what the gate is actually checking.
 
 ⚠️ ROOT IS `parents[2]`, NOT `parent.parent`. This file is one directory deeper than
 app.py was, and ROOT must keep resolving to the repo/snapshot root or every data path in
-the harness moves. The value is unchanged; only the arithmetic is.
+MOT Deck moves. The value is unchanged; only the arithmetic is.
 """
 from __future__ import annotations
 
@@ -40,13 +40,13 @@ from fastapi.staticfiles import StaticFiles
 
 # ⚠️ parents[2] AND parents[1] — NOT parent.parent AND parent. This file is one
 # directory deeper than app.py was (bridge/core/ rather than bridge/), and these two
-# paths are the harness's entire idea of where it lives: ROOT is the repo/snapshot
-# root that every data/, scripts/ and harness.yaml path hangs off, PANEL is
+# paths are MOT Deck's entire idea of where it lives: ROOT is the repo/snapshot
+# root that every data/, scripts/ and motdeck.yaml path hangs off, PANEL is
 # bridge/panel. The VALUES are unchanged; only the arithmetic moved with the file.
 #
 # Getting this wrong does not fail loudly, which is why it is spelled out here: the
 # first draft of the split kept `parent.parent`, ROOT became bridge/, and the bridge
-# still imported and still served — it just read bridge/harness.yaml, found nothing,
+# still imported and still served — it just read bridge/motdeck.yaml, found nothing,
 # and answered every route as though nothing were installed.
 ROOT = Path(__file__).resolve().parents[2]
 PANEL = Path(__file__).resolve().parents[1] / "panel"
@@ -54,7 +54,7 @@ PANEL = Path(__file__).resolve().parents[1] / "panel"
 # a stale bridge cannot echo a fresh ship's nonce, while an app-spawned bridge simply
 # reports an empty value.
 BRIDGE_SCHEMA_VERSION = 1
-BRIDGE_LAUNCH_NONCE = os.environ.get("HARNESS_LAUNCH_NONCE", "")
+BRIDGE_LAUNCH_NONCE = os.environ.get("MOT_DECK_LAUNCH_NONCE", "")
 
 # ── THE BRIDGE SINGLETON (2026-08-30 incident, second find) ───────────────────
 # Runs HERE, at import, deliberately BEFORE uvicorn binds its socket: a bridge that
@@ -73,7 +73,7 @@ except Exception as _e:               # noqa: BLE001
     print(f"[bridge] singleton guard unavailable ({_e}) - this bridge starts without "
           f"the one-bridge-per-root check.", flush=True)
 
-# Harness-native voice capability (Phase B). Imported DEFENSIVELY: ship.sh has
+# MOT Deck-native voice capability (Phase B). Imported DEFENSIVELY: ship.sh has
 # historically copied only bridge/app.py into the fat snapshot, so a snapshot that
 # predates voice.py must still boot a working bridge — it just loses /api/voice/tts
 # (which reports the import error) and treats every registry entry as a chat model,
@@ -88,7 +88,7 @@ except Exception:                            # noqa: BLE001
         _voice, _VOICE_ERR = None, str(_e)[:200]
         print(f"[voice] module unavailable — TTS disabled ({_VOICE_ERR})", flush=True)
 
-# Harness-native MUSIC lane (FABLE-MUSIC-LANE-SPEC). Same defensive import as voice,
+# MOT Deck-native MUSIC lane (FABLE-MUSIC-LANE-SPEC). Same defensive import as voice,
 # for the same reason: a snapshot missing this file must still boot a bridge that
 # works, minus /api/music/*.
 _MUSIC_ERR = ""
@@ -250,7 +250,7 @@ class MutationFencedRoute(APIRoute):
         return fenced
 
 
-app = FastAPI(title="AI Harness Bridge")
+app = FastAPI(title="MOT Deck Bridge")
 app.router.route_class = MutationFencedRoute
 if _singleton is not None:
     # Explicit FastAPI lifecycle release is primary; atexit is belt-and-braces.

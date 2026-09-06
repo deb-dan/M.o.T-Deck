@@ -4,7 +4,7 @@
 
 Author: Fable 5. Builder: Opus 5. Decision-free; deviations get ⚠️ PENDING FABLE QA tags.
 Debi's asks: (1) any two app tabs side by side (e.g. Mission Control + Hermes,
-Voicebox + Odysseus); (2) drag a voice file from one app into the harness's voice
+Voicebox + Odysseus); (2) drag a voice file from one app into MOT Deck's voice
 controls; (3) LM-Studio-style split *chat* — Phase 3, GATED, design only for now.
 
 ## Phase 1 — side-by-side tabs (app/main.swift)
@@ -13,10 +13,10 @@ Mental model: the window has ONE tab strip and one or two PANES. Each webview
 exists exactly once (today's array stays); a pane *borrows* a webview.
 
 1. Tab strip gains one extra segment-like button at its right end: `⫽` (tooltip
-   "Split view"). Toggles split mode. Persist `harness.split.on` +
-   `harness.split.right` in UserDefaults.
+   "Split view"). Toggles split mode. Persist `motdeck.split.on` +
+   `motdeck.split.right` in UserDefaults.
 2. Split OFF: exactly today's behaviour, byte-compatible. Split ON: content =
-   `NSSplitView` (vertical divider, autosaveName `harness-split`), LEFT pane =
+   `NSSplitView` (vertical divider, autosaveName `motdeck-split`), LEFT pane =
    the main tab strip's selection (unchanged semantics), RIGHT pane = its own
    selection via a compact overlay strip at the TOP of the right pane (same five
    titles, smaller font; build it from the same titles array — no duplicated
@@ -42,7 +42,7 @@ exists exactly once (today's array stays); a pane *borrows* a webview.
 
 Today DropOverlay accepts images onto the Chat composer. Extend:
 1. DropWebView/DropOverlay accept audio files (wav/mp3/flac/m4a, ≤15MB) over the
-   PANEL pane. On drop: read bytes → `window.harnessNativeAudioDrop(name, dataURL)`.
+   PANEL pane. On drop: read bytes → `window.motdeckNativeAudioDrop(name, dataURL)`.
 2. Panel handler: decode the dataURL → POST the RAW bytes to the EXISTING
    `/api/voice/library/save?name=<stem>&fmt=<ext>` → feed('voice', "clip <name>
    added to the voice library") → if the Models→Audio detail pane is currently
@@ -51,7 +51,7 @@ Today DropOverlay accepts images onto the Chat composer. Extend:
 3. Image drops keep today's behaviour untouched; type sniffing by extension +
    UTI. A file that is neither image nor audio keeps today's behaviour (ignored).
 This gives Debi: VoiceStudio history → download (now works) → drag the file from
-Finder/dock straight onto the harness → it's a pinnable voice. TRUE
+Finder/dock straight onto MOT Deck → it's a pinnable voice. TRUE
 webview-to-webview drag (no Finder hop) stays a stretch goal — record as a
 watch-item, do not attempt in v1.
 

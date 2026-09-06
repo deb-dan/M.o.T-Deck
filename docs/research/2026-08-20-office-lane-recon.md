@@ -1,4 +1,4 @@
-# Office lane recon — how to get docx/xlsx editing INSIDE the harness
+# Office lane recon — how to get docx/xlsx editing INSIDE MOT Deck
 
 Date: 2026-08-20 · Method: shallow `git clone` of every candidate + vendor-doc fetches.
 Sandbox limits: `api.github.com` blocked (⚠️ no star/release counts), release CDNs blocked.
@@ -17,7 +17,7 @@ file:line refs are from the checkouts named in each section.
 4. **Collabora Online (CODE)** — ❌ **FAILS DOCTRINE.** Linux server; the macOS target is a *desktop app*.
 5. **Extend Odysseus/artifacts** — the wrong frame: we don't lack an editor, we lack *format fidelity*.
 
-## 1. What the harness already has — the honest gap
+## 1. What MOT Deck already has — the honest gap
 
 `bridge/app.py:63` already mounts `/assets` (`StaticFiles`) and `scripts/fetch_vendor_assets.sh:17`
 vendors 12 third-party libs into `bridge/panel/assets/vendor/` (babel, react+react-dom UMD, mermaid,
@@ -45,7 +45,7 @@ web grid but writes CSV has solved nothing. **Every option below should be judge
   ⚠️ **UNVERIFIED: the AI plugin's base_url** — `ONLYOFFICE/plugin-ai` was not clonable from this
   sandbox (404 → credential prompt); irrelevant while the server cannot run.
 - **Verdict: fails the no-Docker rule outright. Say it plainly to Debi: ONLYOFFICE Docs cannot be a
-  harness component on a Mac.**
+  motdeck component on a Mac.**
 
 ## 3. Collabora Online / CODE — ❌ REJECT (Linux server; the Mac target is a desktop app)
 
@@ -141,7 +141,7 @@ vendor — not a component tab.** Rank: (1) bridge-served Univer, (2) scoped gen
 
 Sketch (mirrors the `voice.py`/`music.py` precedent, so nothing here is a new pattern):
 - `scripts/fetch_vendor_assets.sh` +6 pinned Univer UMD/CSS assets → `assets/vendor/univer/`; **pin
-  exact versions** in `harness.yaml` `build.univer_pin` (existing pin discipline).
+  exact versions** in `motdeck.yaml` `build.univer_pin` (existing pin discipline).
 - New panel view **📄 Office** (sidebar entry), two surfaces (Document / Sheet) over one Univer instance,
   rendered same-origin from `/assets` — **no new port, no `/health` card, no component**.
 - New `bridge/office.py` (ship.sh already copies `bridge/*.py`):

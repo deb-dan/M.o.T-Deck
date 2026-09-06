@@ -56,12 +56,12 @@ def raises(fn):
     return False
 
 
-PK = "/opt/harness/data/mlx-venv/bin/mlx_audio.stt.generate"
-PY = "/opt/harness/data/mlx-venv/bin/python"
+PK = "/opt/motdeck/data/mlx-venv/bin/mlx_audio.stt.generate"
+PY = "/opt/motdeck/data/mlx-venv/bin/python"
 E_PK = {"id": "parakeet-tdt-0.6b-v3", "kind": "audio", "format": "stt-mlx-audio",
-        "path": "/opt/harness/data/models/parakeet-tdt-0.6b-v3"}
+        "path": "/opt/motdeck/data/models/parakeet-tdt-0.6b-v3"}
 E_WH = {"id": "whisper-base-mlx", "kind": "audio", "format": "stt-mlx",
-        "path": "/opt/harness/data/models/whisper-base-mlx"}
+        "path": "/opt/motdeck/data/models/whisper-base-mlx"}
 
 # ── formats ──────────────────────────────────────────────────────────────────
 print("\nformats")

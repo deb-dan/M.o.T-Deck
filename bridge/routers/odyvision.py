@@ -47,7 +47,7 @@ Three candidates were read end to end before any code was written:
       against the ModelEndpoint rows in its own DB (`model@endpoint-name` selects
       one endpoint by name; the endpoint is probed at /v1/models and the model
       matched by id). Registering an OpenAI-compatible endpoint is therefore a
-      FIRST-CLASS, SUPPORTED configuration act — and the harness ALREADY does it
+      FIRST-CLASS, SUPPORTED configuration act — and MOT Deck ALREADY does it
       (scripts/seed_odysseus_jan.py upserts the `local-jan` row that points Odysseus
       at our runner). So we register ONE MORE endpoint, served by this file, whose
       only model produces the fast caption. Synchronous at turn time ⇒ NO RACE AT
@@ -141,7 +141,7 @@ ODY_VLSHIM_PATH = "/odyvision/v1"
 # hiding it would depend on an upstream inconsistency (its hidden_models list is
 # honoured by the chat resolver but not by the vision one), and a user is better
 # served by a row they can read, inspect and delete than by an invisible one.
-ODY_VLSHIM_MODEL = "harness-image-describer"
+ODY_VLSHIM_MODEL = "motdeck-image-describer"
 # The display name is a SENTENCE on purpose (Debi, 2026-08-29): the row sits in
 # Odysseus's endpoint list, and a user reading it should learn WHY it exists —
 # Odysseus only detects a vision-capable main model by its NAME, so MOT Deck
@@ -152,7 +152,7 @@ ODY_VLSHIM_EP_NAME = "MOT Deck image describer — Odysseus detects vision by mo
 # Every default name this row has EVER shipped under. Used for two things and
 # nothing else: recognising OUR stale rows (never a user-made row) and the
 # rename-forward migration in ensure(). A user-chosen name matches neither.
-ODY_VLSHIM_EP_NAMES_ALL = (ODY_VLSHIM_EP_NAME, "Harness image describer")
+ODY_VLSHIM_EP_NAMES_ALL = (ODY_VLSHIM_EP_NAME, "MOT Deck image describer")
 # Our own budget for one caption. UNDER Odysseus's hard 120s on purpose: if the
 # runner is wedged we want to answer with an honest marker while it is still
 # listening, rather than have it time out and log a failure we could have named.
@@ -286,11 +286,11 @@ def ody_shim_failure(reason: str, fallbacks: bool) -> tuple:
     other reason passes through verbatim."""
     why = (reason or "the image could not be described").strip()
     if "vision evidence" in why:
-        why = ("no vision-capable model is loaded in Harness — load one from its "
+        why = ("no vision-capable model is loaded in MOT Deck — load one from its "
                "Models pane and send this picture again")
     if fallbacks:
         return ("error", why)
-    return ("marker", f"[Harness could not describe this image: {why}]")
+    return ("marker", f"[MOT Deck could not describe this image: {why}]")
 
 
 def ody_shim_error_status(reason: str) -> int:
@@ -341,7 +341,7 @@ def ody_shim_envelope(model: str, content: str, usage=None) -> dict:
     (`_ody_vision_describe`'s 4th element); when it did not, the key is ABSENT. An
     absent optional field is a thing a client can handle; a fabricated one is not."""
     env = {
-        "id": "chatcmpl-harness-vision",
+        "id": "chatcmpl-motdeck-vision",
         "object": "chat.completion",
         "created": int(time.time()),
         "model": model or ODY_VLSHIM_MODEL,
@@ -362,7 +362,7 @@ def ody_shim_sse(model: str, content: str) -> str:
     `stream: true`. Odysseus's VL path never streams — this is the graceful-absence
     half, so selecting the describer in the chat picker renders a sentence instead
     of hanging on a stream that never arrives."""
-    chunk = {"id": "chatcmpl-harness-vision", "object": "chat.completion.chunk",
+    chunk = {"id": "chatcmpl-motdeck-vision", "object": "chat.completion.chunk",
              "created": int(time.time()), "model": model or ODY_VLSHIM_MODEL,
              "choices": [{"index": 0, "delta": {"role": "assistant",
                                                 "content": content or ""},
@@ -384,7 +384,7 @@ async def ody_vlshim_models() -> JSONResponse:
     unwire the configuration and strand the user back on the 120s path."""
     return JSONResponse({"object": "list", "data": [
         {"id": ODY_VLSHIM_MODEL, "object": "model", "created": 0,
-         "owned_by": "harness"}]})
+         "owned_by": "motdeck"}]})
 
 
 # ── THE TYPED REQUEST (S33/F3, audit rank 4's other half) ────────────────────
@@ -459,14 +459,14 @@ async def ody_vlshim_chat(req: Request):
 
     def _answer(text: str, status: int = 200, usage=None):
         if status != 200:
-            # The `type` DISCRIMINATES now (it was the constant "harness_vision" on
+            # The `type` DISCRIMINATES now (it was the constant "motdeck_vision" on
             # every error, which is no signal at all). `code` keeps the old constant
             # so a consumer keying on it still recognises us.
             kind = ("invalid_request_error" if status == 400
                     else "service_unavailable" if status == 503
                     else "upstream_error")
             return JSONResponse({"error": {"message": text, "type": kind,
-                                           "code": "harness_vision"}},
+                                           "code": "motdeck_vision"}},
                                 status_code=status)
         if stream:
             return StreamingResponse(_one(ody_shim_sse(model, text)),

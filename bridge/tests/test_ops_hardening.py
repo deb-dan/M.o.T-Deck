@@ -75,7 +75,7 @@ check("verify.sh does NOT use set -e (it must report, not die)",
       "set -uo pipefail" in VERIFY and "set -euo" not in VERIFY)
 check("verify.sh fails if its own suite mutates the repository manifest",
       "MANIFEST_BEFORE" in VERIFY and "MANIFEST_AFTER" in VERIFY
-      and "the contract suite modified the tracked harness.yaml" in VERIFY)
+      and "the contract suite modified the tracked motdeck.yaml" in VERIFY)
 check("cannot-run message names the uv install one-liner (python -m pip cannot work "
       "in a uv-created venv)",
       "uv pip install pytest" in VERIFY and "CANNOT RUN" in VERIFY)
@@ -315,7 +315,7 @@ check("the ship's own packages are copied by the fenced block, not by a stray gl
 # bug-echo W-04 — ruling #4's own class (a foreign app's state under our feet), crossed
 # with the wrong-oracle class. The runner's binary discovery falls back to Jan's and LM
 # Studio's home directories, and those apps upgrade that binary whenever they like while
-# THIS harness's probe/auth expectations are pinned against one build: llama.cpp b10662
+# THIS MOT Deck's probe/auth expectations are pinned against one build: llama.cpp b10662
 # made /v1/models require a key where the build before it did not, and finding that 401
 # cost a session. Starting a stranger's binary silently re-opens it.
 #
@@ -326,11 +326,11 @@ _GA = START.index('if [[ -n "${BIN_OWNER:-}" ]]; then')
 _GZ = START.index("# CTX preference", _GA)
 GATE = START[_GA:_GZ]
 PIN = ""
-for _ln in (ROOT / "harness.yaml").read_text().splitlines():
+for _ln in (ROOT / "motdeck.yaml").read_text().splitlines():
     if _ln.strip().startswith("llamacpp_pin:"):
         PIN = _ln.split(":", 1)[1].split("#")[0].strip()
         break
-check("(fixture) the pin is readable from harness.yaml", PIN.startswith("b"))
+check("(fixture) the pin is readable from motdeck.yaml", PIN.startswith("b"))
 check("the discovery records WHOSE binary it found, which is what the gate rests on",
       'BIN_OWNER="Jan"' in START and 'BIN_OWNER="LM Studio"' in START)
 check("…and an EXPLICIT runner.binary is exempt — a person named it on purpose",
@@ -350,7 +350,7 @@ def _fake_llama(name, version_line):
 
 def _rungate(binp, owner, env=None):
     e = dict(os.environ)
-    e.pop("HARNESS_ALLOW_FOREIGN_RUNNER", None)
+    e.pop("MOT_DECK_ALLOW_FOREIGN_RUNNER", None)
     e["MOT_TEST_LLAMA_PIN"] = PIN
     e.update(env or {})
     return subprocess.run(
@@ -386,7 +386,7 @@ check("…with the fix, not just the complaint",
 check("…and the reason stated as the incident it comes from, so the refusal is arguable",
       "b10662" in r.stdout and "401" in r.stdout)
 check("…and the override is named in the refusal itself",
-      "HARNESS_ALLOW_FOREIGN_RUNNER=1" in r.stdout)
+      "MOT_DECK_ALLOW_FOREIGN_RUNNER=1" in r.stdout)
 
 r = _rungate(_mute_bin, "Jan")
 check("A BINARY WHOSE BUILD CANNOT BE READ IS REFUSED TOO — 'unverifiable' is not "
@@ -394,7 +394,7 @@ check("A BINARY WHOSE BUILD CANNOT BE READ IS REFUSED TOO — 'unverifiable' is 
 check("…and says so in those terms rather than inventing a version",
       "unreadable" in r.stdout)
 
-r = _rungate(_old_bin, "Jan", {"HARNESS_ALLOW_FOREIGN_RUNNER": "1"})
+r = _rungate(_old_bin, "Jan", {"MOT_DECK_ALLOW_FOREIGN_RUNNER": "1"})
 check("the override really opens the gate", r.returncode == 0)
 check("…and is LOUD about what it just allowed, including what to suspect first",
       "deliberately" in r.stdout and "401" in r.stdout)
@@ -405,8 +405,8 @@ subprocess.run(["rm", "-rf", _fbed], check=False)
 check("bridge/routers/models.py's aux start has the gate too",
       "foreign_runner_gate(" in _APP_SOURCE and "FOREIGN_RUNNER_ENV" in _APP_SOURCE)
 check("…keyed on the SAME env var as the shell",
-      'HARNESS_ALLOW_FOREIGN_RUNNER' in _APP_SOURCE
-      and "HARNESS_ALLOW_FOREIGN_RUNNER" in START)
+      'MOT_DECK_ALLOW_FOREIGN_RUNNER' in _APP_SOURCE
+      and "MOT_DECK_ALLOW_FOREIGN_RUNNER" in START)
 check("…refusing with a 409 rather than starting the stranger's binary",
       'return JSONResponse({"ok": False, "log": refusal}, status_code=409)'
       in _APP_SOURCE)
@@ -431,19 +431,19 @@ check("the stamp is written INSIDE the fat branch only",
       BUILD.index('> "$STAGE/SEED_STAMP"') > BUILD.index("if [[ $FAT -eq 1 ]]"))
 check("the stamp is staged BEFORE the seed is tarred",
       BUILD.index('> "$STAGE/SEED_STAMP"')
-      < BUILD.index('tar czf "$RES/harness-seed-fat.tar.gz"'))
+      < BUILD.index('tar czf "$RES/motdeck-seed-fat.tar.gz"'))
 
 check("firstrun_fat.sh has the guard", "seed_guard()" in FIRSTRUN)
 check("the guard runs BEFORE the seed is extracted",
-      FIRSTRUN.index("seed_guard \"$DEST/harness.yaml\"")
+      FIRSTRUN.index("seed_guard \"$DEST/motdeck.yaml\"")
       < FIRSTRUN.index('tar xzf "$SEED" -C "$DEST"'))
 check("the guard only engages when something is already there",
-      'if [[ -f "$DEST/harness.yaml" ]]; then' in FIRSTRUN)
+      'if [[ -f "$DEST/motdeck.yaml" ]]; then' in FIRSTRUN)
 check("firstrun records the stamp it provisioned from",
       'cp "$DEST/SEED_STAMP" "$DEST/.seed_stamp"' in FIRSTRUN)
 check("the refusal names the deliberate move-aside recovery",
       "move the existing install aside DELIBERATELY" in FIRSTRUN
-      and "Harness.saved" in FIRSTRUN)
+      and "MOT Deck.saved" in FIRSTRUN)
 check("the refusal states that nothing was changed",
       "Nothing has been changed." in FIRSTRUN)
 check("the refusal prints BOTH counts and BOTH build stamps",
@@ -557,14 +557,14 @@ check("shell: the aux slot grants no engine-name exception",
 # U19 (2026-08-29): hermes lost its NAME signature. It used to answer "ours" to any
 # command line containing "hermes dashboard"/"hermes serve" — which is precisely Debi's
 # STANDALONE Hermes (~/.hermes/hermes-agent/venv). The evidence is a PATH now, widened
-# to any harness's data/hermes-venv so the repo↔snapshot case still works.
-check("shell: a hermes from ANOTHER HARNESS root is OURS (path, not name)",
-      owns("hermes", "/Users/x/Library/Application Support/Harness/data/hermes-venv/"
+# to any MOT Deck's data/hermes-venv so the repo↔snapshot case still works.
+check("shell: a hermes from ANOTHER MOT DECK root is OURS (path, not name)",
+      owns("hermes", "/Users/x/Library/Application Support/MOT Deck/data/hermes-venv/"
                      "bin/python -m hermes dashboard --port 9119"))
 check("shell: Debi's STANDALONE hermes is FOREIGN (U19 — the whole point)",
       not owns("hermes", "/Users/debik/.hermes/hermes-agent/venv/bin/hermes "
                          "dashboard --port 9119"))
-check("shell: any non-harness hermes is FOREIGN",
+check("shell: any non-MOT Deck Hermes is FOREIGN",
       not owns("hermes", "/usr/local/bin/hermes dashboard --port 9119"))
 check("shell: 'hermes dashboard' is never a signature by itself",
       not owns("hermes", "hermes dashboard") and not owns("hermes", "hermes serve"))
@@ -614,7 +614,7 @@ check("the refusal gives an explicit non-destructive recovery",
 check("the refusal exits non-zero", "stop that application explicitly, then retry" in START
       and "exit 1" in START.split("stop that application explicitly, then retry")[1][:120])
 check("there is no environment takeover escape hatch",
-      "HARNESS_PORT_TAKEOVER" not in START)
+      "MOT_DECK_PORT_TAKEOVER" not in START)
 check("pid and birth-record files are both required",
       '${comp}.pid' in START and '${comp}.owner' in START and "_ownership_matches" in START)
 check("no component name is used as a signature for the standalone-app components",
@@ -698,7 +698,7 @@ finally:
 # than on a string, so what is asserted here is that the escape hatch still exists and
 # that the unowned pipeline does not.
 check("bridge: neither a port takeover override nor an unowned pipeline survives",
-      'os.environ.get("HARNESS_PORT_TAKEOVER")' not in _APP_SOURCE
+      'os.environ.get("MOT_DECK_PORT_TAKEOVER")' not in _APP_SOURCE
       and not hasattr(app, "_port_kill_cmd"))
 BR = _APP_SOURCE
 check("bridge: every _kill_port_listener call site names its component",

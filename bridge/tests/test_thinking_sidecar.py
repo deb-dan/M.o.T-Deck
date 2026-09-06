@@ -154,7 +154,7 @@ thinking_forget("")
 check("forget with empty sid is a no-op", len(thinking_rows("big")) == 200)
 
 # an unwritable data root must degrade silently, never raise into the chat path
-BAD = _load("/proc/nonexistent-harness-root")
+BAD = _load("/proc/nonexistent-motdeck-root")
 BAD["log_thinking"]("s", "A", "T")
 check("unwritable store: log_thinking never raises", True)
 check("unwritable store: rows → []", BAD["_thinking_rows"]("s") == [])

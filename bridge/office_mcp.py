@@ -1,7 +1,7 @@
 """OFFICE MCP SERVER — the LOffice toolset, hosted by the bridge (slice S1).
 
 Built to docs/FABLE-LOFFICE-HERMES-TOOLS-SPEC.md §1/§2. Mounted on the EXISTING :8700
-app under `/mcp/office`: no harness.yaml component, no new port, no daemon, loopback
+app under `/mcp/office`: no motdeck.yaml component, no new port, no daemon, loopback
 only — the same "not a component" discipline as the Office lane itself. Hermes consumes
 it through its own MCP catalog, so Hermes's approval cards, its tool registry and its
 Capabilities pane all keep working and `vendor/hermes` is never edited (compose over
@@ -129,7 +129,7 @@ KNOWN_PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 DEFAULT_PROTOCOL = "2025-06-18"
 
 # The single sentence in front of every tool description. A model that has never seen
-# this harness must learn the containment rule from the TOOL LIST, not by trying.
+# MOT Deck must learn the containment rule from the TOOL LIST, not by trying.
 _ADDRESSING = ("Workbooks are addressed by NAME (as office_list returns them), never by "
                "path: these tools cannot see anything outside the Office folder. ")
 
@@ -475,7 +475,7 @@ SESSION_MAX = 32
 
 def configure(root) -> None:
     """Called once by bridge/app.py. Kept explicit rather than re-deriving the root
-    here: two ideas of where the harness lives is exactly the bug that lets a tool
+    here: two ideas of where MOT Deck lives is exactly the bug that lets a tool
     write to the wrong data/office."""
     global _ROOT
     _ROOT = root

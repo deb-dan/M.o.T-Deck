@@ -24,7 +24,7 @@ chips, its own session, its own stream. Split *tabs* (Phase 1/2) already shipped
 in the shell; this is the panel-internal split, which is a different problem
 entirely: Phase 1 moved **views** between panes, and every view was already a
 singleton. Phase 3 needs the **same view twice**, and the chat view is the single
-most stateful surface in the harness.
+most stateful surface in MOT Deck.
 
 The blunt summary of the finding: **the chat pane is not a component, it is the
 document.** 13 module-level mutable globals, ~35 hard DOM ids, 8 localStorage
@@ -56,7 +56,7 @@ fix's *invariant*, not just its code.
 | `autoVad` | live mic session | :4016 (26) | `startAuto`, `autoFrame`, `autoDrain`, `stopAuto`, `renderAutoBtn/ConvBtn` | ONE mic exists. Two columns must not each hold a capture graph. |
 | `currentAudio` | the one playing clip | :3619 (13) | `msgSpeak`, `stopSpeaking`, `ensureSpeakBtn`, `speakFlash` | One-clip-app-wide is a deliberate rule; keep it global but make `ensureSpeakBtn`'s re-adopt (`currentAudio.wrap === wrap`) column-safe. |
 | `talkRec` | manual dictation | :3740 (15) | `startTalk`/`stopTalk`/`finishTalk`, exclusivity checks | Same mic. `appendTranscript` writes to *the* composer — must target the column that started it. |
-| `attachedImage`, `liveVision` | attach state | :3003 | `sendChat`, `applyVisionUi`, drop/paste handlers, `harnessNativeDrop` | An image staged in A is consumed by whichever column sends first. `liveVision` is genuinely global (a runner property). |
+| `attachedImage`, `liveVision` | attach state | :3003 | `sendChat`, `applyVisionUi`, drop/paste handlers, `motdeckNativeDrop` | An image staged in A is consumed by whichever column sends first. `liveVision` is genuinely global (a runner property). |
 | `pendingAttachDrop` | live-✕ intent | :7211 | `sendChat` finally, `liveAttachDrop` | Wrong column's sidecar row deleted. |
 | `_delArm`, `_msgDelArm` | 2-step confirm | :4981 / :7020 | rail ✕, message delete | A single armed button across columns; arming in B disarms A. Low severity, real. |
 | `_stampSessionModel` | header memo | :2947 | `stampFor`, `refresh()` :1246 | Header of both columns shows one model. |
@@ -101,12 +101,12 @@ selectors** across ~35 distinct ids, out of ~495 total rule braces. The tracked
 
 ### 1.3 localStorage keys (all single-valued)
 
-`harness-chat-sid`, `harness-hermes-sid`, `harness-hermes-stored`,
-`harness-chat-rail`, `harness-sessions-rail`, `harness-sessions-width`,
-`harness-artifact-split`, `harness-canvas-split`.
+`motdeck-chat-sid`, `motdeck-hermes-sid`, `motdeck-hermes-stored`,
+`motdeck-chat-rail`, `motdeck-sessions-rail`, `motdeck-sessions-width`,
+`motdeck-artifact-split`, `motdeck-canvas-split`.
 
 The first three are **per-column state stored in a global key**. Two columns
-reading `harness-chat-sid` at boot both restore the same session — which violates
+reading `motdeck-chat-sid` at boot both restore the same session — which violates
 the invariant in §4.3 *before the user has clicked anything*. Layout keys
 (rail/width/splits) are legitimately shared; a per-column artifact split is a
 Fable decision (§5.3).
@@ -195,7 +195,7 @@ pane machinery.
 
 **Cons — and one is fatal.** No custom `websiteDataStore` is set anywhere in
 `main.swift`, so both webviews use the **default persistent store and therefore
-share `localStorage`**: both instances restore `harness-chat-sid` and fight over
+share `localStorage`**: both instances restore `motdeck-chat-sid` and fight over
 the same session (namespacing by pane param is possible but must then be threaded
 through all 8 keys). Worse, the two documents cannot coordinate the
 single-instance rules at all: **two independent `getUserMedia` capture graphs on
@@ -210,7 +210,7 @@ current pane model is *one webview per pane, borrowed* — two instances of the
 *same* URL is a new concept for that code, not a configuration of it.
 
 **Migration risk: LOW upfront, UNACCEPTABLE for voice.** Only viable if split
-chat ships with voice disabled in split mode — which throws away the harness's
+chat ships with voice disabled in split mode — which throws away MOT Deck's
 most distinctive feature to gain a layout.
 
 ### RECOMMENDATION
@@ -291,13 +291,13 @@ the session id **off the card's pane**, never a module global (§6.1).
 
 ### Phase 2 — second instance, layout only, one lane
 Clone the template into a second column behind a `⫽` chat-split toggle
-(persist `harness-chat-split`). **Agent/Chat lanes only; Hermes disabled in the
+(persist `motdeck-chat-split`). **Agent/Chat lanes only; Hermes disabled in the
 second column** (§5.4). Enforce distinct sessions at creation: column B always
-opens a **new** session (never restores `harness-chat-sid`), and per-column
-storage keys become `harness-chat-sid.<pane>`.
+opens a **new** session (never restores `motdeck-chat-sid`), and per-column
+storage keys become `motdeck-chat-sid.<pane>`.
 **Tests.** New `test_chat_split.js`: two-pane construction produces two distinct
 roots; the invariants in §4.3 as greps/decision tables; per-column storage key
-scheme; `harness-chat-sid` (unsuffixed) is no longer read by the chat code.
+scheme; `motdeck-chat-sid` (unsuffixed) is no longer read by the chat code.
 
 ### Phase 3 — Hermes lane in both columns
 Only after the bridge side is settled: a *distinct* `hermesSid` per column
@@ -373,7 +373,7 @@ capture in B while A owns it produces exactly one live `autoVad`.
    Recommend **leave at 1 + honest copy**; a context regression would be a far
    worse surprise than a queue.
 7. **Focus model.** Which column receives a ⌘K "open chat", a dictated
-   transcript, a rail click, `harnessNativeDrop`? Recommend mirroring the shell's
+   transcript, a rail click, `motdeckNativeDrop`? Recommend mirroring the shell's
    Phase-2 focus model exactly (click sets focus, gold marker, strip routes to
    focused) so there is ONE focus idiom in the product.
 8. **Split persistence.** Does chat-split restore on relaunch, and do both
@@ -421,7 +421,7 @@ good behaviour.
 `bridge/app.py:4129`: `self._queues[sid] = q`. The fan-out map is keyed by session
 id, which is genuinely good design for concurrency — but the setter has no
 occupancy check. Two columns starting Hermes turns on the same sid (the default,
-since `harness-hermes-sid` is one key) means the second `open_queue` orphans the
+since `motdeck-hermes-sid` is one key) means the second `open_queue` orphans the
 first queue: the first turn's relay then waits on a queue nobody feeds, emits its
 20 s `hermes_ping` heartbeats forever (so the panel's stall watchdog is *correctly*
 reassured that the relay is alive), and only the **600 s hard guard** ends it. The

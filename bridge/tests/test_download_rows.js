@@ -67,7 +67,7 @@ function grabDecl(name) {
 }
 
 // The anchors must EXIST before anything is sliced: an indexOf that quietly
-// returned -1 would hand the harness the top of the file and every assertion
+// returned -1 would hand MOT Deck the top of the file and every assertion
 // below would be testing something else entirely.
 const SRC_REFRESH = grabDecl('refreshDownloads');
 const SRC_RETRY   = grabDecl('dlRetry');
@@ -91,7 +91,7 @@ function mkEl(tag) {
   return el;
 }
 
-function makeHarness(list, opts) {
+function makeTestHarness(list, opts) {
   opts = opts || {};
   const els = {};
   for (const id of ['downloads-sec', 'dl-list', 'models-main', 'models-aux', 'models-stamp'])
@@ -121,7 +121,7 @@ function makeHarness(list, opts) {
    functions close over is declared here — the free variables are named, not
    guessed, so a rename in the panel breaks this file loudly. */
 async function render(list, opts) {
-  const h = makeHarness(list, opts);
+  const h = makeTestHarness(list, opts);
   const body = `
     "use strict";
     let dlPoll = null;

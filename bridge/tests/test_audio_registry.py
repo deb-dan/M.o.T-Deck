@@ -1,4 +1,4 @@
-"""Unit tests for Phase A of the harness-native voice capability — the AUDIO half of
+"""Unit tests for Phase A of MOT Deck-native voice capability — the AUDIO half of
 the model registry (FABLE-VOICE-CAPABILITY-SPEC).
 
 Three surfaces, all pure or temp-dir-backed (no network, no real models):
@@ -439,7 +439,7 @@ check("audio identity handling leaves chat local merge behavior unchanged",
 from bridge import app  # noqa: E402
 
 apiroot = Path(tempfile.mkdtemp(prefix="audioapi-"))
-shutil.copy(ROOT / "harness.yaml", apiroot / "harness.yaml")
+shutil.copy(ROOT / "motdeck.yaml", apiroot / "motdeck.yaml")
 (apiroot / "data").mkdir()
 (apiroot / "data" / "models.json").write_text(json.dumps({"models": [
     {"id": "chat-gguf", "format": "gguf", "path": "/m/a.gguf", "size_bytes": 10},
@@ -488,8 +488,8 @@ check("deleting a model clears it as a voice default too",
       'was_voice = [k for k in ("tts_model", "stt_model")' in src)
 
 pan = (ROOT / "bridge" / "panel" / "index.html").read_text()
-check("panel persists the sub-tab under harness-models-section",
-      "'harness-models-section'" in pan)
+check("panel persists the sub-tab under motdeck-models-section",
+      "'motdeck-models-section'" in pan)
 check("panel Get buttons pass the voice_format hint", "voice_format: s.fmt" in pan)
 check("the Qwen3-TTS gguf offer names BOTH files",
       "Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf" in pan

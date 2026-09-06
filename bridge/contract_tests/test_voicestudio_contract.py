@@ -1,6 +1,6 @@
 """VoiceStudio contract — pin-bump gate for the optional voice component.
 
-VoiceStudio (github.com/debpalash/VoiceStudio, AGPL-3.0-only, pinned in harness.yaml)
+VoiceStudio (github.com/debpalash/VoiceStudio, AGPL-3.0-only, pinned in motdeck.yaml)
 is composed over HTTP only — we never modify it. But scripts/start_component.sh and
 bridge/app.py hard-depend on four upstream facts that VoiceStudio does not promise:
 
@@ -35,15 +35,15 @@ def _read(p: Path) -> str:
     return p.read_text(errors="replace")
 
 
-def test_voicestudio_pinned_in_harness_yaml():
+def test_voicestudio_pinned_in_motdeck_yaml():
     """Always runs: the pin/port/optionality contract is ours, not upstream's."""
-    c = yaml.safe_load((ROOT / "harness.yaml").read_text())
+    c = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
     comp = c["components"].get("voicestudio")
-    assert comp, "components.voicestudio disappeared from harness.yaml"
+    assert comp, "components.voicestudio disappeared from motdeck.yaml"
     assert comp["pin"] and comp["pin"] != "main", (
         "voicestudio must be pinned to a release tag, never a branch")
     assert int(comp["port"]) == 3900, (
-        "voicestudio port changed — start_component.sh reads it from harness.yaml but "
+        "voicestudio port changed — start_component.sh reads it from motdeck.yaml but "
         "the plan text / notes in bridge/app.py still say 3900")
     assert comp.get("depends_on") in (None, []), (
         "voicestudio must stay dependency-free — it is optional and must never be "
@@ -66,7 +66,7 @@ def test_bind_env_vars_still_honoured():
     for var in ("OMNIVOICE_BIND_HOST", "OMNIVOICE_PORT"):
         assert var in src, (
             f"backend/main.py no longer reads {var} — start_component.sh sets it to pin "
-            "the process to 127.0.0.1 and the harness.yaml port. (The project was "
+            "the process to 127.0.0.1 and motdeck.yaml port. (The project was "
             "renamed from OmniVoice Studio; a rename of the env prefix breaks us.)")
 
 
@@ -165,7 +165,7 @@ def test_llm_custom_provider_env_triplet():
     for env in ("TRANSLATE_BASE_URL", "TRANSLATE_API_KEY", "TRANSLATE_MODEL"):
         assert env in src, (
             f"{env} is no longer a recognised env override — start_component.sh's "
-            "voicestudio branch exports it to aim the LLM at the harness runner")
+            "voicestudio branch exports it to aim the LLM at MOT Deck runner")
     assert "def resolve_base_url" in src and "def resolve_model" in src, (
         "the provider field resolver moved — env-first precedence is what makes our "
         "start-time export work at all")

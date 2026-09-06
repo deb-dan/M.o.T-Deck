@@ -1,6 +1,6 @@
 # Update audit — 2026-08-28 (READ-ONLY sweep; report only, nothing changed)
 
-Sources of truth read: `harness.yaml` (components + `runner` + `build` pins),
+Sources of truth read: `motdeck.yaml` (components + `runner` + `build` pins),
 `scripts/install_*.sh`, `scripts/start_component.sh`, venv dist-info listings
 (`data/bridge-venv`, `data/mlx-venv`, `data/hermes-venv`, `data/odysseus-venv`),
 vendor checkouts (`git describe`/`log`/`status`), `data/onlyoffice` pins in
@@ -34,7 +34,7 @@ registry.npmjs.org, HF API). Verdict legend: **SECURITY** / **BUGFIX-WORTHWHILE*
 - **Latest:** v0.20.6 line, released 2026-08-27 (five releases since ours: 0.20.2–0.20.6, ~1,400 merged PRs total).
 - **Delta:** **FEATURE-NICE, leaning RISKY** — big feature waves (MCP 2.x migration in 0.20.3, Bot Mode plugin bundling, desktop registry expansion, OS-keychain encryption in 0.20.6, subprocess Python isolation hardening). No advertised critical security fix. The MCP 2.x migration and the known upstream habit of pruning dashboard flags (`--tui` shim comment; `_add_server_runtime_args()` refactor) mean our 102-test contract suite is the gate — the manifest's own watch-item warns `HERMES_DESKTOP=1` + source-less sessions resolve to "desktop" surfaces.
 - **Local modifications a bump would clobber:** `vendor/hermes/package-lock.json` is DIRTY (` M` in git status) — the known dirty file. Stash/discard deliberately before checkout; everything else in vendor/hermes is clean.
-- **Update path:** UPDATE-RUNBOOK PASS-2 shape: bump `components.hermes.pin` in BOTH harness.yamls → `git -C vendor/hermes fetch --tags && checkout <tag>` → `python3 -m pytest bridge/contract_tests/ -q` MUST be green → `./scripts/install_component.sh hermes --yes` → rsync to snapshot + pip install -e → `./scripts/ship.sh` → **then `./scripts/start_component.sh hermes` from the snapshot** (ship.sh leaves the old Hermes process serving). Re-check `approvals.mode: manual` after.
+- **Update path:** UPDATE-RUNBOOK PASS-2 shape: bump `components.hermes.pin` in BOTH motdeck.yamls → `git -C vendor/hermes fetch --tags && checkout <tag>` → `python3 -m pytest bridge/contract_tests/ -q` MUST be green → `./scripts/install_component.sh hermes --yes` → rsync to snapshot + pip install -e → `./scripts/ship.sh` → **then `./scripts/start_component.sh hermes` from the snapshot** (ship.sh leaves the old Hermes process serving). Re-check `approvals.mode: manual` after.
 
 ### Odysseus (pewdiepie-archdaemon/odysseus) — vendored, INSTALLED
 - **Our pin:** dev-branch commit `25c9e735` (2026-07-30). Verified in vendor/odysseus; working tree clean.
@@ -50,25 +50,25 @@ registry.npmjs.org, HF API). Verdict legend: **SECURITY** / **BUGFIX-WORTHWHILE*
 - **Update path:** pin is `main` so no yaml edit — `git -C vendor/searxng pull` (or re-run `install_component.sh searxng`) in repo + snapshot, then `start_component.sh searxng`. Its venv only carries httpx etc.; re-run the installer to catch requirement changes.
 
 ### llama.cpp (the model engine) — INSTALLED
-- **Our pin:** `runner.llamacpp_pin: b10427` in harness.yaml; verified live: `data/llamacpp/build/bin/llama-server --version` = build 10427. A `data/llamacpp.b10295.bak` rollback copy exists from the last pass (now two generations old).
+- **Our pin:** `runner.llamacpp_pin: b10427` in motdeck.yaml; verified live: `data/llamacpp/build/bin/llama-server --version` = build 10427. A `data/llamacpp.b10295.bak` rollback copy exists from the last pass (now two generations old).
 - **Latest:** `b10662` (2026-08-27) — ~235 builds ahead. Recent range adds Qwen3.8-Flash-Next arch, DFlash2, DeepSeek V4 LIGHTNING_INDEXER (Vulkan), ctx-per-slot unified KV cache.
 - **Delta:** **FEATURE-NICE / BUGFIX-WORTHWHILE** — new model-arch support is the usual reason to bump; no advertised breaking changes, but our own pin-notes doctrine requires re-verifying the flag surface at the candidate (`-a/--alias`, `--repeat-penalty`, `--spec-type` + DRAFT_MTP, llama-tts `-m/-mm/-p/-o`, `--tts-lang`, `--tts-speaker-file`, and that `-mv/--vocoder-model` is still absent) plus the config.ini watch-item (#26118). Also verify `llama-<tag>-bin-macos-arm64.tar.gz` actually exists before pinning (CI lags fresh tags — b10297 precedent).
 - **Update path:** UPDATE-RUNBOOK PASS-3: `cp -R data/llamacpp data/llamacpp.b10427.bak` FIRST (installer keeps no backup), bump `runner.llamacpp_pin` in both yamls, `./scripts/install_llamacpp.sh` both places, `./scripts/ship.sh`, verify gguf chat + tok/s + gguf TTS.
 
 ### mlx-lm / mlx-vlm / mlx-audio / mlx-whisper (data/mlx-venv) — INSTALLED
-Venv verified: mlx 0.32.0, mlx-lm 0.31.3, mlx-vlm 0.6.13, mlx-audio 0.4.8, mlx-whisper 0.4.3 — all exactly at the harness.yaml `build.*` pins. ✔ pins == reality.
+Venv verified: mlx 0.32.0, mlx-lm 0.31.3, mlx-vlm 0.6.13, mlx-audio 0.4.8, mlx-whisper 0.4.3 — all exactly at motdeck.yaml `build.*` pins. ✔ pins == reality.
 - **mlx-lm** 0.31.3 → PyPI latest **0.31.3**. **SKIP** — already current.
 - **mlx-vlm** 0.6.13 → latest **0.6.17**. **BUGFIX-WORTHWHILE** — patch-line bumps; last bump (0.6.10→0.6.13) was additive-args only, so risk is low, but re-check the `mlx_vlm.server --model/--host/--port` launch line at the candidate.
 - **mlx-audio** 0.4.8 → latest **0.5.0** (2026-08-17). **RISKY-BREAKING** — a MINOR-version jump on the exact package where the manifest's standing rule says every bump must re-derive `CLI_PARITY_KWARGS` by measurement (a drift is *silently wrong audio*, not an error). 0.4.7→0.4.8 was only safe because the argparse files were md5-identical; a 0.5.0 will not be. Also remember: RenderCache keys don't include engine version — stale renders survive the bump. Do this one alone, with the pinned-clip A/B verify.
 - **mlx-whisper** 0.4.3 → latest **0.4.3**. **SKIP** — current.
-- **Update path (all four):** edit `build.mlx_*_pin` in harness.yaml (single source of truth) in BOTH copies → `./scripts/install_mlx.sh` in snapshot then repo → `./scripts/ship.sh` → verify per PASS-1 (MLX chat streams, vision answers, ▶ speak same-voice on FRESH text, both STT models).
+- **Update path (all four):** edit `build.mlx_*_pin` in motdeck.yaml (single source of truth) in BOTH copies → `./scripts/install_mlx.sh` in snapshot then repo → `./scripts/ship.sh` → verify per PASS-1 (MLX chat streams, vision answers, ▶ speak same-voice on FRESH text, both STT models).
 
 ### Bridge venv (data/bridge-venv) — our own runtime libs
 Verified: fastapi 0.139.2, starlette 1.3.1, uvicorn 0.51.0, websockets 17.0.1, openpyxl 3.1.5, pytest 9.1.1.
 - **fastapi** 0.139.2 → latest **0.141.1**: **FEATURE-NICE/SKIP** — no known advisory in range; the mlx-venv already carries 0.141.1 so the ecosystem is compatible. Bump opportunistically at the next bridge-venv rebuild, not as its own pass.
 - **openpyxl** 3.1.5 → latest **3.1.5**: **SKIP** — current (and load-bearing for the LOffice round-trip).
 - **pytest** 9.1.1 → latest **9.1.1**: **SKIP** — current.
-- **Update path:** these aren't pinned in harness.yaml; they ride whatever provisions bridge-venv (bootstrap/requirements). Any bump = reinstall into data/bridge-venv + run the contract suite + ship.sh.
+- **Update path:** these aren't pinned in motdeck.yaml; they ride whatever provisions bridge-venv (bootstrap/requirements). Any bump = reinstall into data/bridge-venv + run the contract suite + ship.sh.
 
 ### ONLYOFFICE bundles (LOffice tier 2) — INSTALLED (data/onlyoffice, hash-pinned)
 > **‼️ SUPERSEDED 2026-08-28 (same day): the bump was DONE, probed and KEPT.**
@@ -126,7 +126,7 @@ Verified: fastapi 0.139.2, starlette 1.3.1, uvicorn 0.51.0, websockets 17.0.1, o
 ### OpenCode — pin `1.18.19` (npm version, both `components.opencode.pin` and `build.opencode_pin`), NOT installed
 - **Latest:** **1.18.23** on npm.
 - **Delta:** **BUGFIX-WORTHWHILE at install time** — patch releases only. A bump must re-verify the three things the manifest names: `serve --port/--hostname`, the `autoupdate` key + `OPENCODE_DISABLE_AUTOUPDATE`, and the four XDG_* variables in packages/core/src/global.ts — plus record the NEW arm64 tarball shasum in `scripts/install_opencode.sh` (it verifies `de148944…` today, which is 1.18.19's). **Two pins + one hardcoded shasum must move together.**
-- **Update path:** edit both pins in harness.yaml + the shasum in `install_opencode.sh` → `./scripts/install_opencode.sh`.
+- **Update path:** edit both pins in motdeck.yaml + the shasum in `install_opencode.sh` → `./scripts/install_opencode.sh`.
 
 ### aider — pin commit `5dc9490b` (main), venv/vendor NOT present yet
 - **Latest:** main HEAD **is our pin** (2026-05-22 merge; upstream slow-but-alive, exactly as the recon recorded).
@@ -145,7 +145,7 @@ Verified: fastapi 0.139.2, starlette 1.3.1, uvicorn 0.51.0, websockets 17.0.1, o
 | **uv** (portable-first-run bootstrap) | 0.12.3 | **0.12.6** (2026-08-25) | SKIP/FEATURE-NICE — no security fixes in range (TLS/riscv64 fixes, bearer-token panic fix); a user's own uv always wins anyway. Bump at next fat-installer build. | `build.uv_pin` → firstrun.sh path |
 | **imageio-ffmpeg** | 0.6.0 | **0.6.0** | SKIP — current. ⚠️ still ffmpeg-only, no ffprobe. | `build.imageio_ffmpeg_pin` |
 | **Univer UMD bundle** (retired-but-present, `bridge/panel/assets/vendor/univer/`) | 0.25.1 | **0.25.1** (npm latest; the 1.0.0-beta line is deliberately not taken) | SKIP — current AND retired: the LOffice sheets surface moved to ONLYOFFICE; the assets are dead weight served by us. Candidate for removal, not update. | `build.univer_pin` → `scripts/fetch_vendor_assets.sh` |
-| **CPython (fat bundle)** | 3.12.11 | (not re-checked — still the pending Fable-QA item in harness.yaml) | SKIP this sweep | `build.python_version` |
+| **CPython (fat bundle)** | 3.12.11 | (not re-checked — still the pending Fable-QA item in motdeck.yaml) | SKIP this sweep | `build.python_version` |
 | **Node** | not vendored (bun only) | — | n/a | — |
 | **whisper.cpp** | not vendored (STT = mlx-whisper; `faster-whisper 1.2.1` in hermes-venv is Hermes's own dep, ours only transitively) | — | n/a — rides the Hermes bump | — |
 

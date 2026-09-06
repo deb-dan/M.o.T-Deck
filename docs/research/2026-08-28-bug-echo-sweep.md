@@ -49,7 +49,7 @@ self-running, exits 0 always, NOT in the gate; the campaign-ledger pattern of
 > The paragraph below is the original finding, kept verbatim as the record.
 `bridge/panel/index.html:10527` · echoes the **2026-08-27 agent-consent incident**
 (model narrated "Done. Added Purchases…" over a failed write; nothing on screen
-contradicted it — fixed v1.5.9 with harness-authored lines + ✗ chips).
+contradicted it — fixed v1.5.9 with MOT Deck-authored lines + ✗ chips).
 
 The bridge maps `is_error` onto every `tool_output` frame for every lane
 (`bridge/routers/hermes.py:218`, including the double-encoding unwrap), and
@@ -120,7 +120,7 @@ on a rename of the SAME document.
   and a foreign build of a different vintage re-opens exactly the version-drift the
   b10662 401 regression demonstrated. *Correct:* say on the card which binary is
   serving, or refuse the fallback with the install command.
-* **W-05 · harness.yaml has two line-level writers and unquoted scalars** —
+* **W-05 · motdeck.yaml has two line-level writers and unquoted scalars** —
   `bridge/core/yamlset.py:20,55` writes `model: {value}` unquoted (a value containing
   `: ` or a leading YAML special would change meaning), and `scripts/flip_installed.py`
   edits the same file with no shared lock. Sum-over-text-adjacent (a writer that can

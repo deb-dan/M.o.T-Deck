@@ -152,7 +152,7 @@ Per candidate, with the numbers behind each call:
 - **NemotronLabs-VoiceChat-11B-4bit (MLX) — NEW CANDIDATE, arguably now the front-runner
   for the *"instantaneous"* ask.** 9.18 GB, OpenMDW-1.1, full-duplex, complete runtime
   already inside our pinned mlx-vlm 0.6.17 including a `/v1/realtime` WebSocket server
-  (the exact component shape the harness runs everywhere) and a built-in latency
+  (the exact component shape MOT Deck runs everywhere) and a built-in latency
   profiler (`VoiceChatProfile`). Best open full-duplex brain (37% BBA vs Moshi's 4.4%).
   Unknown: real-time factor on M-series — the card itself says it depends on host
   hardware. **Measure this one next; at 9.18 GB it is a ~30-min acquisition even at

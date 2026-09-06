@@ -27,11 +27,11 @@
 // #efe7d7 ink, --gold #d9b36c accent. Workbench, not shrine.
 //
 // USAGE (regenerating the mark — normally nobody has to):
-//   swiftc -O app/make_icon.swift -o /tmp/mot-icon && /tmp/mot-icon app/Harness.icns
+//   swiftc -O app/make_icon.swift -o /tmp/mot-icon && /tmp/mot-icon app/MOTDeck.icns
 // It writes an .iconset next to the target, runs iconutil, and also refreshes
 // app/icon.png (the 1024 slot) so scripts/build_app.sh's sips path — used only by a
 // FULL fat rebuild — no longer produces the old "H". ship.sh copies the committed
-// app/Harness.icns into the bundle on every ship, so the per-size art always wins.
+// app/MOTDeck.icns into the bundle on every ship, so the per-size art always wins.
 
 import AppKit
 import Foundation
@@ -191,9 +191,9 @@ func writePNG(_ rep: NSBitmapImageRep, _ path: String) throws {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 let args = CommandLine.arguments
-let target = args.count > 1 ? args[1] : "app/Harness.icns"
+let target = args.count > 1 ? args[1] : "app/MOTDeck.icns"
 let outDir = (target as NSString).deletingLastPathComponent
-let iconset = (outDir.isEmpty ? "." : outDir) + "/Harness.iconset"
+let iconset = (outDir.isEmpty ? "." : outDir) + "/MOTDeck.iconset"
 let fm = FileManager.default
 try? fm.removeItem(atPath: iconset)
 try fm.createDirectory(atPath: iconset, withIntermediateDirectories: true)

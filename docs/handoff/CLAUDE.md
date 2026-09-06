@@ -1,4 +1,4 @@
-# New Harness — working memory (canonical project home)
+# New MOT Deck — working memory (canonical project home)
 
 > **🗄️ ARCHIVE:** session notes older than the current wave live in `docs/handoff/archive/CLAUDE-ARCHIVE-2026-07--08.md` (full, verbatim). This file carries only standing doctrine + the current wave — keep it that way: when a wave closes, move its notes to the archive.
 
@@ -96,9 +96,9 @@
 > end with the exact commands to see it — restart/refresh/kill MOT Deck. The canonical set:
 > full ship `./scripts/ship.sh` (gate → snapshot → restarts app+bridge; components stay up);
 > component restart `./scripts/ship.sh --restart <name>`; app only: quit with
-> `osascript -e 'tell application id "local.harness.app" to quit'` then
-> `open -b local.harness.app`; stale tab = ⌘R in the tab. The installed filename may be
-> `Harness.app` or `M.O.T.app`; lifecycle identity is the bundle id, never either name.**
+> `osascript -e 'tell application id "local.motdeck.app" to quit'` then
+> `open -b local.motdeck.app`; stale tab = ⌘R in the tab. The installed filename may be
+> `MOT Deck.app` or `M.O.T.app`; lifecycle identity is the bundle id, never either name.**
 
 
 > **🔢 VERSIONING (Debi's ruling, 2026-08-27):** the project is at **v1.5.0** (see `VERSION`).

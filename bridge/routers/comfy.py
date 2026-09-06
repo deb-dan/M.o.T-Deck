@@ -82,7 +82,7 @@ from ..core.comfycur import (                                    # noqa: F401
 )
 
 # ── constants ────────────────────────────────────────────────────────────────
-COMFY_DEFAULT_PORT = 8188       # harness.yaml components.comfyui.port overrides it
+COMFY_DEFAULT_PORT = 8188       # motdeck.yaml components.comfyui.port overrides it
 DL_TICK_S = 2.0                 # SSE progress cadence — the downloads lane's number
 JOB_TICK_S = 1.0                # queue/progress poll cadence while a job is live
 OBJECT_INFO_TTL = 60.0          # the node table changes only when the engine restarts
@@ -1159,7 +1159,7 @@ async def api_comfy_open_template(req: Request) -> JSONResponse:
             "the vendored workflow-templates package is not in this install")},
             status_code=404)
     src = d / f"{name}.json"
-    dst = comfy_base() / "user" / "default" / "workflows" / f"harness-{name}.json"
+    dst = comfy_base() / "user" / "default" / "workflows" / f"motdeck-{name}.json"
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
@@ -1188,7 +1188,7 @@ def _gallery_load() -> list:
 def _gallery_write(items: list) -> None:
     try:
         state_dir().mkdir(parents=True, exist_ok=True)
-        tmp = str(_gallery_path()) + ".harness-tmp"
+        tmp = str(_gallery_path()) + ".motdeck-tmp"
         with open(tmp, "w") as f:
             json.dump({"items": items}, f, indent=2)
         os.replace(tmp, _gallery_path())
@@ -1238,7 +1238,7 @@ def gallery_finalize(j: dict) -> None:
 
 
 def gallery() -> dict:
-    """Registry ∪ what is on disk under <output>/harness/, re-stat'd every time.
+    """Registry ∪ what is on disk under <output>/motdeck/, re-stat'd every time.
 
     ⚠️ THREE LIES THIS REFUSES TO TELL: an item whose file is GONE is listed `missing`,
     never hidden; one whose size CHANGED since ingest is flagged `size_changed` rather

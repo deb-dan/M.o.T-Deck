@@ -282,7 +282,7 @@ goose Desktop RENDERER BUNDLE — installed by scripts/install_goose_ui.sh, UNMO
 
 CHANGES STATED (Apache-2.0 §4b): none to these files. The bundle is served byte-for-byte.
 The Electron window.electron / window.appConfig preload seam is supplied by OUR OWN
-generated script (bridge/gooseui.py, served at /gooseui/harness-preload.js) and OUR OWN
+generated script (bridge/gooseui.py, served at /gooseui/motdeck-preload.js) and OUR OWN
 copy of the entry document (served at /gooseui/, generated from the vendored index.html
 with one extra <script> tag and our own surface title). Nothing under data/goose/ui/ is
 edited — bridge/contract_tests/test_gooseui_contract.py recomputes every digest.

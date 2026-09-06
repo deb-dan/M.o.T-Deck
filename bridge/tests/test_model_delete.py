@@ -7,7 +7,7 @@ files deleted:
   * source in {download, local} whose path is UNDER data/models/  → deletable (target
     = the model's own folder, whether path is a file or the dir itself).
   * source = lmstudio-import / jan-import / unknown                → REFUSED (imports
-    the harness does not own).
+    MOT Deck does not own).
   * path traversal / a path resolving OUTSIDE data/models/         → REFUSED.
   * missing path                                                    → REFUSED.
 The live-model / aux interaction (eject-before-delete) is exercised by the endpoint,
@@ -32,7 +32,7 @@ def check(name, cond):
         FAILS.append(name)
 
 
-ROOT = "/tmp/harnesstest"
+ROOT = "/tmp/motdecktest"
 MODELS = os.path.join(ROOT, "data", "models")
 
 

@@ -14,7 +14,7 @@ THE MECHANISM (measured on the live process table, then reproduced from scratch)
 
   2. macOS Foundation's `Process.terminate()` — app/main.swift calls it in
      applicationWillTerminate — signals THE PROCESS GROUP, not just the child.
-     Verified with a purpose-built Swift harness, both directions: a `nohup`ed
+     Verified with a purpose-built Swift motdeck, both directions: a `nohup`ed
      grandchild DIED with the child; a setsid'd grandchild SURVIVED.
 
   So every quit of MOT Deck was a group kill that reached through the bridge into
@@ -33,7 +33,7 @@ WHAT THIS FILE FENCES:
                      own session and process group, and SURVIVES a SIGTERM addressed
                      to the parent shell's whole group. This is the incident,
                      re-staged in miniature, every time the gate runs.
-  C. the SINGLETON — one bridge per harness root: a second boot against a live,
+  C. the SINGLETON — one bridge per motdeck root: a second boot against a live,
                      identity-verified pidfile stands down with a sentence and exit 0;
                      a stale pidfile (dead pid, or a live pid whose command line is
                      NOT our bridge) is ignored, left unsignalled, and overwritten.
@@ -125,7 +125,7 @@ def test_every_detached_call_site_is_backgrounded():
 
 
 def test_every_component_arm_spawns_through_the_helper():
-    """Every component the harness starts must be routed through _detached — a new
+    """Every component MOT Deck starts must be routed through _detached — a new
     arm that forgets is exactly how this incident comes back."""
     code = "\n".join(_code(START))
     for comp, needle in [
@@ -202,7 +202,7 @@ def test_live_detached_process_survives_a_group_kill(tmp_path):
     developer's shell is not a test. `start_new_session=True` on the launcher gives us
     a group whose entire membership we put there ourselves.
     """
-    marker = f"harness-detach-selftest-{os.getpid()}"
+    marker = f"motdeck-detach-selftest-{os.getpid()}"
     pidfile = tmp_path / "pids.txt"
     errfile = tmp_path / "selftest.err"
 
@@ -216,7 +216,7 @@ def test_live_detached_process_survives_a_group_kill(tmp_path):
     # need to identify — leaving the reaper below with nothing to verify against.
     #
     # ⚠️ THE SCRIPT PATH IS QUOTED. The repo lives under "Claude Proj Rootz/New
-    # Harness/…" — an unquoted $START word-splits, the inner bash never runs, no
+    # MOT Deck/…" — an unquoted $START word-splits, the inner bash never runs, no
     # second pid is ever printed, and the readline below blocks until the suite
     # times out with no explanation at all. `set -e` is here for the same reason:
     # a launcher that fails must close the pipe so the test fails LOUDLY instead
@@ -339,7 +339,7 @@ def test_a_missing_perl_refuses_instead_of_recreating_the_unsafe_group(tmp_path)
             (binp / b).symlink_to(real)
     assert not (binp / "perl").exists()
 
-    marker = f"harness-noperl-{os.getpid()}"
+    marker = f"motdeck-noperl-{os.getpid()}"
     errfile = tmp_path / "noperl.err"
     env = dict(os.environ, PATH=str(binp))
     with errfile.open("w") as eh:
@@ -405,7 +405,7 @@ def test_path_evidence_is_diagnostic_not_ownership():
     root = Path("/tmp/h")
     ours = "/tmp/h/data/bridge-venv/bin/python -m uvicorn bridge.app:app --host 127.0.0.1 --port 8700"
     assert S.is_our_bridge(ours, root, "8700")
-    assert not S.is_our_bridge(ours, Path("/tmp/other"), "8700"), "another harness root matched"
+    assert not S.is_our_bridge(ours, Path("/tmp/other"), "8700"), "another motdeck root matched"
     assert not S.is_our_bridge(ours, root, "8701"), "a different port matched"
     assert not S.is_our_bridge("/usr/bin/python3 -m uvicorn other.app:app --port 8700",
                                root, "8700"), "a stranger's uvicorn matched"
@@ -454,7 +454,7 @@ def test_stale_or_path_matching_record_is_refused_not_adopted(tmp_path, monkeypa
 
 def test_the_guard_never_fires_on_a_plain_import(tmp_path, monkeypatch):
     """~40 test files import bridge.app in process. If the guard were argv-blind, a
-    pytest run against a live harness would exit the test session."""
+    pytest run against a live motdeck would exit the test session."""
     monkeypatch.setattr(S.sys, "argv", ["pytest", "-q", "bridge/tests"])
     msg = S.claim_or_exit(tmp_path, _exit=_exit_probe)
     assert "guard skipped" in msg

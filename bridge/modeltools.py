@@ -1,6 +1,6 @@
 """TOOL-CALLING CAPABILITY per chat model (2026-08-21, the OpenCode slice).
 
-The harness had no idea which of its models can emit tool calls, and it now needs
+MOT Deck had no idea which of its models can emit tool calls, and it now needs
 one: OpenCode requires tool-calling and has **no text-edit fallback** — on a model
 that cannot emit a well-formed call it looks *broken*, not *worse*
 (docs/research/2026-08-21-opencode-omnigent-recon.md §1). So the panel gates on a

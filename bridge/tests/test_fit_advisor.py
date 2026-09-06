@@ -103,7 +103,7 @@ def _registry():
         out += _registry_models()
     except Exception:                                             # noqa: BLE001
         pass
-    snap = (Path.home() / "Library" / "Application Support" / "Harness"
+    snap = (Path.home() / "Library" / "Application Support" / "MOT Deck"
             / "data" / "models.json")
     try:
         out += json.loads(snap.read_text()).get("models", [])
@@ -377,7 +377,7 @@ check("`refuse` is set in exactly ONE place in the engine",
 check("…and that place requires a HAND-SET context over the METAL ceiling",
       re.search(r"hand_set_ctx.*\n?.*need > ceiling", _src) is not None)
 check("…and it is overridable by environment",
-      "OVERCOMMIT_ENV" in _src and F.OVERCOMMIT_ENV == "HARNESS_ALLOW_METAL_OVERCOMMIT")
+      "OVERCOMMIT_ENV" in _src and F.OVERCOMMIT_ENV == "MOT_DECK_ALLOW_METAL_OVERCOMMIT")
 
 _settings = F.settings_for({"load": {"ctx": 262144}})
 check("a context the user typed is marked hand-set", _settings["hand_set_ctx"] is True)

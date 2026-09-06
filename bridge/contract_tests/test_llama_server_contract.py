@@ -128,7 +128,7 @@ def test_runner_probe_sends_the_api_key():
         "Control shows an idle runner while it is serving tokens.")
     assert "api_key" in body, (
         "the probe hard-codes a bearer instead of reading runner.api_key (or "
-        "aux.api_key) from harness.yaml — a key change in the manifest would break "
+        "aux.api_key) from motdeck.yaml — a key change in the manifest would break "
         "the live-model probe again")
 
 
@@ -206,8 +206,8 @@ def test_a_missing_key_file_is_fatal_so_the_launch_arm_must_guard_it():
         return
     try:
         r = subprocess.run([str(BIN), "--api-key-file",
-                            "/harness-no-such-key-file.txt", "--model",
-                            "/harness-no-such-model.gguf"],
+                            "/motdeck-no-such-key-file.txt", "--model",
+                            "/motdeck-no-such-model.gguf"],
                            capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         return

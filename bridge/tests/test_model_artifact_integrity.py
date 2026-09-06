@@ -439,11 +439,12 @@ def test_main_resolver_refuses_the_same_broken_artifact_before_launch(tmp_path):
     (root / "data" / "broken.gguf").write_bytes(b"")
     (root / "data" / "models.json").write_text(json.dumps({"models": [{
         "id": "broken", "format": "gguf", "path": "data/broken.gguf"}]}))
-    (root / "harness.yaml").write_text(
+    (root / "motdeck.yaml").write_text(
         "runner:\n  adapter: llamacpp\n  port: 6767\n  api_key: x\n  ctx_size: 4096\n"
         "  model: broken\n  binary: null\n")
+    env = dict(os.environ, MOT_DECK_MANIFEST_PYTHON=sys.executable)
     got = subprocess.run(["bash", "scripts/start_component.sh", "runner"], cwd=root,
-                         capture_output=True, text=True, timeout=30)
+                         env=env, capture_output=True, text=True, timeout=30)
     assert got.returncode != 0
     assert "model 'broken' is incomplete: GGUF model file is empty" in got.stderr
     assert "Rescan or pick another model" in got.stderr

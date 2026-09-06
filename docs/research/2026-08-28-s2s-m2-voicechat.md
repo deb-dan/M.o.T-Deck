@@ -224,5 +224,5 @@ up 18 h 36 m, probing at baseline speed (14.2 tok/s) after cleanup; memory back 
 downloads left. This document is the only repo write.
 
 ---
-*Restart/refresh: nothing to restart — no harness component was modified. The
+*Restart/refresh: nothing to restart — no motdeck component was modified. The
 resident runner (:6767) and 27B were left running and verified healthy.*

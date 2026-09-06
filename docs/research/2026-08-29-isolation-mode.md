@@ -9,7 +9,7 @@ rebinding the ties automatically?
 
 **Read-only research.** No files outside docs/research/ touched; no processes signaled;
 all findings from source, on-disk configs, and existing logs. Repo = the working tree at
-`New Harness/harness`; the snapshot at `~/Library/Application Support/Harness` mirrors it
+`New Harness/MOT Deck`; the snapshot at `~/Library/Application Support/MOT Deck` mirrors it
 (same layout, live `data/`).
 
 ---
@@ -37,7 +37,7 @@ already computes everything needed (§6).
 ### OpenCode (the house gold standard)
 - **Wiring:** `scripts/start_component.sh:885-1106`. Every Start rewrites a provider block
   with id `llama.cpp`, display name **"MOT Deck (local)"** (`start_component.sh:980-986`),
-  `npm: @ai-sdk/openai-compatible`, baseURL/apiKey from `harness.yaml runner:`, and a
+  `npm: @ai-sdk/openai-compatible`, baseURL/apiKey from `motdeck.yaml runner:`, and a
   `models` map enumerating **every chat model in our registry** (`data/models.json`,
   lines 938-971) — with the two-identifier rule (slash-free picker key vs. wire `id`;
   gguf = registry id via `--alias`, MLX = path) encoded per model, plus per-model
@@ -66,8 +66,8 @@ and say so; (6) verify through the app's own API and print a one-line verdict.
 
 ### Unsloth
 Isolation works for a different, simpler reason: `depends_on: []` — it serves its OWN
-models, never our runner (`harness.yaml:305`, "standalone — it serves its OWN models"),
-in its own fenced home (`UNSLOTH_STUDIO_HOME=data/unsloth-home`, harness.yaml unsloth
+models, never our runner (`motdeck.yaml:305`, "standalone — it serves its OWN models"),
+in its own fenced home (`UNSLOTH_STUDIO_HOME=data/unsloth-home`, motdeck.yaml unsloth
 block). Nothing to surface, nothing to rebind. It's the control case, not a pattern donor.
 
 ---
@@ -131,13 +131,13 @@ then auto-reloads the webview — the reload seam already exists, `hermescfg.py:
   already solved by hermes_config_gen.
 
 ### (4) Runner down today
-Hermes launches fine without the runner only if `runner.model` is set in harness.yaml —
+Hermes launches fine without the runner only if `runner.model` is set in motdeck.yaml —
 otherwise Start *refuses* (`start_component.sh:1255-1263`, "Start the Runner first").
 Mid-session, a turn against a dead base_url surfaces as a provider error in Hermes's own
 chat; its dashboard stays healthy on :9119, so the tab looks alive while every turn fails.
 No surface says "the runner is the missing piece". Config is read at use-time (new
 sessions), so a runner restart on the same endpoint needs **no Hermes restart**; a changed
-endpoint/model needs only the Start-time re-patch (which the harness always does).
+endpoint/model needs only the Start-time re-patch (which MOT Deck always does).
 
 **Verdict: possible-with-care.** The mechanism exists upstream; the work is a careful
 writer + migration + the double-row guard.
@@ -195,7 +195,7 @@ Mostly polish, per the odyvision precedent:
 ### (4) Runner down today
 Odysseus starts and serves fine (it refuses nothing at Start); chats against the dead
 endpoint fail per-turn with its own error toast; auto refresh quietly returns the cache.
-Its `depends_on: [runner, searxng]` (`harness.yaml:133`) is already the machine-readable
+Its `depends_on: [runner, searxng]` (`motdeck.yaml:133`) is already the machine-readable
 fact the signaling slice needs.
 
 **Verdict: clean.** The registration is done and proven (v1.5.33 closed the pattern);
@@ -252,7 +252,7 @@ aider standalone, and the pill already names the dependency at start time.
 - **UI lane** (`bridge/gooseui.py`): same wiring into the goosed WE supervise —
   `serve_env` `:400-453` (`GOOSE_PROVIDER=openai`, `GOOSE_MODEL`, `OPENAI_*`), config
   pairs seeded at spawn (`:486-533`), separate home (`data/goose/ui-home`). Notably it
-  already pre-sets **`HARNESS_RUNNER_API_KEY`** (`CUSTOM_PROVIDER_KEY_ENV`, `:447-460`)
+  already pre-sets **`MOT_DECK_RUNNER_API_KEY`** (`CUSTOM_PROVIDER_KEY_ENV`, `:447-460`)
   precisely so a custom provider created in goose's own UI finds its key with no prompt.
 
 ### (2) Its own model UI — why generic
@@ -274,7 +274,7 @@ providers.md:481-508. So the first-class path is:
 1. Reproduce the JSON goose's own form writes (create one through the UI in a scratch
    home, read the file — that kills the "Unknown provider" guessing) — at pin v1.48.0.
 2. Seed that file into BOTH homes (`data/goose/home`, `data/goose/ui-home`) at launch,
-   display name "MOT Deck (local)", key via `HARNESS_RUNNER_API_KEY` (already in env),
+   display name "MOT Deck (local)", key via `MOT_DECK_RUNNER_API_KEY` (already in env),
    and flip `GOOSE_PROVIDER` to the custom provider's id.
 3. Alternatively zero-code: the user can use goose's own Add-custom-provider form today —
    the key env is pre-arranged; only the models list must be typed.
@@ -310,7 +310,7 @@ exact declarative JSON, which is a read-a-file-goose-wrote recon, not a design p
    (`bridge/routers/components.py:23-95`) computes per-component
    `running/degraded/health/misses` (debounced via `core/health._health_track`) and for
    the runner the three-state truth: `port_up` vs `loaded` vs `degraded` (`:60-90`).
-   `harness.yaml depends_on` is the dependency graph (hermes→runner,
+   `motdeck.yaml depends_on` is the dependency graph (hermes→runner,
    odysseus→runner+searxng; opencode/unsloth deliberately `[]`).
 2. **A push channel exists**: `core/events.publish` SSE (used by nav_gen and
    hermes_config_gen riders, `hermescfg.py:46-49`).
@@ -340,7 +340,7 @@ exact declarative JSON, which is a read-a-file-goose-wrote recon, not a design p
   overlays a slim banner on the affected tab only: *"This tab needs the Runner — it's
   down. Restart the Runner; this tab rebinds automatically."* One overlay view, driven by
   the poll it already runs; no injection into vendor pages (Odysseus X-Frame policy noted
-  at the pin bump, harness.yaml:129 — untouched).
+  at the pin bump, motdeck.yaml:129 — untouched).
 - **Lane pages (aider/goose):** keep their status poll alive during a session at a slow
   cadence; when `model_ready` flips false mid-session, show the existing red pill plus
   one sentence above the terminal — the terminal already carries the raw error.
@@ -378,7 +378,7 @@ exact declarative JSON, which is a read-a-file-goose-wrote recon, not a design p
   `custom_providers` vs keyed `providers:` (v12 migration in flight upstream,
   `config.py:1534-1543`) — contract tests per seeded shape, as always.
 - **Snapshot rsync:** any new state under `vendor/odysseus/data/` stays inside the
-  existing exclude rule (harness.yaml:124-128) — seeding via API keeps us out of that
+  existing exclude rule (motdeck.yaml:124-128) — seeding via API keeps us out of that
   minefield entirely.
 
 ## 8. Slice ladder (proposal)

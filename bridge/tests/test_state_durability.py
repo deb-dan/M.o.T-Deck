@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_yaml_noop_preserves_bytes_inode_and_mtime(tmp_path):
-    target = tmp_path / "harness.yaml"
+    target = tmp_path / "motdeck.yaml"
     target.write_text("# live\nrunner:\n  binary:\n")
     before = target.stat()
     yamlfile.transform_file(target, lambda text: text)
@@ -34,24 +34,24 @@ def test_yaml_noop_preserves_bytes_inode_and_mtime(tmp_path):
 
 
 def test_yaml_replace_failure_keeps_original_and_cleans_temp(tmp_path, monkeypatch):
-    target = tmp_path / "harness.yaml"
+    target = tmp_path / "motdeck.yaml"
     target.write_text("runner:\n  model: old\n")
     monkeypatch.setattr(yamlfile.os, "replace",
                         lambda *_: (_ for _ in ()).throw(OSError("simulated replace failure")))
     with pytest.raises(OSError, match="simulated"):
         yamlfile.transform_file(target, lambda text: text.replace("old", "new"))
     assert target.read_text() == "runner:\n  model: old\n"
-    assert not list(tmp_path.glob(".harness-yaml-*.tmp"))
+    assert not list(tmp_path.glob(".motdeck-yaml-*.tmp"))
 
 
 @pytest.mark.parametrize("suffix", ["", ".lock"])
 def test_yaml_state_and_lock_symlinks_never_touch_external_target(tmp_path, suffix):
-    target = tmp_path / "harness.yaml"
+    target = tmp_path / "motdeck.yaml"
     outside = tmp_path / "outside"
     outside.write_text("runner:\n  model: outside\n")
     if suffix:
         target.write_text("runner:\n  model: local\n")
-        (tmp_path / f"harness.yaml{suffix}").symlink_to(outside)
+        (tmp_path / f"motdeck.yaml{suffix}").symlink_to(outside)
     else:
         target.symlink_to(outside)
     with pytest.raises((OSError, ValueError)):
@@ -60,7 +60,7 @@ def test_yaml_state_and_lock_symlinks_never_touch_external_target(tmp_path, suff
 
 
 def test_concurrent_threads_never_expose_partial_yaml(tmp_path):
-    target = tmp_path / "harness.yaml"
+    target = tmp_path / "motdeck.yaml"
     first = "# keep\nrunner:\n  model: alpha\naux:\n  model:\n"
     second = "# keep\nrunner:\n  model: beta\naux:\n  model:\n"
     target.write_text(first)
@@ -89,7 +89,7 @@ def test_concurrent_threads_never_expose_partial_yaml(tmp_path):
 
 
 def test_two_process_writers_retain_both_changes(tmp_path):
-    target = tmp_path / "harness.yaml"
+    target = tmp_path / "motdeck.yaml"
     target.write_text("# live\nrunner:\n  model: old\naux:\n  model: old\n")
     helper = str(ROOT / "bridge" / "yamlfile.py")
     code = r'''

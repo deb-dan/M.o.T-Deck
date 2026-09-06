@@ -1032,12 +1032,12 @@ _PIN_RE = re.compile(r"^\s{2}model:\s*(.+?)\s*$")
 
 
 def pinned_model_id(root: str = ".") -> str:
-    """harness.yaml's `runner.model` — the PIN, read without pyyaml.
+    """motdeck.yaml's `runner.model` — the PIN, read without pyyaml.
 
     An INTENT record, never evidence that a model exists (U18): it is read here only so
     the rescan knows which row it must flag-rather-than-remove."""
     try:
-        with open(os.path.join(root or ".", "harness.yaml"), encoding="utf-8") as fh:
+        with open(os.path.join(root or ".", "motdeck.yaml"), encoding="utf-8") as fh:
             in_runner = False
             for line in fh:
                 if line and not line[:1].isspace():
@@ -1056,14 +1056,14 @@ def pinned_model_id(root: str = ".") -> str:
 
 def protected_ids(root: str = ".", extra=()) -> set:
     """Ids a rescan must FLAG rather than REMOVE: the pin, plus whatever the caller
-    knows is live. Also honours HARNESS_PROTECT_MODELS (newline- or comma-separated),
+    knows is live. Also honours MOT_DECK_PROTECT_MODELS (newline- or comma-separated),
     which is how the bridge's rescan route hands the live model to the seed subprocess.
     """
     out = {str(x).strip() for x in (extra or []) if str(x or "").strip()}
     pin = pinned_model_id(root)
     if pin:
         out.add(pin)
-    raw = os.environ.get("HARNESS_PROTECT_MODELS") or ""
+    raw = os.environ.get("MOT_DECK_PROTECT_MODELS") or ""
     for part in raw.replace(",", "\n").splitlines():
         if part.strip():
             out.add(part.strip())
@@ -1084,7 +1084,7 @@ def load_by_path(from_file: str):
     try:
         p = os.path.join(os.path.dirname(os.path.abspath(from_file)),
                          os.pardir, "bridge", "core", "modelreg.py")
-        spec = importlib.util.spec_from_file_location("harness_modelreg", p)
+        spec = importlib.util.spec_from_file_location("motdeck_modelreg", p)
         if spec is None or spec.loader is None:
             return None
         mod = importlib.util.module_from_spec(spec)

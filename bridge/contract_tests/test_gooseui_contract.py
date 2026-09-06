@@ -257,9 +257,9 @@ def test_the_page_injects_the_shim_before_the_module_script():
     doc = ('<html><head><title>Goose</title>'
            '<script type="module" crossorigin src="./assets/index-x.js"></script>'
            '</head><body></body></html>')
-    out = G.page_html(doc, "/gooseui/harness-preload.js")
-    assert out.index("harness-preload.js") < out.index('type="module"')
-    assert 'type="module"' not in out.split("harness-preload.js")[0].rsplit("<script", 1)[-1]
+    out = G.page_html(doc, "/gooseui/motdeck-preload.js")
+    assert out.index("motdeck-preload.js") < out.index('type="module"')
+    assert 'type="module"' not in out.split("motdeck-preload.js")[0].rsplit("<script", 1)[-1]
     # …and OUR surface is named per Debi's 2026-08-29 ruling, while nothing inside the
     # vendored bundle is renamed.
     assert f"<title>{G.SURFACE_NAME}</title>" in out

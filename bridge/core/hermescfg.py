@@ -1,7 +1,7 @@
 """CORE — Hermes config generation, its mirrors, and the dashboard's credentials.
 
 ⚠️ _hermes_token / _hermes_port moved in here from the chat lane: they are config
-reads (harness.yaml, data/hermes.token) that BOTH the hermes chat router and the
+reads (motdeck.yaml, data/hermes.token) that BOTH the hermes chat router and the
 toolset-lever router need, and that shared need is what made those two routers
 mutually dependent.
 """
@@ -93,7 +93,7 @@ def _hermes_write_mcp(name: str, entry: "dict | None") -> bool:
     data["mcp_servers"] = servers
     # Fable QA hardening: atomic write (temp + os.replace) so a concurrent save from
     # Hermes's own dashboard can never observe a half-written config.
-    tmp = path + ".harness-tmp"
+    tmp = path + ".motdeck-tmp"
     with open(tmp, "w") as f:
         yaml.safe_dump(data, f, sort_keys=False)
     os.replace(tmp, path)
@@ -126,13 +126,13 @@ def _hermes_has_mcp(name: str = "browsermcp") -> bool:
 
 
 # ⚠️ MOVED HERE from app.py:5052-5073 by the router/core split (2026-08-28).
-#    _hermes_token / _hermes_port read harness.yaml and data/hermes.token —
+#    _hermes_token / _hermes_port read motdeck.yaml and data/hermes.token —
 #    config access, and both the hermes lane and the toolset lever need them,
 #    which is what made those two routers mutually dependent.
 
 def _hermes_token() -> str:
     """Dashboard session token, matching start_component.sh's resolution order:
-    harness.yaml components.hermes.dashboard_token override → else the
+    motdeck.yaml components.hermes.dashboard_token override → else the
     generate-once file (data/hermes.token) the start script writes."""
     try:
         tok = str((cfg().get("components", {}).get("hermes", {}) or {})

@@ -67,8 +67,8 @@ def test_real_seed_and_download_writer_do_not_lose_each_other(tmp_path, monkeypa
         destination = tmp_path / relative
         shutil.copy2(ROOT / relative, destination)
     monkeypatch.setattr(downloads, "ROOT", tmp_path)
-    env = dict(os.environ, HARNESS_JAN_MODELS_DIR=str(tmp_path / "no-jan"),
-               HARNESS_LMSTUDIO_DIR=str(tmp_path / "no-lms"))
+    env = dict(os.environ, MOT_DECK_JAN_MODELS_DIR=str(tmp_path / "no-jan"),
+               MOT_DECK_LMSTUDIO_DIR=str(tmp_path / "no-lms"))
     process = subprocess.Popen([sys.executable, "scripts/seed_registry.py"], cwd=tmp_path,
                                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True)
@@ -208,4 +208,4 @@ def test_all_production_registry_writers_delegate_to_shared_writer():
     for path in locations:
         text = path.read_text()
         assert "write_registry" in text, f"{path.name} bypasses the shared durable writer"
-        assert ".harness-tmp" not in text and 'with_suffix(".json.tmp")' not in text
+        assert ".motdeck-tmp" not in text and 'with_suffix(".json.tmp")' not in text

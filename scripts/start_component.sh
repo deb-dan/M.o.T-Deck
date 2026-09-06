@@ -35,8 +35,9 @@ _yaml_python() {   # [candidate ...] -> interpreter path on stdout, 0; else 1
       fi
     done
   else
-    for candidate in "$ROOT_ABS/data/bridge-venv/bin/python" \
-                     "$HOME/Library/Application Support/Harness/data/bridge-venv/bin/python" \
+    for candidate in "${MOT_DECK_MANIFEST_PYTHON:-}" \
+                     "$ROOT_ABS/data/bridge-venv/bin/python" \
+                     "$HOME/Library/Application Support/MOT Deck/data/bridge-venv/bin/python" \
                      python3 python; do
       if "$candidate" -c 'import yaml' >/dev/null 2>&1; then
         printf '%s\n' "$candidate"
@@ -63,7 +64,7 @@ if [[ "$NAME" == "--yaml-python" ]]; then
 fi
 
 MANIFEST_PY="$(_yaml_python)" || {
-  echo "ERROR: no Python interpreter able to parse harness.yaml with PyYAML." >&2
+  echo "ERROR: no Python interpreter able to parse motdeck.yaml with PyYAML." >&2
   echo "       Bootstrap the bridge venv, then retry; no component was started." >&2
   exit 1
 }
@@ -235,7 +236,7 @@ fi
 #   macOS Foundation's `Process.terminate()` — what app/main.swift calls in
 #   applicationWillTerminate — does NOT signal only the child. Foundation launches
 #   the child as a process-group LEADER and terminate() signals THE GROUP. Verified
-#   with a purpose-built Swift harness, both directions:
+#   with a purpose-built Swift test fixture, both directions:
 #     · child bash + `nohup sleep 600 &`         → terminate() → the sleep DIED.
 #     · child bash + setsid'd `sleep 600`        → terminate() → the sleep SURVIVED.
 #   So every quit of MOT Deck was a group kill that reached straight through the
@@ -277,15 +278,15 @@ _detached() {   # <cmd> [args…]   — ALWAYS call as: _detached … >>log 2>&1
   exec nohup perl -MPOSIX -e '
     my $s = POSIX::setsid();
     if (!defined($s) || $s < 0) {
-      die "[harness] detach: setsid failed ($!) - refusing unsafe launch\n";
+      die "[motdeck] detach: setsid failed ($!) - refusing unsafe launch\n";
     }
-    exec { $ARGV[0] } @ARGV or die "[harness] detach: cannot exec $ARGV[0]: $!\n";
+    exec { $ARGV[0] } @ARGV or die "[motdeck] detach: cannot exec $ARGV[0]: $!\n";
   ' -- "$@"
 }
 
 # Self-test hook for the contract suite: spawn a scratch process through the real
 # helper and report its pid, so the LIVE test can prove the session/group split and
-# then reap ONLY that pid (which it wrote itself). Never used by the harness.
+# then reap ONLY that pid (which it wrote itself). Never used by MOT Deck.
 if [[ "$NAME" == "--detach-selftest" ]]; then
   shift
   # stderr is deliberately NOT swallowed: the helper's "setsid failed" sentence is
@@ -332,14 +333,14 @@ _reap_pidfile() {   # <component> [force]
   if [[ -z "$pid" ]]; then
     detail="$(_ownership_cli signal "$ROOT_ABS" "$comp" 0 --birth "" ${args[@]+"${args[@]}"} 2>&1 || true)"
     if [[ -e "$pf" || -L "$pf" || -e "$owner" || -L "$owner" ]]; then
-      echo "[harness] ${detail:-no complete M.O.T launch record; signalled nothing}"
+      echo "[motdeck] ${detail:-no complete M.O.T launch record; signalled nothing}"
     fi
     return 0
   fi
   cmd="$(_proc_cmd "$pid")"
   if ! detail="$(_ownership_cli signal "$ROOT_ABS" "$comp" "$pid" --birth "$birth" --keep-claim ${args[@]+"${args[@]}"} 2>&1)"; then
-    echo "[harness] ${pf} names pid ${pid} (${cmd}) but has no matching M.O.T launch record;"
-    echo "[harness]   leaving it alone. ${detail}"
+    echo "[motdeck] ${pf} names pid ${pid} (${cmd}) but has no matching M.O.T launch record;"
+    echo "[motdeck]   leaving it alone. ${detail}"
     return 1
   fi
   local attempt
@@ -392,7 +393,7 @@ _clear_port() {   # <port> <component> [force]
 # by 44276. So the file named a dead pid on every observed restart of that shape.
 #
 # CONSEQUENCES, all of them quiet: _reap_pidfile could not stop the real runner (it
-# fell through to _clear_port, which is why nobody noticed); the "[harness] runner … up
+# fell through to _clear_port, which is why nobody noticed); the "[motdeck] runner … up
 # … pid=$(cat data/runner.pid)" line the panel shows was false; and health never
 # noticed because health is probe-based.
 #
@@ -418,7 +419,7 @@ _stamp_pidfile_from_port() {   # <component> <port>
 # Self-test hook for the contract suite (same shape as --detach-selftest above): run the
 # REAL helper against a component name + port and report what it decided, so a live test
 # can spawn its OWN listener, prove both the stamp and the stranger-refusal, and reap
-# only the pid it wrote itself. Never used by the harness.
+# only the pid it wrote itself. Never used by MOT Deck.
 #   start_component.sh --pidfile-from-port <component> <port>
 if [[ "$NAME" == "--pidfile-from-port" ]]; then
   if _stamp_pidfile_from_port "${2:-}" "${3:-0}"; then echo "STAMPED $(cat "data/${2:-}.pid" 2>/dev/null)"
@@ -430,7 +431,7 @@ case "$NAME" in
   runner)
     R_ADAPTER=$(_manifest_value runner.adapter str)
     [[ -n "$R_ADAPTER" ]] || R_ADAPTER=auto
-    # jan retired 2026-07-23 (cleanup 3.1d) — the harness owns its own llama-server
+    # jan retired 2026-07-23 (cleanup 3.1d) — MOT Deck owns its own llama-server
     # binary + model files now. Only llamacpp | mlx | auto are valid; anything else
     # errors loudly rather than silently falling through.
     case "$R_ADAPTER" in
@@ -446,7 +447,7 @@ case "$NAME" in
     R_BIN=$(_manifest_value runner.binary str)
     _require_secret "$R_KEY" runner.api_key || exit 1
     [[ "$R_CTX" =~ ^[0-9]+$ ]] || R_CTX=65536
-    [[ -n "$R_MODEL" ]] || { echo "ERROR: runner.model not set in harness.yaml"; exit 1; }
+    [[ -n "$R_MODEL" ]] || { echo "ERROR: runner.model not set in motdeck.yaml"; exit 1; }
     # Ensure the registry exists.
     [[ -f data/models.json ]] || python3 scripts/seed_registry.py
     # Resolve the model from the registry (path / mmproj / ctx / format / vision).
@@ -461,7 +462,7 @@ except Exception:
     models = []
 m = next((x for x in models if x.get("id") == mid), None)
 helper = os.path.join(os.getcwd(), "bridge", "core", "modelreg.py")
-spec = importlib.util.spec_from_file_location("harness_modelreg", helper)
+spec = importlib.util.spec_from_file_location("motdeck_modelreg", helper)
 if spec is None or spec.loader is None:
     sys.stderr.write("model integrity helper unavailable (packaging error)\n")
     sys.exit(1)
@@ -567,7 +568,7 @@ PYRESOLVE
       [[ -n "$BIN" ]] || { BIN=$(ls -t "$HOME/Library/Application Support/Jan/data/llamacpp/backends/"*/macos-arm64/build/bin/llama-server 2>/dev/null | head -1); [[ -n "$BIN" ]] && BIN_OWNER="Jan"; }
       # Fallback: LM Studio's backends (often newer llama.cpp — needed for e.g. MTP models).
       [[ -n "$BIN" ]] || { BIN=$(ls -t "$HOME/.lmstudio/extensions/backends/"*/llama-server 2>/dev/null | head -1); [[ -n "$BIN" ]] && BIN_OWNER="LM Studio"; }
-      [[ -n "$BIN" ]] || { echo "ERROR: no llama-server binary found — run scripts/install_llamacpp.sh or set runner.binary in harness.yaml"; exit 1; }
+      [[ -n "$BIN" ]] || { echo "ERROR: no llama-server binary found — run scripts/install_llamacpp.sh or set runner.binary in motdeck.yaml"; exit 1; }
     else
       BIN="$R_BIN"; BIN_OWNER=""
       [[ -x "$BIN" ]] || { echo "ERROR: runner.binary is not executable: $BIN"; exit 1; }
@@ -575,7 +576,7 @@ PYRESOLVE
     # ⚠️ A FOREIGN APP'S llama-server IS NOT OUR PINNED CONTRACT (bug-echo W-04, the
     # Unsloth class crossed with the wrong-oracle class). The two fallbacks above run a
     # binary that belongs to Jan or LM Studio: a different app upgrades it whenever it
-    # likes, and this harness's probe/auth expectations are pinned against ONE build.
+    # likes, and this MOT Deck's probe/auth expectations are pinned against ONE build.
     # That is not hypothetical — llama.cpp b10662's /v1/models started REQUIRING auth
     # where the previous build did not, and the 401 regression that caused took a session
     # to find. Silently starting a stranger's binary of unknown vintage re-opens it.
@@ -583,31 +584,31 @@ PYRESOLVE
     if [[ -n "${BIN_OWNER:-}" ]]; then
       L_PIN=$(_manifest_value runner.llamacpp_pin str)
       L_BUILD=$("$BIN" --version 2>&1 | sed -n 's/.*build \([0-9][0-9]*\).*/\1/p' | head -1)
-      echo "[harness] ⚠️  THE RUNNER BINARY IS NOT OURS. It belongs to ${BIN_OWNER}:"
-      echo "[harness]      $BIN"
-      echo "[harness]      build ${L_BUILD:-unreadable} · this harness is pinned to ${L_PIN:-(no pin set)}"
+      echo "[motdeck] ⚠️  THE RUNNER BINARY IS NOT OURS. It belongs to ${BIN_OWNER}:"
+      echo "[motdeck]      $BIN"
+      echo "[motdeck]      build ${L_BUILD:-unreadable} · MOT Deck is pinned to ${L_PIN:-(no pin set)}"
       if [[ -n "$L_PIN" && "$L_BUILD" == "${L_PIN#b}" ]]; then
-        echo "[harness]      the build MATCHES the pin, so the pinned contracts hold. Using it."
-      elif [[ "${HARNESS_ALLOW_FOREIGN_RUNNER:-0}" == "1" ]]; then
-        echo "[harness]      HARNESS_ALLOW_FOREIGN_RUNNER=1 — starting it anyway, deliberately."
-        echo "[harness]      If the model answers but the panel says the runner is down, or"
-        echo "[harness]      /v1/models 401s, THIS is the first thing to suspect."
+        echo "[motdeck]      the build MATCHES the pin, so the pinned contracts hold. Using it."
+      elif [[ "${MOT_DECK_ALLOW_FOREIGN_RUNNER:-0}" == "1" ]]; then
+        echo "[motdeck]      MOT_DECK_ALLOW_FOREIGN_RUNNER=1 — starting it anyway, deliberately."
+        echo "[motdeck]      If the model answers but the panel says the runner is down, or"
+        echo "[motdeck]      /v1/models 401s, THIS is the first thing to suspect."
       else
         echo "ERROR: refusing to start the runner on ${BIN_OWNER}'s llama-server."
-        echo "  Its build (${L_BUILD:-unreadable}) is not the one this harness is pinned"
+        echo "  Its build (${L_BUILD:-unreadable}) is not the one MOT Deck is pinned"
         echo "  against (${L_PIN:-(none)}), and ${BIN_OWNER} can change it at any time"
         echo "  without telling us. Our /v1/models auth probe is pinned per build: b10662"
         echo "  made that endpoint require a key where the build before it did not (a 401"
         echo "  regression that cost a whole session to find), and the same drift in the"
         echo "  other direction reads to the panel as 'the runner is down'."
         echo "  Fix it properly:   ./scripts/install_llamacpp.sh"
-        echo "  Name it on purpose: set runner.binary in harness.yaml"
-        echo "  Or override, knowing the above: HARNESS_ALLOW_FOREIGN_RUNNER=1 <this command>"
+        echo "  Name it on purpose: set runner.binary in motdeck.yaml"
+        echo "  Or override, knowing the above: MOT_DECK_ALLOW_FOREIGN_RUNNER=1 <this command>"
         exit 1
       fi
     fi
     # CTX preference: the model's SAVED load.ctx (Models → Load, v2) wins, then the
-    # registry ctx, then harness.yaml ctx_size, then 65536.
+    # registry ctx, then motdeck.yaml ctx_size, then 65536.
     L_CTX=$(_lv ctx)
     if [[ "$L_CTX" =~ ^[0-9]+$ ]]; then CTX="$L_CTX"
     elif [[ "$REG_CTX" =~ ^[0-9]+$ ]]; then CTX="$REG_CTX"
@@ -779,11 +780,11 @@ PYRESOLVE
     if [[ "$MTP_HIT" == "1" ]]; then
       if grep -q -- "--spec-type" data/llama-server.help.txt; then
         SPEC_ARGS=(--jinja --spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 0 --spec-draft-p-min 0.75)
-        echo "[harness] MTP detected ($MTP_WHY) — speculative decoding enabled (--spec-type draft-mtp)"
+        echo "[motdeck] MTP detected ($MTP_WHY) — speculative decoding enabled (--spec-type draft-mtp)"
       else
-        echo "[harness] WARN: MTP model but this llama-server lacks --spec-type — running WITHOUT acceleration."
-        echo "[harness]   Fix: set runner.binary to a newer backend, e.g.:"
-        ls -t "$HOME/.lmstudio/extensions/backends/"*/llama-server 2>/dev/null | head -1 | sed 's/^/[harness]   /'
+        echo "[motdeck] WARN: MTP model but this llama-server lacks --spec-type — running WITHOUT acceleration."
+        echo "[motdeck]   Fix: set runner.binary to a newer backend, e.g.:"
+        ls -t "$HOME/.lmstudio/extensions/backends/"*/llama-server 2>/dev/null | head -1 | sed 's/^/[motdeck]   /'
       fi
     fi
     # Cleanup any stale server on the port — including MLX servers (format switch).
@@ -855,8 +856,8 @@ PYRESOLVE
     if _launch_llama "${ARGS[@]}" ${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}; then
       up=1
     elif [[ ${#SPEC_ARGS[@]} -gt 0 ]]; then
-      echo "[harness] WARN: runner did not start WITH speculative-decoding flags —"
-      echo "[harness]   this model likely has no usable MTP heads. Retrying without them."
+      echo "[motdeck] WARN: runner did not start WITH speculative-decoding flags —"
+      echo "[motdeck]   this model likely has no usable MTP heads. Retrying without them."
       echo "--- runner.log tail (failed spec attempt) ---"; tail -12 data/logs/runner.log 2>/dev/null
       _reap_pidfile runner force
       _clear_port "$R_PORT" runner force
@@ -866,9 +867,9 @@ PYRESOLVE
     fi
     if [[ "$up" == "1" ]]; then
       _record_runner_active llamacpp "$R_MODEL" "$R_MODEL" || \
-        echo "[harness] WARN: runner is live but its launch-provenance marker could not be written"
+        echo "[motdeck] WARN: runner is live but its launch-provenance marker could not be written"
       SPEC_NOTE=""; [[ ${#SPEC_ARGS[@]} -gt 0 ]] && SPEC_NOTE=" spec=draft-mtp"
-      echo "[harness] runner (llama-server) up on :$R_PORT — model=$R_MODEL ctx=$CTX${SPEC_NOTE} pid=$(cat data/runner.pid)"
+      echo "[motdeck] runner (llama-server) up on :$R_PORT — model=$R_MODEL ctx=$CTX${SPEC_NOTE} pid=$(cat data/runner.pid)"
     else
       rm -f "$LAUNCH_KEYFILE"
       echo "ERROR: runner (llama-server) did not become ready on :${R_PORT} in ~3min."
@@ -941,8 +942,8 @@ PYRESOLVE
       # pidfile true, and so a future retry ladder on this arm inherits the fix.
       _stamp_pidfile_from_port runner "$R_PORT"
       _record_runner_active "$ENGINE" "$R_MODEL" "$MODEL_PATH" || \
-        echo "[harness] WARN: runner is live but its launch-provenance marker could not be written"
-      echo "[harness] runner ($ENGINE) up on :$R_PORT — model=$R_MODEL pid=$(cat data/runner.pid) (loopback only, no auth)"
+        echo "[motdeck] WARN: runner is live but its launch-provenance marker could not be written"
+      echo "[motdeck] runner ($ENGINE) up on :$R_PORT — model=$R_MODEL pid=$(cat data/runner.pid) (loopback only, no auth)"
     else
       echo "ERROR: runner ($ENGINE) did not become ready on :${R_PORT} in ~5min."
       echo "--- runner.log tail ---"; tail -20 data/logs/runner.log 2>/dev/null
@@ -959,7 +960,7 @@ PYRESOLVE
     # Clear any stale server on the port so a restart can bind cleanly.
     _clear_port 7860 odysseus
     sleep 1
-    # Connect (idempotent): (re)wire Odysseus to the harness RUNNER endpoint (:6767 + key)
+    # Connect (idempotent): (re)wire Odysseus to MOT Deck RUNNER endpoint (:6767 + key)
     # as default model. Runs before the server boots.
     R_ENDPOINT=$(_manifest_value runner.endpoint str)
     R_KEY=$(_manifest_value runner.api_key str)
@@ -975,7 +976,7 @@ PYRESOLVE
     )
     sleep 2
     if kill -0 "$(cat data/odysseus.pid)" 2>/dev/null; then
-      echo "[harness] odysseus starting → http://127.0.0.1:7860 (M.O.T uses the generated local login; values are never logged)"
+      echo "[motdeck] odysseus starting → http://127.0.0.1:7860 (M.O.T uses the generated local login; values are never logged)"
     else
       echo "ERROR: odysseus exited immediately. Last log lines:"; tail -15 data/logs/odysseus.log; exit 1
     fi
@@ -996,7 +997,7 @@ PYRESOLVE
       sleep 1
     done
     if [[ "$up" == "1" ]]; then
-      echo "[harness] searxng up on :8080 (private search; Odysseus uses it automatically)"
+      echo "[motdeck] searxng up on :8080 (private search; Odysseus uses it automatically)"
     else
       echo "ERROR: searxng did not answer on :8080 in ~15s:"; tail -10 "$ROOT/data/logs/searxng.log"; exit 1
     fi
@@ -1033,7 +1034,7 @@ PYRESOLVE
     # child's PATH. Only when the system has none, so a user's own ffmpeg still wins.
     if [[ -x "$ROOT/data/ffmpeg/bin/ffmpeg" ]] && ! command -v ffmpeg >/dev/null 2>&1; then
       VS_ENV+=(PATH="$ROOT/data/ffmpeg/bin:$PATH")
-      echo "[harness] voicestudio ffmpeg → $ROOT/data/ffmpeg/bin/ffmpeg (harness-provisioned)"
+      echo "[motdeck] voicestudio ffmpeg → $ROOT/data/ffmpeg/bin/ffmpeg (motdeck-provisioned)"
     fi
     # Optional LLM (Cinematic translate / glossary extraction / dictation refinement)
     # is OpenAI-compatible. Point it at OUR runner, the same way seed_odysseus_jan.py
@@ -1076,11 +1077,11 @@ PYWIRE
     if [[ -n "$VS_BASE_URL" && -n "$VS_MODEL" ]]; then
       VS_ENV+=(TRANSLATE_BASE_URL="$VS_BASE_URL" TRANSLATE_MODEL="$VS_MODEL")
       [[ -n "$VS_KEY" ]] && VS_ENV+=(TRANSLATE_API_KEY="$VS_KEY")
-      echo "[harness] voicestudio LLM → ${VS_BASE_URL} (${VS_MODEL}; ${VS_MODEL_SOURCE})"
+      echo "[motdeck] voicestudio LLM → ${VS_BASE_URL} (${VS_MODEL}; ${VS_MODEL_SOURCE})"
     else
-      echo "[harness] voicestudio: no runner model in harness.yaml — leaving its LLM"
-      echo "[harness]  unset (TTS/ASR are unaffected; set a provider in its Settings"
-      echo "[harness]  or start the Runner and restart voicestudio)"
+      echo "[motdeck] voicestudio: no runner model in motdeck.yaml — leaving its LLM"
+      echo "[motdeck]  unset (TTS/ASR are unaffected; set a provider in its Settings"
+      echo "[motdeck]  or start the Runner and restart voicestudio)"
     fi
     # cd applies to the whole subshell (backend.main:app resolves from the repo root);
     # pid + log use ABSOLUTE paths so they can never land outside the project.
@@ -1098,13 +1099,13 @@ PYWIRE
       kill -0 "$(cat "$ROOT/data/voicestudio.pid")" 2>/dev/null || {
         echo "ERROR: voicestudio exited on launch. Last log lines:"
         tail -20 "$ROOT/data/logs/voicestudio.log"
-        echo "[harness] (this backend exits with code 78 when :$VS_PORT is already in use)"
+        echo "[motdeck] (this backend exits with code 78 when :$VS_PORT is already in use)"
         exit 1; }
-      if (( i % 15 == 0 )); then echo "[harness] voicestudio still starting… (~$((i * 2))s; first boot loads models)"; fi
+      if (( i % 15 == 0 )); then echo "[motdeck] voicestudio still starting… (~$((i * 2))s; first boot loads models)"; fi
       sleep 2
     done
     if [[ "$up" == "1" ]]; then
-      echo "[harness] voicestudio up on http://127.0.0.1:${VS_PORT} (API + UI, loopback only, NO auth)"
+      echo "[motdeck] voicestudio up on http://127.0.0.1:${VS_PORT} (API + UI, loopback only, NO auth)"
     else
       echo "ERROR: voicestudio did not answer /health on :${VS_PORT} in ~5min:"
       tail -20 "$ROOT/data/logs/voicestudio.log"
@@ -1142,7 +1143,7 @@ PYWIRE
     # (There is no ffmpeg-path env var in voicebox at this pin — PATH is the only lever.)
     if [[ -x "$ROOT/data/ffmpeg/bin/ffmpeg" ]] && ! command -v ffmpeg >/dev/null 2>&1; then
       export PATH="$ROOT/data/ffmpeg/bin:$PATH"
-      echo "[harness] voicebox ffmpeg → $ROOT/data/ffmpeg/bin/ffmpeg (harness-provisioned)"
+      echo "[motdeck] voicebox ffmpeg → $ROOT/data/ffmpeg/bin/ffmpeg (motdeck-provisioned)"
     fi
     VB_CMD=(-m backend.main --host 127.0.0.1 --port "$VB_PORT" --data-dir "$ROOT/data/voicebox")
     # cd applies to the whole subshell (the backend package resolves from the repo
@@ -1161,14 +1162,14 @@ PYWIRE
       kill -0 "$(cat "$ROOT/data/voicebox.pid")" 2>/dev/null || {
         echo "ERROR: voicebox exited on launch. Last log lines:"
         tail -20 "$ROOT/data/logs/voicebox.log"
-        echo "[harness] (a missing/broken ML dependency shows up here — voicebox's"
-        echo "[harness]  dependency graph is known-fragile; reinstall is online-only)"
+        echo "[motdeck] (a missing/broken ML dependency shows up here — voicebox's"
+        echo "[motdeck]  dependency graph is known-fragile; reinstall is online-only)"
         exit 1; }
-      if (( i % 15 == 0 )); then echo "[harness] voicebox still starting… (~$((i * 2))s; first boot loads models)"; fi
+      if (( i % 15 == 0 )); then echo "[motdeck] voicebox still starting… (~$((i * 2))s; first boot loads models)"; fi
       sleep 2
     done
     if [[ "$up" == "1" ]]; then
-      echo "[harness] voicebox up on http://127.0.0.1:${VB_PORT} (API + /mcp, loopback only, NO auth)"
+      echo "[motdeck] voicebox up on http://127.0.0.1:${VB_PORT} (API + /mcp, loopback only, NO auth)"
     else
       echo "ERROR: voicebox did not answer /health on :${VB_PORT} in ~5min:"
       tail -20 "$ROOT/data/logs/voicebox.log"
@@ -1236,12 +1237,12 @@ PYWIRE
         echo "ERROR: comfyui exited on launch. Last log lines:"
         tail -20 "$ROOT/data/logs/comfyui.log"
         exit 1; }
-      if (( i % 15 == 0 )); then echo "[harness] comfyui still starting… (~$((i * 2))s; torch import is slow)"; fi
+      if (( i % 15 == 0 )); then echo "[motdeck] comfyui still starting… (~$((i * 2))s; torch import is slow)"; fi
       sleep 2
     done
     if [[ "$up" == "1" ]]; then
-      echo "[harness] comfyui up on http://127.0.0.1:${CU_PORT} (UI + API, loopback only, NO auth)"
-      echo "[harness] base dir: $ROOT/data/comfyui — put checkpoints in models/checkpoints/"
+      echo "[motdeck] comfyui up on http://127.0.0.1:${CU_PORT} (UI + API, loopback only, NO auth)"
+      echo "[motdeck] base dir: $ROOT/data/comfyui — put checkpoints in models/checkpoints/"
     else
       echo "ERROR: comfyui did not answer /system_stats on :${CU_PORT} in ~5min:"
       tail -20 "$ROOT/data/logs/comfyui.log"
@@ -1295,7 +1296,7 @@ PYWIRE
     USPY="$US_VENV/bin/python"
     [[ -x "$USPY" ]] || { echo "ERROR: $USPY not executable — reinstall unsloth"; exit 1; }
     US_PORT=$(_manifest_value components.unsloth.port int)
-    # Fallback mirrors harness.yaml's 8899 — deliberately NOT upstream's 8888, which is
+    # Fallback mirrors motdeck.yaml's 8899 — deliberately NOT upstream's 8888, which is
     # the port Debi's STANDALONE Unsloth app listens on (the port clear below would kill it).
     [[ "$US_PORT" =~ ^[0-9]+$ ]] || US_PORT=8899
     US_DIST="$ROOT/vendor/unsloth/studio/frontend/dist"
@@ -1363,13 +1364,13 @@ PYWIRE
         echo "ERROR: unsloth exited on launch. Last log lines:"
         tail -20 "$ROOT/data/logs/unsloth.log"
         exit 1; }
-      if (( i % 15 == 0 )); then echo "[harness] unsloth still starting… (~$((i * 2))s)"; fi
+      if (( i % 15 == 0 )); then echo "[motdeck] unsloth still starting… (~$((i * 2))s)"; fi
       sleep 2
     done
     if [[ "$up" == "1" ]]; then
-      echo "[harness] unsloth up on http://127.0.0.1:${US_PORT} (Studio API + SPA, loopback only)"
-      echo "[harness] Studio has its OWN login; on a loopback launch its page auto-fills the"
-      echo "[harness]   bootstrap credential. Change the password inside its UI."
+      echo "[motdeck] unsloth up on http://127.0.0.1:${US_PORT} (Studio API + SPA, loopback only)"
+      echo "[motdeck] Studio has its OWN login; on a loopback launch its page auto-fills the"
+      echo "[motdeck]   bootstrap credential. Change the password inside its UI."
     else
       echo "ERROR: unsloth did not answer /api/health on :${US_PORT} in ~5min:"
       tail -20 "$ROOT/data/logs/unsloth.log"
@@ -1421,7 +1422,7 @@ PYWIRE
 
     # ── config fan-out: point dsh at OUR runner, the same way OpenCode is pointed ──
     # Its settings document is $DSH_HOME/settings.yaml (dsh-settings-file: `path`
-    # defaults to "settings.yaml under the harness home"; the home resolves as explicit
+    # defaults to "settings.yaml under MOT Deck home"; the home resolves as explicit
     # config, then $DSH_HOME, then ~/.dsh) — which is why the DSH_HOME export below is
     # what makes this file the one it reads. We never write ~/.dsh.
     # MERGE, never overwrite: only the two sections we own are replaced, so anything
@@ -1440,7 +1441,7 @@ PYWIRE
     # per request, so the secret never enters settings.yaml — and the NAME is DERIVED
     # by the seeder (seed_deepseek_config.key_env_name), never hand-picked twice here.
     # Two hand-picked names is how the goose lane ended up exporting a
-    # HARNESS_RUNNER_API_KEY that nothing read.
+    # MOT_DECK_RUNNER_API_KEY that nothing read.
     # ⚠️ PICK A PYTHON THAT HAS PyYAML, AND DO NOT ASSUME `python3` IS IT. FOUND ON THE
     # FIRST REAL WALK OF THIS ARM: settings.yaml is YAML, the seeder needs PyYAML, and a
     # bare `python3` (Debi's is /Users/debik/.local/bin/python3) does NOT have it — so
@@ -1452,14 +1453,14 @@ PYWIRE
     # silently there would hide a missing component card").
     # _yaml_python owns the compatibility order for every YAML-dependent seeder:
     # "$ROOT/data/bridge-venv/bin/python" remains its first candidate, followed by
-    # "$HOME/Library/Application Support/Harness/data/bridge-venv/bin/python" for
+    # "$HOME/Library/Application Support/MOT Deck/data/bridge-venv/bin/python" for
     # compatibility with a repo checkout whose provisioned bridge venv is the only one.
     DS_PY="$(_yaml_python || true)"
     if [[ -z "$DS_PY" ]]; then
-      echo "[harness] WARNING: no python with PyYAML found (no Python interpreter can import it), so the 'MOT Deck"
-      echo "[harness]   (local)' provider will NOT be written. DeepSeek will start, but"
-      echo "[harness]   its model picker will not list your models. Bootstrap the bridge"
-      echo "[harness]   venv (PyYAML is in bridge/requirements.txt), then start DeepSeek again."
+      echo "[motdeck] WARNING: no python with PyYAML found (no Python interpreter can import it), so the 'MOT Deck"
+      echo "[motdeck]   (local)' provider will NOT be written. DeepSeek will start, but"
+      echo "[motdeck]   its model picker will not list your models. Bootstrap the bridge"
+      echo "[motdeck]   venv (PyYAML is in bridge/requirements.txt), then start DeepSeek again."
     fi
     DS_KEY_ENV="MOT_DECK_LOCAL_API_KEY"
     if [[ -n "$DS_PY" ]]; then
@@ -1471,14 +1472,14 @@ PYWIRE
       # matches whatever provider block is already on disk from a previous, working
       # Start — a mismatched name would turn a working lane into MISSING_CREDENTIAL.
       DS_KEY_ENV="MOT_DECK_LOCAL_API_KEY"
-      echo "[harness] note: could not read the derived key env-var name from the seeder;"
-      echo "[harness]   using ${DS_KEY_ENV} (its value for the default product name)."
+      echo "[motdeck] note: could not read the derived key env-var name from the seeder;"
+      echo "[motdeck]   using ${DS_KEY_ENV} (its value for the default product name)."
     fi
     if [[ -n "$DS_PY" ]]; then
       DS_SETTINGS="$DS_SETTINGS" DS_BASE="$DS_BASE" DS_KEY_ENV="$DS_KEY_ENV" \
-        DS_MODEL="$DS_MODEL" HARNESS_ROOT="$ROOT" \
+        DS_MODEL="$DS_MODEL" MOT_DECK_ROOT="$ROOT" \
         "$DS_PY" scripts/seed_deepseek_config.py || \
-        echo "[harness] WARNING: DeepSeek provider seeding failed — its model picker may not list yours"
+        echo "[motdeck] WARNING: DeepSeek provider seeding failed — its model picker may not list yours"
     fi
 
     # Clear the port FIRST — LISTENER-scoped and OWNERSHIP-checked (standing ops rule).
@@ -1490,9 +1491,9 @@ PYWIRE
     _clear_port "$DS_PORT" deepseek
     sleep 1
     {
-      echo "[harness] ----- start $(date '+%Y-%m-%d %H:%M:%S') -- loopback 127.0.0.1:${DS_PORT}, NO auth BY DESIGN"
-      echo "[harness]   loopback is dsh's POLICY, not just its default: its CLI refuses --host 0.0.0.0."
-      echo "[harness]   this log APPENDS: one block per Start, so N blocks = N starts, not N servers."
+      echo "[motdeck] ----- start $(date '+%Y-%m-%d %H:%M:%S') -- loopback 127.0.0.1:${DS_PORT}, NO auth BY DESIGN"
+      echo "[motdeck]   loopback is dsh's POLICY, not just its default: its CLI refuses --host 0.0.0.0."
+      echo "[motdeck]   this log APPENDS: one block per Start, so N blocks = N starts, not N servers."
     } >>"$ROOT/data/logs/deepseek.log"
 
     (
@@ -1540,9 +1541,9 @@ PYWIRE
       sleep 2
     done
     if [[ "$up" == "1" ]]; then
-      echo "[harness] deepseek up on http://127.0.0.1:${DS_PORT} (dsh web — its own SPA + API, loopback, NO auth)"
-      echo "[harness] workspace: $DS_WS — the only directory it is started in"
-      echo "[harness] home:      $DS_HOME (settings.yaml, profiles, sessions — never ~/.dsh)"
+      echo "[motdeck] deepseek up on http://127.0.0.1:${DS_PORT} (dsh web — its own SPA + API, loopback, NO auth)"
+      echo "[motdeck] workspace: $DS_WS — the only directory it is started in"
+      echo "[motdeck] home:      $DS_HOME (settings.yaml, profiles, sessions — never ~/.dsh)"
       # ── PROVIDER SELF-CHECK — and an HONEST one, which here means admitting what
       # cannot be checked. ⚠️ There is NO route to ask this server which providers it
       # resolved: its whole API is a Typert RPC over POST /api plus two websockets, and
@@ -1555,12 +1556,12 @@ PYWIRE
       # writer: the re-read proves the section survived the YAML round trip, and the
       # two refusal branches below are the exact two ways this lane goes quiet.
       if [[ -n "$DS_PY" ]]; then
-        "$DS_PY" - "$DS_SETTINGS" <<'PYDS' || echo "[harness] note: could not verify the seeded provider (harmless; the seed line above is the record)"
+        "$DS_PY" - "$DS_SETTINGS" <<'PYDS' || echo "[motdeck] note: could not verify the seeded provider (harmless; the seed line above is the record)"
 import sys
 try:
     import yaml
 except Exception:
-    print("[harness] provider check: PyYAML unavailable — not verified")
+    print("[motdeck] provider check: PyYAML unavailable — not verified")
     raise SystemExit(0)
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
@@ -1568,34 +1569,34 @@ try:
 except Exception as e:                                              # noqa: BLE001
     # 200, not 80: the first walk truncated an ENOENT message exactly at the repo path
     # and the line read like a path-splitting bug rather than a missing file.
-    print("[harness] provider check: could not re-read settings.yaml (%s)" % str(e)[:200])
+    print("[motdeck] provider check: could not re-read settings.yaml (%s)" % str(e)[:200])
     raise SystemExit(0)
 p = (((d.get("llm-pi-ai") or {}).get("providers") or {}).get("mot-deck")) or {}
 ms = p.get("models") or []
 if not p:
-    print("[harness] provider check: NOT PRESENT in settings.yaml — dsh's model picker "
+    print("[motdeck] provider check: NOT PRESENT in settings.yaml — dsh's model picker "
           "will NOT list your models. The seed line above says why.")
 elif not ms:
-    print("[harness] provider check: present but with NO models — dsh REFUSES a "
+    print("[motdeck] provider check: present but with NO models — dsh REFUSES a "
           "hand-declared route with an empty model list, so it will not load.")
 else:
     sel = d.get("agent-default-model") or {}
-    print("[harness] provider check: 'MOT Deck (local)' -> %s · %d model(s) · default %s"
+    print("[motdeck] provider check: 'MOT Deck (local)' -> %s · %d model(s) · default %s"
           % (p.get("baseURL"), len(ms),
              ("%s/%s" % (sel.get("provider"), sel.get("model")))
              if sel.get("model") else "unset"))
-    print("[harness]   dsh re-reads settings.yaml per request, so a model switch or a "
+    print("[motdeck]   dsh re-reads settings.yaml per request, so a model switch or a "
           "Rescan reaches it with NO restart of this component.")
 PYDS
       else
-        echo "[harness] provider check: NOT VERIFIED — PyYAML is unavailable, so the"
-        echo "[harness]   provider was not written; bootstrap the bridge venv, then start it again."
+        echo "[motdeck] provider check: NOT VERIFIED — PyYAML is unavailable, so the"
+        echo "[motdeck]   provider was not written; bootstrap the bridge venv, then start it again."
       fi
-      echo "[harness] FIRST RUN: it shows an 'Internal Testing Notice' once, then asks you"
-      echo "[harness]   to choose a WORKSPACE before it will take a message — click 'Add"
-      echo "[harness]   workspace' and pick data/deepseek-workspace. That opens macOS's own"
-      echo "[harness]   folder chooser, launched by dsh itself; if it does not come forward,"
-      echo "[harness]   click the Harness icon in the Dock. (Ledger U67.)"
+      echo "[motdeck] FIRST RUN: it shows an 'Internal Testing Notice' once, then asks you"
+      echo "[motdeck]   to choose a WORKSPACE before it will take a message — click 'Add"
+      echo "[motdeck]   workspace' and pick data/deepseek-workspace. That opens macOS's own"
+      echo "[motdeck]   folder chooser, launched by dsh itself; if it does not come forward,"
+      echo "[motdeck]   click the MOT Deck icon in the Dock. (Ledger U67.)"
     else
       echo "ERROR: deepseek did not answer on :${DS_PORT} in ~2min. Last log lines:"
       tail -20 "$ROOT/data/logs/deepseek.log"
@@ -1643,7 +1644,7 @@ PYDS
     # merges last, so seeding one here would stomp the user's own pick on every load.
     OC_PCFG="$OC_WS/opencode.json"
     OC_CFG="$OC_CFG" OC_PCFG="$OC_PCFG" OC_BASE="$OC_BASE" OC_KEY="$OC_KEY" OC_MODEL="$OC_MODEL" \
-      HARNESS_ROOT="$ROOT" python3 scripts/seed_opencode_config.py
+      MOT_DECK_ROOT="$ROOT" python3 scripts/seed_opencode_config.py
 
     # A catalog file on disk is not evidence of what an already-running OpenCode
     # process loaded. This marker is written only from that process's own /provider
@@ -1665,10 +1666,10 @@ PYDS
     # The delimiter matters too: this log is opened with >> below, so it ACCUMULATES
     # one block per Start. Six identical blocks mean six starts, not six servers.
     {
-      echo "[harness] ----- start $(date '+%Y-%m-%d %H:%M:%S') -- loopback 127.0.0.1:${OC_PORT}, NO auth BY DESIGN"
-      echo "[harness]   the 'OPENCODE_SERVER_PASSWORD is not set; server is unsecured' line below is EXPECTED:"
-      echo "[harness]   we never set that variable - it would gate the embedded SPA this app's own tab loads."
-      echo "[harness]   this log APPENDS: one block per Start, so N blocks = N starts, not N servers."
+      echo "[motdeck] ----- start $(date '+%Y-%m-%d %H:%M:%S') -- loopback 127.0.0.1:${OC_PORT}, NO auth BY DESIGN"
+      echo "[motdeck]   the 'OPENCODE_SERVER_PASSWORD is not set; server is unsecured' line below is EXPECTED:"
+      echo "[motdeck]   we never set that variable - it would gate the embedded SPA this app's own tab loads."
+      echo "[motdeck]   this log APPENDS: one block per Start, so N blocks = N starts, not N servers."
     } >>"$ROOT/data/logs/opencode.log"
     # `serve`, deliberately NOT `web`: at the pin both commands call the SAME
     # Server.listen with the SAME network options and the SAME embedded SPA — `web`
@@ -1726,10 +1727,10 @@ PYDS
       # the sidebar, which is litter, not a landing.
       curl -sf -m 5 --get --data-urlencode "directory=${OC_WS}" \
         "http://127.0.0.1:${OC_PORT}/project/current" -o /dev/null 2>/dev/null \
-        && echo "[harness] project registered for $OC_WS" \
-        || echo "[harness] note: could not pre-register the workspace project (harmless)"
-      echo "[harness] opencode up on http://127.0.0.1:${OC_PORT} (server + its own SPA, loopback, NO auth)"
-      echo "[harness] workspace: $OC_WS — the only directory it is started in"
+        && echo "[motdeck] project registered for $OC_WS" \
+        || echo "[motdeck] note: could not pre-register the workspace project (harmless)"
+      echo "[motdeck] opencode up on http://127.0.0.1:${OC_PORT} (server + its own SPA, loopback, NO auth)"
+      echo "[motdeck] workspace: $OC_WS — the only directory it is started in"
       # ── PROVIDER SELF-CHECK — the line that makes "no local model" decidable ──
       # `GET /provider` is exactly what the desktop calls on the v1 protocol
       # (app/src/context/global-sync/bootstrap.ts:232-234 -> sdk gen.ts:759) and its
@@ -1764,13 +1765,13 @@ try:
     with open(sys.argv[1], encoding="utf-8") as fh:
         d = json.load(fh)
 except Exception as e:                                            # noqa: BLE001
-    print("[harness] opencode provider check: could not read /provider (%s)" % e)
+    print("[motdeck] opencode provider check: could not read /provider (%s)" % e)
     raise SystemExit(0)
 conn = [str(x) for x in (d.get("connected") or [])]
 allp = {p.get("id"): p for p in (d.get("all") or []) if isinstance(p, dict)}
 models = (allp.get("llama.cpp") or {}).get("models") or {}
 if not isinstance(models, dict) or any(not isinstance(k, str) for k in models):
-    print("[harness] opencode provider check: llama.cpp returned an unreadable model map")
+    print("[motdeck] opencode provider check: llama.cpp returned an unreadable model map")
     raise SystemExit(0)
 n = len(models)
 # Launch provenance, not a second catalog: this is an observation about the exact
@@ -1796,26 +1797,26 @@ try:
         if os.path.exists(tmp):
             os.unlink(tmp)
 except Exception as e:
-    print("[harness] opencode provider check: runtime marker unavailable (%s)" % e)
+    print("[motdeck] opencode provider check: runtime marker unavailable (%s)" % e)
 if "llama.cpp" in conn:
     # Settings -> Providers and the composer picker read the SAME payload — the
     # intersection of `all` and `connected` (app/src/hooks/use-providers.ts:52-60,
     # settings-v2/providers.tsx:48-52, context/models.tsx:40-47) — so this one word
     # answers for both surfaces at once.
-    print("[harness] opencode provider check: llama.cpp CONNECTED, %d model(s) — it is"
+    print("[motdeck] opencode provider check: llama.cpp CONNECTED, %d model(s) — it is"
           " in Settings -> Providers and in the model picker" % n)
 else:
     # Only two things can delete a provider that is present in the config, and both are
     # now repaired above rather than merely reported; if we still land here, the config
     # we wrote is not the config this server read.
-    print("[harness] opencode provider check: llama.cpp NOT CONNECTED — the model")
-    print("[harness]   picker will fall back to OpenCode Zen models (e.g. Big Pickle).")
-    print("[harness]   the config we wrote: %s" % os.environ.get("OC_CFGP", "?"))
-    print("[harness]   what the server reports connected: %s" % (conn or "(nothing)"))
-    print("[harness]   in `all` at all: %s" % ("yes" if "llama.cpp" in allp else "no"))
-    print("[harness]   NOTE a running OpenCode reads its config at BOOT — if you just")
-    print("[harness]   shipped harness code, Stop and Start this component (shipping is")
-    print("[harness]   not restarting), then reload the tab with cmd-R.")
+    print("[motdeck] opencode provider check: llama.cpp NOT CONNECTED — the model")
+    print("[motdeck]   picker will fall back to OpenCode Zen models (e.g. Big Pickle).")
+    print("[motdeck]   the config we wrote: %s" % os.environ.get("OC_CFGP", "?"))
+    print("[motdeck]   what the server reports connected: %s" % (conn or "(nothing)"))
+    print("[motdeck]   in `all` at all: %s" % ("yes" if "llama.cpp" in allp else "no"))
+    print("[motdeck]   NOTE a running OpenCode reads its config at BOOT — if you just")
+    print("[motdeck]   shipped motdeck code, Stop and Start this component (shipping is")
+    print("[motdeck]   not restarting), then reload the tab with cmd-R.")
 PYOCCHK
       rm -f "$ROOT/data/opencode-provider.json"
       # The tab does not open :${OC_PORT}/ — it opens the bridge's /opencode, a 307 into
@@ -1823,11 +1824,11 @@ PYOCCHK
       # one that says "Nothing here yet" beside an empty Projects rail) never appears.
       # If it ever DOES appear, the manual equivalent is one click: Add project →
       # data/opencode-workspace.
-      echo "[harness] the tab lands on a new session for that workspace (via the bridge's"
-      echo "[harness]   /opencode redirect). If you ever see OpenCode's own empty home"
-      echo "[harness]   screen instead: Add project -> $OC_WS, once."
-      echo "[harness] REMINDER: OpenCode requires a TOOL-CALLING model (the green 'tools'"
-      echo "[harness]   pill in Models). Without one it looks broken, not merely slower."
+      echo "[motdeck] the tab lands on a new session for that workspace (via the bridge's"
+      echo "[motdeck]   /opencode redirect). If you ever see OpenCode's own empty home"
+      echo "[motdeck]   screen instead: Add project -> $OC_WS, once."
+      echo "[motdeck] REMINDER: OpenCode requires a TOOL-CALLING model (the green 'tools'"
+      echo "[motdeck]   pill in Models). Without one it looks broken, not merely slower."
     else
       echo "ERROR: opencode did not answer on :${OC_PORT} in ~2min:"
       tail -20 "$ROOT/data/logs/opencode.log"
@@ -1839,7 +1840,7 @@ PYOCCHK
     # shellcheck disable=SC1091
     source data/hermes-venv/bin/activate
     H_PY="$(_yaml_python || true)"
-    # M1: point Hermes at the harness RUNNER endpoint (:6767 + key). Patches ONLY the
+    # M1: point Hermes at MOT Deck RUNNER endpoint (:6767 + key). Patches ONLY the
     # managed model.* keys, preserving the rest of an existing config; creates minimal if absent.
     HCFG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
     BASE_URL=$(_manifest_value runner.endpoint str)
@@ -1856,7 +1857,7 @@ PYOCCHK
     CTXLEN=$(_manifest_value runner.ctx_size int)
     [[ "$MODEL" == \#* ]] && MODEL=""   # guard: never treat a stray comment as a model name
     [[ "$CTXLEN" =~ ^[0-9]+$ ]] || CTXLEN=65536
-    # Launch provenance outranks harness.yaml intent. A first-row `/v1/models` probe
+    # Launch provenance outranks motdeck.yaml intent. A first-row `/v1/models` probe
     # is NOT used here: llama.cpp reports its alias, but MLX may enumerate cache rows
     # unrelated to the model this child was launched with. `_runner_active_model`
     # accepts only the exact PID + kernel-birth ownership record written after the
@@ -1887,7 +1888,7 @@ PYWIRE
 )
     mkdir -p "$(dirname "$HCFG")"
     # ── WIRING HERMES TO THE RUNNER (isolation mode S-ISO-3 + ledger U12) ────────
-    # ONE writer owns ~/.hermes/config.yaml's two harness surfaces:
+    # ONE writer owns ~/.hermes/config.yaml's two motdeck surfaces:
     #   * `custom_providers:` — the named "MOT Deck (local)" row that puts our whole
     #     registry in Hermes's OWN model picker (instead of the anonymous `custom` row
     #     whose model list is a live probe — empty whenever the runner is down);
@@ -1904,13 +1905,13 @@ PYWIRE
       # This intentionally replaces the old bare Python 3 seeder invocation:
       # only the resolver proves the selected interpreter can import the YAML dependency.
       HERMES_CFG="$HCFG" BASE_URL="$BASE_URL" KEY="$KEY" MODEL="$MODEL" CTXLEN="$CTXLEN" \
-        HARNESS_ROOT="$PWD" "$H_PY" scripts/seed_hermes_provider.py || \
-        echo "[harness] WARNING: Hermes wiring failed — check ~/.hermes/config.yaml"
+        MOT_DECK_ROOT="$PWD" "$H_PY" scripts/seed_hermes_provider.py || \
+        echo "[motdeck] WARNING: Hermes wiring failed — check ~/.hermes/config.yaml"
     else
-      echo "[harness] WARNING: no Python interpreter can import PyYAML, so Hermes's"
-      echo "[harness]   MOT Deck provider and YAML-backed config follow-ups will NOT be"
-      echo "[harness]   written. Hermes will start without that configuration. Bootstrap"
-      echo "[harness]   the bridge venv (PyYAML is in bridge/requirements.txt), then restart."
+      echo "[motdeck] WARNING: no Python interpreter can import PyYAML, so Hermes's"
+      echo "[motdeck]   MOT Deck provider and YAML-backed config follow-ups will NOT be"
+      echo "[motdeck]   written. Hermes will start without that configuration. Bootstrap"
+      echo "[motdeck]   the bridge venv (PyYAML is in bridge/requirements.txt), then restart."
     fi
     # The provider slug the seed decided ('custom:<normalized name>', or the user's
     # renamed one) — read back for the post-start picker check below.
@@ -1943,23 +1944,23 @@ if m:
     mm = re.search(r'^\s+mode:\s*(\S+)', m.group(1), re.M)
     if mm: mode = mm.group(1).strip('\'"')
 if mode == 'off':
-    print("[harness] WARNING: approvals.mode is 'off' in ~/.hermes/config.yaml — "
+    print("[motdeck] WARNING: approvals.mode is 'off' in ~/.hermes/config.yaml — "
           "dangerous shell commands will run with NO approval card. Set 'manual' or 'smart'.")
 PYAPPR
     # ── PATH-GUARD FENCE (B1): seed our pre_tool_call plugin + enable it ──────────
-    # guards/harness-path-guard/ is the source of truth; it is copied (if changed)
-    # into ~/.hermes/plugins/harness-path-guard/ and added to plugins.enabled, which
+    # guards/motdeck-path-guard/ is the source of truth; it is copied (if changed)
+    # into ~/.hermes/plugins/motdeck-path-guard/ and added to plugins.enabled, which
     # Hermes requires for user plugins (opt-in allow-list, hermes_cli/plugins.py
-    # _get_enabled_plugins). policy.yaml gets {HARNESS_ROOT} substituted with this
+    # _get_enabled_plugins). policy.yaml gets {MOT_DECK_ROOT} substituted with this
     # repo root; {HERMES_CWD}/{TMPDIR} stay placeholders (resolved at call time).
-    HGUARD_SRC="$PWD/guards/harness-path-guard"
-    HGUARD_DST="${HERMES_HOME:-$HOME/.hermes}/plugins/harness-path-guard"
+    HGUARD_SRC="$PWD/guards/motdeck-path-guard"
+    HGUARD_DST="${HERMES_HOME:-$HOME/.hermes}/plugins/motdeck-path-guard"
     if [[ -d "$HGUARD_SRC" && -n "$H_PY" ]]; then
-      HGUARD_SRC="$HGUARD_SRC" HGUARD_DST="$HGUARD_DST" HARNESS_ROOT="$PWD" \
+      HGUARD_SRC="$HGUARD_SRC" HGUARD_DST="$HGUARD_DST" MOT_DECK_ROOT="$PWD" \
         HCFG="$HCFG" "$H_PY" - <<'PYGUARD'
-import os, re, shutil, tempfile
+import os, re, shutil, tempfile, yaml
 src, dst = os.environ["HGUARD_SRC"], os.environ["HGUARD_DST"]
-root, cfg = os.environ["HARNESS_ROOT"], os.environ["HCFG"]
+root, cfg = os.environ["MOT_DECK_ROOT"], os.environ["HCFG"]
 os.makedirs(dst, exist_ok=True)
 changed = []
 
@@ -1984,7 +1985,7 @@ for name in ("plugin.yaml", "__init__.py", "README.md"):
             changed.append(name)
 pol = os.path.join(src, "policy.yaml")
 if os.path.exists(pol):
-    text = open(pol, encoding="utf-8").read().replace("{HARNESS_ROOT}", root)
+    text = open(pol, encoding="utf-8").read().replace("{MOT_DECK_ROOT}", root)
     if write_if_changed(os.path.join(dst, "policy.yaml"), text):
         changed.append("policy.yaml")
 # Drop stale bytecode so a refreshed __init__.py is definitely the code that runs.
@@ -1996,12 +1997,12 @@ def enable_in_config(path):
     try:
         import yaml
     except Exception:
-        print("[harness] WARNING: PyYAML unavailable — cannot verify plugins.enabled")
+        print("[motdeck] WARNING: PyYAML unavailable — cannot verify plugins.enabled")
         return None
     try:
         data = yaml.safe_load(open(path, encoding="utf-8").read()) if os.path.exists(path) else {}
     except Exception as exc:
-        print("[harness] WARNING: could not parse %s (%s) — plugins.enabled untouched" % (path, exc))
+        print("[motdeck] WARNING: could not parse %s (%s) — plugins.enabled untouched" % (path, exc))
         return None
     if not isinstance(data, dict):
         data = {}
@@ -2012,13 +2013,35 @@ def enable_in_config(path):
     enabled = plugins.get("enabled")
     if not isinstance(enabled, list):
         enabled = []
-    if "harness-path-guard" in [str(x) for x in enabled]:
-        return False
-    enabled.append("harness-path-guard")
-    plugins["enabled"] = enabled
+    # U150: the product-identity change also renamed this MOT Deck-owned plugin.
+    # Replace the retired id in place, deduplicate both ids, and preserve every
+    # user-owned neighbour in its original order. Merely appending the new id leaves
+    # both pre_tool_call hooks active and can show two approval cards for one write.
+    current, retired = "motdeck-path-guard", "harness-path-guard"
+    rewritten, have_current = [], False
+    for item in enabled:
+        token = str(item)
+        if token == retired:
+            if not have_current:
+                rewritten.append(current)
+                have_current = True
+            continue
+        if token == current:
+            if not have_current:
+                rewritten.append(item)
+                have_current = True
+            continue
+        rewritten.append(item)
+    if not have_current:
+        rewritten.append(current)
+    plugins["enabled"] = rewritten
     disabled = plugins.get("disabled")
-    if isinstance(disabled, list) and "harness-path-guard" in [str(x) for x in disabled]:
-        plugins["disabled"] = [x for x in disabled if str(x) != "harness-path-guard"]
+    if isinstance(disabled, list):
+        plugins["disabled"] = [x for x in disabled
+                               if str(x) not in (current, retired)]
+    config_changed = rewritten != enabled or plugins.get("disabled") != disabled
+    if not config_changed:
+        return False
     d = os.path.dirname(path) or "."
     fd, tmp = tempfile.mkstemp(dir=d)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -2027,15 +2050,39 @@ def enable_in_config(path):
     return True
 
 added = enable_in_config(cfg)
+# The retired directory was a generated copy whose own README says it must never be
+# hand-edited. Remove it only after the config transaction succeeded (or proved the
+# new id already active), and only when a direct plugin.yaml identifies that exact
+# retired plugin. A symlink, special file, unparseable config, or foreign directory is
+# left untouched and reported rather than guessed at.
+retired_dir = os.path.join(os.path.dirname(dst), "harness-path-guard")
+retired_removed = False
+if added is not None and os.path.lexists(retired_dir):
+    retired_manifest = os.path.join(retired_dir, "plugin.yaml")
+    safe = (not os.path.islink(retired_dir) and os.path.isdir(retired_dir)
+            and not os.path.islink(retired_manifest)
+            and os.path.isfile(retired_manifest))
+    try:
+        retired_data = yaml.safe_load(open(retired_manifest, encoding="utf-8").read()) if safe else None
+        safe = isinstance(retired_data, dict) and retired_data.get("name") == "harness-path-guard"
+    except Exception:
+        safe = False
+    if safe:
+        shutil.rmtree(retired_dir)
+        retired_removed = True
+    else:
+        print("[motdeck] WARNING: retired path-guard directory is not a verified "
+              "MOT Deck-owned plugin; leaving it untouched: " + retired_dir)
 bits = []
 if changed: bits.append("seeded " + ", ".join(changed))
 if added: bits.append("enabled in plugins.enabled")
-print("[harness] path-guard plugin: " + ("; ".join(bits) if bits else "up to date"))
+if retired_removed: bits.append("retired old plugin id and generated directory")
+print("[motdeck] path-guard plugin: " + ("; ".join(bits) if bits else "up to date"))
 PYGUARD
     elif [[ ! -d "$HGUARD_SRC" ]]; then
-      echo "[harness] WARNING: guards/harness-path-guard missing — file writes are UNFENCED"
+      echo "[motdeck] WARNING: guards/motdeck-path-guard missing — file writes are UNFENCED"
     else
-      echo "[harness] path-guard config unchanged — PyYAML is unavailable (see warning above)"
+      echo "[motdeck] path-guard config unchanged — PyYAML is unavailable (see warning above)"
     fi
     # ── LOFFICE MCP SERVER (S1): register the bridge-hosted office toolset ────────
     # docs/FABLE-LOFFICE-HERMES-TOOLS-SPEC.md §1. bridge/office_mcp.py mounts the server
@@ -2062,7 +2109,7 @@ PYGUARD
     # loud: a security fence a user can silently turn off by editing one word is not a
     # fence, this server exposes write tools into their documents, and the line below
     # says we did it (a user who really wants it trusted can say so and not Start).
-    # `url` is ours too: it must point at the bridge port this harness is running on,
+    # `url` is ours too: it must point at the bridge port MOT Deck is running on,
     # or the toolset simply 404s.
     BR_PORT=$(_manifest_value bridge.port int)
     BR_PORT="${BR_PORT:-8700}"
@@ -2073,13 +2120,13 @@ cfg, port = os.environ["HCFG"], os.environ["BR_PORT"]
 try:
     import yaml
 except Exception:
-    print("[harness] WARNING: PyYAML unavailable — LOffice MCP server NOT registered")
+    print("[motdeck] WARNING: PyYAML unavailable — LOffice MCP server NOT registered")
     raise SystemExit(0)
 url = "http://127.0.0.1:%s/mcp/office" % port
 try:
     data = yaml.safe_load(open(cfg, encoding="utf-8").read()) if os.path.exists(cfg) else {}
 except Exception as exc:
-    print("[harness] WARNING: could not parse %s (%s) - mcp_servers untouched" % (cfg, exc))
+    print("[motdeck] WARNING: could not parse %s (%s) - mcp_servers untouched" % (cfg, exc))
     raise SystemExit(0)
 if not isinstance(data, dict):
     data = {}
@@ -2110,7 +2157,7 @@ else:
     elif entry.get("timeout") != 120:
         notes.append("timeout: honoured your %s (not reset to 120)" % entry.get("timeout"))
 if cur == entry:
-    print("[harness] LOffice MCP server: already registered at " + url)
+    print("[motdeck] LOffice MCP server: already registered at " + url)
     raise SystemExit(0)
 servers["loffice"] = entry
 data["mcp_servers"] = servers
@@ -2120,18 +2167,18 @@ fd, tmp = tempfile.mkstemp(dir=d)
 with os.fdopen(fd, "w", encoding="utf-8") as fh:
     yaml.safe_dump(data, fh, default_flow_style=False, sort_keys=False)
 os.replace(tmp, cfg)
-print("[harness] LOffice MCP server registered at " + entry["url"]
+print("[motdeck] LOffice MCP server registered at " + entry["url"]
       + " (trust: untrusted - write tools get an approval card)")
 for _n in notes:
-    print("[harness]   " + _n)
+    print("[motdeck]   " + _n)
 PYLOFFICE
     else
-      echo "[harness] LOffice MCP server NOT registered — PyYAML is unavailable (see warning above)"
+      echo "[motdeck] LOffice MCP server NOT registered — PyYAML is unavailable (see warning above)"
     fi
     PORT=9119
     # `hermes dashboard` = same server as `hermes serve` PLUS Hermes's own web UI
     # (embedded chat, live tool feed, approvals, sessions). --no-open: we embed it in
-    # the Harness tab, not a browser. --skip-build: serve the prebuilt web_dist from
+    # the MOT Deck tab, not a browser. --skip-build: serve the prebuilt web_dist from
     # install (no npm at start time). If web_dist is missing it degrades to headless
     # (API only), so a missing build never blocks startup.
     # ⛔ STOPPING THE PREVIOUS DASHBOARD — pidfile-scoped ONLY (U19, closed 2026-08-29).
@@ -2168,7 +2215,7 @@ PYLOFFICE
     # Deterministic dashboard session token (Hermes chat lane): the dashboard seeds
     # its _SESSION_TOKEN from HERMES_DASHBOARD_SESSION_TOKEN (the same trick Hermes's
     # own desktop shell uses), so the Bridge can auth the /api/ws?token=<...> gateway.
-    # Precedence: harness.yaml components.hermes.dashboard_token override → else
+    # Precedence: motdeck.yaml components.hermes.dashboard_token override → else
     # generate ONCE into data/hermes.token (chmod 600) and reuse on every start.
     HTOKEN=$(_manifest_value components.hermes.dashboard_token str)
     if [[ -z "$HTOKEN" ]]; then
@@ -2195,7 +2242,7 @@ PYLOFFICE
       sleep 1
     done
     if [[ "$up" == "1" ]]; then
-      echo "[harness] hermes dashboard up on http://127.0.0.1:${PORT} (UI + API; model=$MODEL [$MSRC] @ $BASE_URL)"
+      echo "[motdeck] hermes dashboard up on http://127.0.0.1:${PORT} (UI + API; model=$MODEL [$MSRC] @ $BASE_URL)"
       # ── PROVIDER SELF-CHECK — the line that makes "no local model" decidable ────
       # Same discipline as the opencode lane's `/provider` check: ask the running
       # server for the payload its OWN picker renders (web/src/lib/api.ts:517-536 →
@@ -2212,35 +2259,35 @@ PYLOFFICE
 import json, os, sys
 slug = str(os.environ.get("HPROV") or "").strip().lower()
 if not slug:
-    print("[harness] hermes provider check: the seed wrote no verdict this Start (see "
+    print("[motdeck] hermes provider check: the seed wrote no verdict this Start (see "
           "the warning above) — the picker was NOT verified.")
     raise SystemExit(0)
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
         rows = json.load(fh).get("providers") or []
 except Exception as e:                                            # noqa: BLE001
-    print("[harness] hermes provider check: could not read /api/model/options (%s)" % e)
+    print("[motdeck] hermes provider check: could not read /api/model/options (%s)" % e)
     raise SystemExit(0)
 mine = next((r for r in rows if str(r.get("slug", "")).lower() == slug), None)
 if mine and (mine.get("models") or []):
-    print('[harness] hermes provider check: "%s" IS in its own model picker — '
+    print('[motdeck] hermes provider check: "%s" IS in its own model picker — '
           "%d model(s)%s" % (mine.get("name"), len(mine.get("models") or []),
                              ", currently selected" if mine.get("is_current") else ""))
 elif mine:
     # The row reached Hermes but carries nothing to pick — a picker the user would
     # find empty. Saying "it IS there" here would be true and useless.
-    print('[harness] hermes provider check: "%s" is in the picker but lists NO models'
+    print('[motdeck] hermes provider check: "%s" is in the picker but lists NO models'
           " — check data/models.json (the registry the row is seeded from)."
           % mine.get("name"))
 else:
-    print("[harness] hermes provider check: %s NOT in the picker — its Models page will"
+    print("[motdeck] hermes provider check: %s NOT in the picker — its Models page will"
           " show the bare 'Custom endpoint' row instead." % slug)
-    print("[harness]   config: %s" % os.environ.get("HCFG", "~/.hermes/config.yaml"))
-    print("[harness]   rows it does list: %s"
+    print("[motdeck]   config: %s" % os.environ.get("HCFG", "~/.hermes/config.yaml"))
+    print("[motdeck]   rows it does list: %s"
           % (", ".join(str(r.get("slug")) for r in rows[:8]) or "(none)"))
 PYHCHK
       rm -f data/hermes-model-options.json
-      echo "[harness] tool-calling proof: run scripts/test_hermes.sh"
+      echo "[motdeck] tool-calling proof: run scripts/test_hermes.sh"
     else
       echo "ERROR: hermes dashboard did not open :${PORT} within 25s. Last log lines:"
       tail -15 data/logs/hermes.log

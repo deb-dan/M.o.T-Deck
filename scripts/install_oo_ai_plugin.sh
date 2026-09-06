@@ -23,7 +23,7 @@
 #      ⚠️ If a future pin's index.html reverts to absolute URLs, this script FAILS
 #      LOUDLY (the guard is below) instead of shipping a plugin that needs the net.
 #   2. Arm's length: data/onlyoffice-plugins/, served read-only, no intermixing.
-#   3. If the harness is ever distributed, About must name ONLYOFFICE + AGPL-3.0 and
+#   3. If MOT Deck is ever distributed, About must name ONLYOFFICE + AGPL-3.0 and
 #      link these exact pins. SOURCES.txt is written beside the bundle for that.
 #   4. Nothing of unverified provenance: every byte is sha256-pinned below.
 #
@@ -247,7 +247,7 @@ ONLYOFFICE AI plugin — vendored for the LOffice ribbon.
 LICENCE: AGPL-3.0 (GUI elements and documentation: CC-BY-SA-4.0), (c) Ascensio
 System SIA. This plugin is UNMODIFIED upstream: \`ai.plugin\` is upstream's own
 deploy archive, unzipped byte-for-byte, and the three shared SDK files are fetched
-verbatim. The harness patches nothing. It is served read-only at /ooplug/* and
+verbatim. MOT Deck patches nothing. It is served read-only at /ooplug/* and
 driven only through published surfaces: the editor's own
 \`editorConfig.plugins.pluginsData\` loader, and the plugin's own localStorage
 settings keys (which is how its Settings UI stores providers too).
@@ -268,7 +268,7 @@ sdk     ${REPO} @ ${COMMIT}  (sdkjs-plugins/v1)
 upstream (the plugin marketplace repository)
   https://github.com/${REPO}
 
-If this harness is ever distributed to anyone else, the About surface must name
+If this MOT Deck build is ever distributed to anyone else, the About surface must name
 ONLYOFFICE + AGPL-3.0 and link these exact pins, and any modification made to the
 plugin must be published. See docs/handoff/ONLYOFFICE-PROBE-RUNBOOK.md, AGPL ruling.
 SRC

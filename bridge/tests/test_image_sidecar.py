@@ -216,7 +216,7 @@ check("a later write prunes across sessions (global cap holds)",
       len(rows_for("big")) + len(rows_for("other")) == CAP)
 
 # ── unwritable data root must degrade silently, never raise ──────────────────
-BAD = _load("/proc/nonexistent-harness-root")
+BAD = _load("/proc/nonexistent-motdeck-root")
 BAD["log_attachment"]("s", "k", "n", "image/png", PNG)
 check("unwritable store: log_attachment never raises", True)
 check("unwritable store: rows → []", BAD["_attachment_rows"]("s") == [])

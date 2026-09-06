@@ -156,7 +156,7 @@ No static-file serving of the renderer anywhere in the crates. The CLI docs conf
 - **The LOCAL-model page cannot see our GGUF dir.** There is **no `GOOSE_LOCAL_MODEL_DIR`** or
   equivalent (repo-wide grep). Local inference resolves models ONLY through the HF-cache
   layout (`models--owner--repo/snapshots/…`) via hf-hub, storage enum
-  `LocalModelStorage::HuggingFaceCache` (`hf_models.rs:2007-2019`). Our harness models are
+  `LocalModelStorage::HuggingFaceCache` (`hf_models.rs:2007-2019`). Our motdeck models are
   flat dirs (`data/models/<name>/<file>.gguf` per `data/models.json`) — wrong layout, invisible
   to goose. Sharing **`HF_HOME`** would dedupe only models that both sides pulled from HF in
   cache layout — ours aren't. **Conclusion: don't fight it. Local-inference mode duplicates

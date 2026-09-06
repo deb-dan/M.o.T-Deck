@@ -181,7 +181,7 @@ Despite three refactors moving the seam, a real turn asking `write_file` for
 `~/Desktop` raised:
 ```
 approval  "<write_file> (plugin approval rule)"
-          "path-guard: write outside workspace: /Users/debik/Desktop/harness-gate-probe.txt"
+          "path-guard: write outside workspace: /Users/debik/Desktop/motdeck-gate-probe.txt"
 ```
 and the file was never created. `approvals.mode: manual` also survived.
 
@@ -237,7 +237,7 @@ the **same** hook pass as a block/approve. So: our path-guard judges the origina
 `file_path`, Debi approves *that* path on the card, and a `modify` directive from any
 other enabled pre_tool_call plugin can then replace it with a path nothing re-checked.
 **Not reachable today** — no bundled Hermes plugin emits `modify`, and `plugins.enabled`
-is opt-in with `harness-path-guard` the only name `start_component.sh` adds. The new
+is opt-in with `motdeck-path-guard` the only name `start_component.sh` adds. The new
 test fails loudly if a bundled plugin ever gains one; the fix then is for the guard to
 re-judge `modified_args`.
 
@@ -284,7 +284,7 @@ Kept in `docs/handoff/rollback-hermes-2026-08-28/`:
 | `OLD-SHA.txt` | `f80f453ae0679347e38abc917c7f94f717bf96c5` / `v2026.8.13` |
 | `discarded-package-lock.diff` | the dirty `vendor/hermes/package-lock.json` diff (27 added lines), **deliberately discarded** on this bump. Nothing else in `vendor/hermes` was locally modified — verified before touching anything. **See the sidebar below: this file's origin is now known.** |
 | `hermes-venv-freeze-OLD.txt` | 113-line `pip freeze` of the snapshot Hermes venv at v0.20.1 |
-| `harness.yaml.repo.bak`, `harness.yaml.snapshot.bak` | both manifests before the bump |
+| `motdeck.yaml.repo.bak`, `motdeck.yaml.snapshot.bak` | both manifests before the bump |
 | `POISONED-mcp_schema_cache.json` | **the evidence for Bug 2** — the real cache file as v0.20.6 wrote it |
 
 ### 🔎 Side finding: the "dirty package-lock" mystery is SOLVED
@@ -302,12 +302,12 @@ time. (It is dirty again right now, for exactly this reason — the state is oth
 identical to pre-bump.)
 
 Also on disk (safe to delete once you are happy):
-- `~/Library/Application Support/Harness/vendor/hermes.v2026.8.13.bak/` (426 MB) —
+- `~/Library/Application Support/MOT Deck/vendor/hermes.v2026.8.13.bak/` (426 MB) —
   the pre-bump vendored tree; this is what the rollback was performed FROM.
-- `~/Library/Application Support/Harness/data/hermes-venv.rolledforward/` (438 MB) —
+- `~/Library/Application Support/MOT Deck/data/hermes-venv.rolledforward/` (438 MB) —
   the v0.20.6 venv (mcp 2.0.0), moved aside. **Keep this one until the retry** — it
   saves a full reinstall when you next test v0.20.3+.
-- `~/Library/Application Support/Harness/harness.yaml.bak-hermes-20260828{,-post}`
+- `~/Library/Application Support/MOT Deck/motdeck.yaml.bak-hermes-20260828{,-post}`
 
 Rollback commands actually used (for the record):
 ```bash

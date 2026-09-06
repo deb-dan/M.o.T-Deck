@@ -171,10 +171,10 @@ NAV_ENTRIES = (
     # mirror with the regex `\{ id:'([a-z]+)',` and compares the harvest to NAV_IDS, so
     # an id carrying a digit, a hyphen or an underscore would silently fail to be
     # captured and the suite would report the panel as MISSING the entry it plainly
-    # has. The component in harness.yaml, the tab in app/main.swift and this id are
+    # has. The component in motdeck.yaml, the tab in app/main.swift and this id are
     # therefore all `deepseek` — which is also what makes the dependency banner work at
     # all: app/main.swift keys it as depNeeds[tabs[idx].id] against /api/deps component
-    # names, so a component named deepseek_harness with a tab named deepseek would have
+    # names, so a component named deepseek_motdeck with a tab named deepseek would have
     # a banner that never appears.
     {"id": "deepseek",    "kind": "component", "bars": ("sidebar", "topbar")},
 )

@@ -37,7 +37,7 @@ from .sampling import _record_load_launch
 #   401ing against every b10662 runner since that build made /v1/models require the key
 #   — 90 tries × 2s = a three-minute wall of "unauthorized: Invalid API Key" in
 #   runner.log and a non-zero exit for a runner that was up. On that false failure the
-#   switch watcher REVERTED harness.yaml's pin to the 27B whose file she had deleted —
+#   switch watcher REVERTED motdeck.yaml's pin to the 27B whose file she had deleted —
 #   a revert that could not possibly work — and the card sat on a sticky Failed while
 #   `ps` and an authenticated curl both proved the process healthy.
 #
@@ -70,7 +70,7 @@ def _fail_note(name: str) -> "dict | None":
 # running true, health ok — and carried the red half anyway, in `last_error`, with
 # `stale: false`, `model: ""`, `path: ""`. So the card was not confused: it was
 # faithfully rendering a sentence about a DIFFERENT, EARLIER start attempt, one that
-# ran while harness.yaml had no runner.model at all, as though it described now.
+# ran while motdeck.yaml had no runner.model at all, as though it described now.
 #
 # WHY IT SURVIVED. rc == 0 in _provision pops LAST_START_FAIL — but that is only ONE
 # of the ways this app starts something, and it was not the way the runner came up.
@@ -218,7 +218,7 @@ def start_failure_reason(output: str, model: str = "", path: str = "",
 
 
 def runner_model_view(c: "dict | None" = None) -> dict:
-    """What harness.yaml PINS, what the registry says its file is, and whether that
+    """What motdeck.yaml PINS, what the registry says its file is, and whether that
     file is still there — the whole answer in one cheap dict.
 
     ONE stat() per call, debounced two-strikes by health.file_state_track (a sleeping
@@ -340,7 +340,7 @@ async def status() -> dict:
         out["components"]["runner"] = {
             "installed": True,
             "pin": str(live_id or rc.get("model") or rc.get("adapter") or "auto"),
-            "pin_intent": mv["pin"],       # harness.yaml runner.model — INTENT, always
+            "pin_intent": mv["pin"],       # motdeck.yaml runner.model — INTENT, always
             "live_id": live_id or "",      # what the runner answers — FACT, or ""
             "model_path": mv["path"],
             "model_file": mv["file"],      # ok | checking | gone | incomplete | unknown | unregistered
@@ -399,7 +399,7 @@ async def status() -> dict:
 # it failed. That is the LIE-TO-USER class, and this block is the answer to it.
 #
 # EVERYTHING HERE IS DERIVED. It reads what status() above already computed plus
-# harness.yaml's own `depends_on` and (for Hermes) the binding the component itself has
+# motdeck.yaml's own `depends_on` and (for Hermes) the binding the component itself has
 # on disk. It starts nothing, writes nothing, and issues no probe status() did not
 # already issue.
 #
@@ -409,37 +409,37 @@ async def status() -> dict:
 # the page (it shortens the webview by 30pt, it never covers it), and the banner
 # disappears on its own the moment the need is met.
 
-# HARD deps = harness.yaml `depends_on`, which is the START CLOSURE ("bring these up
+# HARD deps = motdeck.yaml `depends_on`, which is the START CLOSURE ("bring these up
 # first"). SOFT deps are the other half of the truth: a component whose closure is
 # deliberately EMPTY can still be useless without the runner. OpenCode is the recorded
-# case — harness.yaml says `depends_on: []` on purpose ("usable against any provider it
+# case — motdeck.yaml says `depends_on: []` on purpose ("usable against any provider it
 # has configured"), which is right for Start and wrong for a user staring at a picker
 # full of local models that cannot answer. Kept as a SEPARATE table on purpose: nothing
 # in this file may change what a Start brings up.
 #
 # ⚠️ ONLY COMPONENTS status() ANSWERS FOR MAY APPEAR HERE. The two goose lanes and
-# aider are bridge-supervised CHILDREN, not harness.yaml components: they have no row
+# aider are bridge-supervised CHILDREN, not motdeck.yaml components: they have no row
 # in /api/status and their own lifecycle routes are /api/gooseui/* and the PTY sockets,
 # so a soft dep on them would derive `needs` that nothing could act on. They are named
 # in ledger S24 with the exact seam each one still wants.
 NEEDS_SOFT: dict = {
     "opencode": ("runner",),
     # S34: the DeepSeek Harness lane joins the signal, for the SAME reason and by the
-    # same reading. harness.yaml gives it `depends_on: []` on purpose (it is usable
+    # same reading. motdeck.yaml gives it `depends_on: []` on purpose (it is usable
     # against any provider it has configured), so a Start never drags the runner up —
     # but its seeded 'MOT Deck (local)' route points at :6767, and a picker full of
     # local models that cannot answer is exactly the state this table exists to name.
-    # It IS a real harness.yaml component with a /api/status row, so it clears the
+    # It IS a real motdeck.yaml component with a /api/status row, so it clears the
     # "only components status() answers for" fence above.
     "deepseek": ("runner",),
     # S28: the Goose UI joins the signal. Its status row is SYNTHESISED in deps() from
-    # its own lane (it is a bridge-supervised child, not a harness.yaml component) and
+    # its own lane (it is a bridge-supervised child, not a motdeck.yaml component) and
     # its Restart button is served by restart()'s lane branch — the two things S28b said
     # had to exist first, so this is a sentence with a working action behind it.
     "gooseui": ("runner",),
 }
 
-# Lane names restart() accepts even though they are not harness.yaml components. The
+# Lane names restart() accepts even though they are not motdeck.yaml components. The
 # value is the lane's OWN pair of audited routes — the only way any of these processes
 # is ever stopped (identity-checked pidfile first; never a kill by name).
 _LANE_RESTART = {"gooseui": ("bridge.routers.gooseui", "gooseui_stop", "gooseui_start")}
@@ -586,7 +586,7 @@ def needs_derive(comps: dict, hard: dict, soft: dict, bindings: dict) -> dict:
     every state without a runner, a component or a network.
 
       comps    — status()["components"]: name -> {installed, running, port_up, loaded, …}
-      hard     — name -> list of harness.yaml depends_on
+      hard     — name -> list of motdeck.yaml depends_on
       soft     — name -> tuple of usefulness deps (NEEDS_SOFT)
       bindings — name -> {"model": <wire id the app is wired to>,
                           "endpoint": <base_url the app is wired to>,
@@ -896,7 +896,7 @@ def _opencode_binding(live_wire: str, requested_model: str = "") -> dict:
     except Exception:                                                # noqa: BLE001
         return {}
     if not expected:
-        expected = ["harness-runner"]
+        expected = ["motdeck-runner"]
     actual = sorted(set(d["models"]))
     connected = d.get("connected") is True
     out = {}
@@ -966,7 +966,7 @@ async def deps() -> dict:
             b = {}
         if b:
             bindings[_name] = _bind_track(_name, b)
-    # THE GOOSE UI IS A BRIDGE-SUPERVISED CHILD, NOT A harness.yaml COMPONENT — it has
+    # THE GOOSE UI IS A BRIDGE-SUPERVISED CHILD, NOT A motdeck.yaml COMPONENT — it has
     # no /api/status row, which is exactly why S28b warned that deriving a need for it
     # would render a button with nothing behind it. Both halves are supplied here: a
     # synthetic row (installed + alive, read from its own lane, no probe of ours) and a
@@ -1052,14 +1052,14 @@ def logs_clear(name: str) -> JSONResponse:
 
 @app.post("/api/logs/{name}/export")
 def logs_export(name: str) -> JSONResponse:
-    """Copy a log to ~/Downloads/harness-logs/<name>-<UTC ts>.log and return the
+    """Copy a log to ~/Downloads/motdeck-logs/<name>-<UTC ts>.log and return the
     path (the panel then offers Show-in-Folder via the existing /api/open gate)."""
     if name not in _LOG_NAMES:
         raise HTTPException(404, "unknown log")
     src = ROOT / "data" / "logs" / f"{name}.log"
     try:
         import shutil, datetime as _dt
-        outdir = Path.home() / "Downloads" / "harness-logs"
+        outdir = Path.home() / "Downloads" / "motdeck-logs"
         outdir.mkdir(parents=True, exist_ok=True)
         stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
         dest = outdir / f"{name}-{stamp}.log"
@@ -1132,7 +1132,7 @@ def install_plan(name: str) -> dict:
         "comfyui": [
             "OPTIONAL image/video component — license GPL-3.0. Composed at ARM'S LENGTH "
             "ONLY: a separate process reached over HTTP, never modified, never lifted "
-            "from (the same posture the harness takes with SearXNG's AGPL)",
+            "from (the same posture MOT Deck takes with SearXNG's AGPL)",
             "Shallow-clone vendor/comfyui at the pinned tag (not a submodule)",
             "Create venv data/comfyui-venv + install its deps: torch, torchvision, "
             "torchaudio, transformers, safetensors and its SPA (which ships as a pip "
@@ -1144,7 +1144,7 @@ def install_plan(name: str) -> dict:
             "it never writes into vendor/",
             "Serve on 127.0.0.1:8188 when started (UI + API on one port, loopback only, "
             "no authentication)",
-            "Its models load in ITS process, so their RAM is OUTSIDE the harness "
+            "Its models load in ITS process, so their RAM is OUTSIDE MOT Deck "
             "model-RAM ledger (memory.budget_gb) — the same known limit the voice "
             "components have",
             "Image/video models are NOT downloaded here; you add them later, on first use",
@@ -1176,7 +1176,7 @@ def install_plan(name: str) -> dict:
             "handled inside its own UI; on a loopback launch its page auto-fills the "
             "bootstrap credential",
             "It can download its own llama.cpp and models into its own dirs — contained, "
-            "but those weights are invisible to the harness model-RAM ledger",
+            "but those weights are invisible to MOT Deck model-RAM ledger",
         ],
         "opencode": [
             "OPTIONAL second coding lane — license MIT. Not a source checkout and not a "
@@ -1193,7 +1193,7 @@ def install_plan(name: str) -> dict:
             "Everything it writes is redirected into data/opencode/xdg (config, cache, "
             "session db) by the XDG variables the start script sets — your ~/.config and "
             "~/.cache are never touched",
-            "On Start it is pointed at the harness runner (127.0.0.1:6767) with every "
+            "On Start it is pointed at MOT Deck runner (127.0.0.1:6767) with every "
             "model in your registry listed, exactly like Hermes and Odysseus. The "
             "provider it writes is called `llama.cpp` and shows up in OpenCode's own "
             "Settings → Providers as CONNECTED (tag: config); its model picker should "
@@ -1206,7 +1206,7 @@ def install_plan(name: str) -> dict:
             "enough. Only the global copy carries the default model, because OpenCode "
             "writes your own model choice back to that same file",
             "Its auto-updater is disabled two ways (config key + environment flag) "
-            "because the version is pinned in harness.yaml — never use its in-app upgrade",
+            "because the version is pinned in motdeck.yaml — never use its in-app upgrade",
             "Serve on 127.0.0.1:4096 when started (its own web UI + API on one port, "
             "loopback only, NO authentication)",
             "It is started in data/opencode-workspace, which is the ONLY boundary on "
@@ -1248,7 +1248,7 @@ def install_plan(name: str) -> dict:
             "OpenCode lanes have. (The Hermes path-guard is a Hermes plugin hook and "
             "does NOT cover this lane.)",
             "Start seeds ONE provider named 'MOT Deck (local)' into its settings.yaml, "
-            "pointing at the harness runner, with your registry's models enumerated. It "
+            "pointing at MOT Deck runner, with your registry's models enumerated. It "
             "re-reads that file per request, so a model switch or a Rescan reaches it "
             "with no restart",
             "Telemetry: OFF. Verified at this pin rather than assumed — its composed "
@@ -1263,7 +1263,7 @@ def install_plan(name: str) -> dict:
             "Click 'Add workspace' in its sidebar and pick data/deepseek-workspace "
             "(the installer creates it, with a README saying what it is). That opens "
             "macOS's own folder chooser, launched by dsh itself — if it does not come "
-            "forward, click the Harness icon in the Dock. There is nothing we can seed "
+            "forward, click the MOT Deck icon in the Dock. There is nothing we can seed "
             "instead: a workspace record lives in a package-private store whose own "
             "docs say a hand-made mismatch \"fails loud\". Ledger U67",
             "It also shows an 'Internal Testing Notice' modal once, upstream's own. "

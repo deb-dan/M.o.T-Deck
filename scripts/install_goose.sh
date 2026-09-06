@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install_goose.sh — vendor the pinned `goose` CLI as the harness's THIRD agent lane.
+# install_goose.sh — vendor the pinned `goose` CLI as MOT Deck's THIRD agent lane.
 #
 #   ./scripts/install_goose.sh              install (idempotent)
 #   ./scripts/install_goose.sh --check      say what is installed, change nothing
@@ -15,7 +15,7 @@
 # deliberate. That script flips `components.<name>.installed` so a MISSION CONTROL CARD
 # stops saying "Not installed". goose has no card (it has no port and nothing to Start),
 # so there is no flag to flip — flip_installed.py would exit 1 with "components.goose is
-# not in harness.yaml", which would be correct. The lane reads INSTALLED FROM DISK on
+# not in motdeck.yaml", which would be correct. The lane reads INSTALLED FROM DISK on
 # every status call (pty_goose.is_installed), which is strictly better than a flag: a
 # deleted binary reads as not-installed immediately. docs/research/2026-08-28-goose-
 # source-verify.md's install recipe named flip_installed.py because it assumed a
@@ -231,7 +231,7 @@ mkdir -p "$HOMEDIR/.config/goose" "$HOMEDIR/.local/state/goose" \
 
 if [[ ! -f "$WS/README.md" ]]; then
   {
-    echo "# Harness goose workspace"
+    echo "# MOT Deck goose workspace"
     echo
     echo "This is the working directory the Goose lane is started in — and, because"
     echo "goose is started nowhere else, the only boundary on what it edits."

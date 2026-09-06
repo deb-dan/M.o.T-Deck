@@ -2,7 +2,7 @@
  *
  * WHY this is the thing that gets table-tested: conversation mode is a LOOP with a
  * live microphone at one end and a loudspeaker at the other. If the gate that keeps
- * the mic deaf while the assistant talks is wrong in any single phase, the harness
+ * the mic deaf while the assistant talks is wrong in any single phase, MOT Deck
  * hears itself, transcribes itself, answers itself, and does that forever. That is
  * not a bug you can eyeball — so the machine is written PURE (a new state object per
  * event, no DOM, no audio, no fetch) and every transition is asserted here.

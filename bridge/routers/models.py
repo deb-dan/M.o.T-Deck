@@ -69,12 +69,12 @@ app.router.on_startup.append(_recover_interrupted_model_delete)
 # exists on only one of the two paths is a gate a user finds by getting past it.
 #
 # The last two steps of that order run a binary that belongs to Jan or LM Studio. A
-# different app upgrades it whenever it likes, while this harness's probe/auth
+# different app upgrades it whenever it likes, while this MOT Deck's probe/auth
 # expectations are pinned against ONE build: llama.cpp b10662 made /v1/models REQUIRE a
 # key where the build before it did not, and the 401 regression that caused cost a
 # session to find. Starting a stranger's binary of unknown vintage re-opens exactly that.
 # An EXPLICIT runner.binary is exempt — that is a person naming a binary on purpose.
-FOREIGN_RUNNER_ENV = "HARNESS_ALLOW_FOREIGN_RUNNER"
+FOREIGN_RUNNER_ENV = "MOT_DECK_ALLOW_FOREIGN_RUNNER"
 
 
 def _llama_build(binp: str) -> str:
@@ -93,7 +93,7 @@ def foreign_runner_gate(binp: str, owner: str) -> tuple:
     """(note, refusal). `owner` is the app the binary belongs to ("" = ours or explicit).
 
     A matching build passes with a note; a mismatched or unreadable one is REFUSED with
-    the install command, unless HARNESS_ALLOW_FOREIGN_RUNNER=1 says otherwise. Either
+    the install command, unless MOT_DECK_ALLOW_FOREIGN_RUNNER=1 says otherwise. Either
     way the binary and its build are NAMED — the one thing this must never do again is
     run a foreign llama-server without saying so.
     """
@@ -102,7 +102,7 @@ def foreign_runner_gate(binp: str, owner: str) -> tuple:
     pin = str(((cfg().get("runner") or {}).get("llamacpp_pin") or "")).strip()
     build = _llama_build(binp)
     said = (f"⚠️ the runner binary is not ours — it belongs to {owner}: {binp} "
-            f"(build {build or 'unreadable'}; this harness is pinned to "
+            f"(build {build or 'unreadable'}; MOT Deck is pinned to "
             f"{pin or 'no pin set'})")
     if pin and build and build == pin.lstrip("b"):
         return said + " — the build MATCHES the pin, so the pinned contracts hold.", ""
@@ -115,7 +115,7 @@ def foreign_runner_gate(binp: str, owner: str) -> tuple:
         "us, and our /v1/models auth probe is pinned per build (b10662 made that "
         "endpoint require a key where the build before it did not; the same drift the "
         "other way reads as 'the runner is down'). Run ./scripts/install_llamacpp.sh, "
-        "or set runner.binary in harness.yaml to name a binary on purpose, or set "
+        "or set runner.binary in motdeck.yaml to name a binary on purpose, or set "
         f"{FOREIGN_RUNNER_ENV}=1 knowing the above.")
 
 
@@ -130,7 +130,7 @@ def _split_audio(models: list) -> tuple:
 
 
 def _voice_cfg() -> dict:
-    """The harness.yaml `voice:` block, normalised. Empty string = capability off."""
+    """motdeck.yaml `voice:` block, normalised. Empty string = capability off."""
     v = (cfg().get("voice") or {}) if isinstance(cfg().get("voice"), dict) else {}
     return {"tts_model": str(v.get("tts_model") or "").strip(),
             "stt_model": str(v.get("stt_model") or "").strip()}
@@ -211,7 +211,7 @@ def _loaded_models_bytes(exclude_slot: str | None = None) -> int:
 def _voice_spawn_guard(size_bytes: int) -> "str | None":
     """Ledger gate handed to voice.get_worker(). None = spawn allowed, else the
     refusal text. Same shape as the runner/aux switch gates, and deliberately owned
-    HERE: voice.py must not learn to read harness.yaml."""
+    HERE: voice.py must not learn to read motdeck.yaml."""
     other = _loaded_models_bytes(exclude_slot="voice")
     budget = _budget_bytes()
     if size_bytes and not _within_budget(int(size_bytes), other, budget):
@@ -255,7 +255,7 @@ def _fit_advice(mid: str, slot: str = "main") -> "dict | None":
         snap = _memmod.snapshot()
         rc = cfg().get("runner", {}) or {}
         live_up = bool(rc.get("port") and _port_alive_sync(int(rc["port"])))
-        # What the runner REPORTS serving, not what harness.yaml pins — the two can
+        # What the runner REPORTS serving, not what motdeck.yaml pins — the two can
         # disagree after a failed switch, and crediting the wrong model's memory is
         # how the advisor starts describing a process that is not there.
         live_id = ((_live_model_id(int(rc["port"])) or rc.get("model") or "")
@@ -342,7 +342,7 @@ def live_tools_warning(entry, who: str = "OpenCode") -> str:
     """opencode_tools_warning with the PRODUCT NOUN swapped. PURE.
 
     ⚠️ WHY THIS EXISTS RATHER THAN A SECOND SET OF CONSTANTS (S34). The DeepSeek
-    Harness lane has the identical requirement — every mutation is a native tool call,
+    MOT Deck lane has the identical requirement — every mutation is a native tool call,
     no text-edit fallback — so start_plan reuses this decision table for it. Reusing it
     VERBATIM would have printed "OpenCode needs it" on the DeepSeek card: a sentence
     about a product the user is not starting, which is the LIES-TO-USER class, not a
@@ -545,7 +545,7 @@ def api_models() -> JSONResponse:
                 # Per-model sampling: the READ side of /api/models/settings lives
                 # here (one key on a payload the panel already polls) rather than in
                 # a second route. `sampling` is the rendered view (engine-filtered
-                # fields + harness defaults + overrides); `settings` is the raw pin.
+                # fields + motdeck defaults + overrides); `settings` is the raw pin.
                 "settings": (m.get("settings") if isinstance(m.get("settings"), dict)
                              else None),
                 "sampling": sampling_view(m),
@@ -586,7 +586,7 @@ def api_models() -> JSONResponse:
 _SWITCH = {"busy": False, "log": ""}
 
 # U64: the pidfile the switch's start-script run is tracked under, so Cancel stops THAT
-# process instead of pattern-matching a script name across every harness root here.
+# process instead of pattern-matching a script name across every motdeck root here.
 SWITCH_TRACK = "switch-runner"
 
 
@@ -641,7 +641,7 @@ def model_file_alive(mid: str) -> bool:
 #      honours renames/keys/curated lists; the goose provider file merges OWNED_KEYS
 #      only; the one goose key we now repair is repaired ONLY when it dangles.
 #   2. LIVE OUTRANKS THE PIN. The wire we hand round is the model the runner is actually
-#      serving, not harness.yaml's — the rule the hermes arm proved in v1.5.56.
+#      serving, not motdeck.yaml's — the rule the hermes arm proved in v1.5.56.
 #   3. WHAT WE CANNOT REBIND, WE SIGNAL. A running goosed carries GOOSE_MODEL in its
 #      ENVIRONMENT and no file write can change that; we refuse to restart somebody's
 #      live agent session to fix a label, so /api/deps' new `gooseui` binding raises the
@@ -690,7 +690,7 @@ def _rebind_goose(wire: str) -> str:
 
 
 def _rebind_odysseus_offline(wire: str) -> str:
-    """Run the Odysseus DB seed with HARNESS_WIRE_MODEL — the seam that had no callers.
+    """Run the Odysseus DB seed with MOT_DECK_WIRE_MODEL — the seam that had no callers.
 
     ⚠️ ONLY WHEN ODYSSEUS IS NOT RUNNING. The seeder wants offline sqlite access (ledger
     S28's own note); against a live Odysseus the correct rebind is the RESTART arm above,
@@ -713,7 +713,7 @@ def _rebind_odysseus_offline(wire: str) -> str:
         return "Odysseus venv missing (data/odysseus-venv) — nothing to rebind offline"
     rc = cfg().get("runner", {}) or {}
     env = dict(os.environ,
-               HARNESS_WIRE_MODEL=wire or "",
+               MOT_DECK_WIRE_MODEL=wire or "",
                JAN_BASE_URL=str(rc.get("endpoint") or "http://127.0.0.1:6767/v1"),
                JAN_API_KEY=str(rc.get("api_key") or ""))
     try:
@@ -756,13 +756,13 @@ def _rebind_opencode(wire: str) -> str:
         return ""                        # lane never started here — S23, say nothing
     rc = cfg().get("runner", {}) or {}
     root_env.update(
-        HARNESS_ROOT=str(ROOT),
+        MOT_DECK_ROOT=str(ROOT),
         OC_CFG=str(cfg_path),
         OC_PCFG=str(ROOT / "data" / "opencode-workspace" / "opencode.json"),
         OC_BASE=str(rc.get("endpoint") or ""),
         OC_KEY=str(rc.get("api_key") or ""),
         # LIVE OUTRANKS THE PIN (rule 2 above) — the Start arm can only read
-        # harness.yaml, but we know what is actually serving.
+        # motdeck.yaml, but we know what is actually serving.
         OC_MODEL=str(wire or ""))
     try:
         r = subprocess.run([sys.executable, "scripts/seed_opencode_config.py"],
@@ -827,7 +827,7 @@ def _rebind_deepseek(wire: str) -> str:
     try:
         import importlib.util
         _p = ROOT / "scripts" / "seed_deepseek_config.py"
-        _s = importlib.util.spec_from_file_location("harness_seed_dsh", str(_p))
+        _s = importlib.util.spec_from_file_location("motdeck_seed_dsh", str(_p))
         if _s is not None and _s.loader is not None:
             _m = importlib.util.module_from_spec(_s)
             _s.loader.exec_module(_m)
@@ -835,11 +835,11 @@ def _rebind_deepseek(wire: str) -> str:
     except Exception:                                                # noqa: BLE001
         pass                    # the fallback IS that function's value for the default
     root_env.update(
-        HARNESS_ROOT=str(ROOT),
+        MOT_DECK_ROOT=str(ROOT),
         DS_SETTINGS=str(settings),
         DS_BASE=str(rc.get("endpoint") or ""),
         DS_KEY_ENV=str(key_env),
-        # LIVE OUTRANKS THE PIN — the Start arm can only read harness.yaml, but we know
+        # LIVE OUTRANKS THE PIN — the Start arm can only read motdeck.yaml, but we know
         # what is actually serving.
         DS_MODEL=str(wire or ""))
     try:
@@ -877,7 +877,7 @@ def _rebind_hermes_file(wire: str) -> str:
     if not script.is_file() or not os.path.isfile(hcfg):
         return ""
     rc = cfg().get("runner", {}) or {}
-    env = dict(os.environ, HERMES_CFG=hcfg, HARNESS_ROOT=str(ROOT),
+    env = dict(os.environ, HERMES_CFG=hcfg, MOT_DECK_ROOT=str(ROOT),
                BASE_URL=str(rc.get("endpoint") or ""),
                KEY=str(rc.get("api_key") or ""), MODEL=str(wire or ""))
     try:
@@ -977,7 +977,7 @@ def _rebind_dependents(new_id: str, restart_hermes: bool, restart_ody: bool) -> 
     wire = wire_model_id(new_id, _registry_models()) or new_id
     if restart_hermes:
         # Already correct since v1.5.56: its Start arm curls the authenticated
-        # /v1/models and lets the runner's answer outrank harness.yaml. Included for
+        # /v1/models and lets the runner's answer outrank motdeck.yaml. Included for
         # completeness so ONE list names every dependent.
         _switch_log("re-wiring Hermes…")
         if _script("start_component.sh", "hermes").returncode != 0:
@@ -1017,7 +1017,7 @@ def _rebind_dependents(new_id: str, restart_hermes: bool, restart_ody: bool) -> 
 
 def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool) -> None:
     """Fable QA hardening: check exit codes (a failed load must NOT report success),
-    and roll harness.yaml back to the previous model on failure so the next Start
+    and roll motdeck.yaml back to the previous model on failure so the next Start
     uses a known-good model instead of retrying a broken one.
 
     ⚠️ U15 REWROTE THE FAILURE ARM, AND THE LIVE INCIDENT IS WHY. On 2026-08-29 Debi
@@ -1085,7 +1085,7 @@ def _do_switch(new_id: str, old_id: str, restart_hermes: bool, restart_ody: bool
         # record it so the panel can say "not applied yet" only when it is TRUE.
         _record_load_launch(new_id)
         # S28 — the coherence wave. Every dependent re-seeds off the model we just
-        # loaded, not off harness.yaml's pin. See _rebind_dependents.
+        # loaded, not off motdeck.yaml's pin. See _rebind_dependents.
         bad = _rebind_dependents(new_id, restart_hermes, restart_ody)
         if bad:
             _switch_log(bad)
@@ -1196,7 +1196,7 @@ async def api_switch_model(req: Request) -> JSONResponse:
 async def api_pin_model(req: Request) -> JSONResponse:
     """PIN THE MODEL THAT IS ALREADY SERVING — the affordance Debi hit a wall on.
 
-    v1.5.57 ruled, correctly, that the harness never SILENTLY rewrites `runner.model`:
+    v1.5.57 ruled, correctly, that MOT Deck never SILENTLY rewrites `runner.model`:
     the pin is an INTENT RECORD, and a system that quietly edits the user's intent to
     match reality teaches them to stop trusting it. But the audit found the other half
     of that ruling missing (§5.5): with the pin dangling onto a deleted 27B and Parable
@@ -1290,10 +1290,10 @@ def api_eject_model() -> JSONResponse:
 
 
 # ── Delete an APP-OWNED model (files live under data/models/) ──────────────────
-# App-owned = source in {download, local}: the harness downloaded these or holds the
+# App-owned = source in {download, local}: MOT Deck downloaded these or holds the
 # local files under data/models/<folder>/, so we may delete both the files and the
 # registry entry. Read-only imports (lmstudio-import, jan-import) point at files the
-# harness does NOT own (e.g. the user's LM Studio library) — deleting those would
+# motdeck does NOT own (e.g. the user's LM Studio library) — deleting those would
 # them too). The path/collision/rollback boundary lives in core/modeldelete.py; this
 # route owns only process quiescence and the user-facing state transition.
 
@@ -1358,7 +1358,7 @@ async def api_delete_model(req: Request) -> JSONResponse:
                 return JSONResponse({"ok": False,
                                      "log": "aux is still answering; model files were left unchanged"},
                                     status_code=409)
-    # If it was a VOICE default, clear that slot too — leaving harness.yaml pointing at
+    # If it was a VOICE default, clear that slot too — leaving motdeck.yaml pointing at
     # deleted weights would only fail later, at speak time, far from this click.
     vc = _voice_cfg()
     was_voice = [k for k in ("tts_model", "stt_model") if vc.get(k) == mid]
@@ -1405,7 +1405,7 @@ def api_switch_status() -> JSONResponse:
 
 
 # ⛔ U64 — TWO KILLS BY PATTERN LIVED IN THE CANCEL BELOW: a dead "jan serve" sweep, and
-# one matching the runner START SCRIPT BY NAME, which names that script in EVERY harness
+# one matching the runner START SCRIPT BY NAME, which names that script in EVERY motdeck
 # root on this machine (the repo's own checkout included). The script is now launched
 # through _script_tracked and stopped by ITS OWN pid, identity re-verified first.
 @app.post("/api/models/switch-cancel")

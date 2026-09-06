@@ -20,8 +20,8 @@ The ship command must also refuse to print a green bridge verdict unless the con
 API itself answers. Static panel HTML is not health.
 
 This slice changes the repository copy only. It MUST NOT read, copy, edit, start,
-stop, or inspect the installed snapshot under `~/Library/Application Support/Harness`,
-`/Applications/{Harness,M.O.T}.app`, or any original project/app directory. It must not run
+stop, or inspect the installed snapshot under `~/Library/Application Support/MOT Deck`,
+`/Applications/{MOT Deck,M.O.T}.app`, or any original project/app directory. It must not run
 `scripts/ship.sh`, because that command targets those live locations. Validation uses
 temporary fixtures and repository tests only. Therefore the final report must say
 **implemented and slice-verified, not shipped to the live app**. The full-suite baseline
@@ -29,8 +29,8 @@ has one unrelated known red (U77), so “repository-verified” is not available
 
 ## 1. Root cause and conservation laws
 
-- The repository `harness.yaml` is a template. A provisioned snapshot's
-  `harness.yaml` is live state. Whole-file repo-to-snapshot copies are forbidden.
+- The repository `motdeck.yaml` is a template. A provisioned snapshot's
+  `motdeck.yaml` is live state. Whole-file repo-to-snapshot copies are forbidden.
 - The manual recovery used ordinary `yaml.safe_dump`, which emitted an empty value as
   literal `null`. `scripts/start_component.sh` parsed the file with `awk`; the string
   `null` was non-empty, selected the explicit `runner.binary` branch, and failed with
@@ -58,7 +58,7 @@ helpers:
 - otherwise: the original value unchanged;
 - no file writes and no subprocesses.
 
-Apply it to every path/model-like value read from `harness.yaml` where an empty value
+Apply it to every path/model-like value read from `motdeck.yaml` where an empty value
 has semantic meaning, not just `runner.binary`. At minimum cover:
 
 - `runner.binary`;
@@ -116,7 +116,7 @@ component:
 
 1. scalar matrix: empty, whitespace, `~`, `null`, `Null`, `NULL` become empty; ordinary
    model ids and executable paths survive byte-for-byte;
-2. a temporary harness fixture with `runner.binary: null` follows auto-discovery rather
+2. a temporary motdeck fixture with `runner.binary: null` follows auto-discovery rather
    than the explicit path failure;
 3. `runner.model: null` produces the existing honest “model not set” refusal, never a
    lookup for a model literally named `null`;

@@ -406,10 +406,10 @@ check('the listening state is the knob, and it reuses --gold rather than a new t
 check('the auto chip rides the SAME config read as ● talk',
   /renderTalkBtn[\s\S]{0,900}?renderAutoBtn\(\);/.test(html));
 check('capture goes through an AudioWorklet (GATE 1\'s proven path), not MediaRecorder',
-  html.indexOf('registerProcessor("harness-vad"') >= 0);
+  html.indexOf('registerProcessor("motdeck-vad"') >= 0);
 check('the worklet module is loaded from a Blob URL exactly as the spike proved',
-  /addModule\(url\)[\s\S]{0,200}?harness-vad/.test(html)
-  || html.indexOf("new AudioWorkletNode(ctx, 'harness-vad'") >= 0);
+  /addModule\(url\)[\s\S]{0,200}?motdeck-vad/.test(html)
+  || html.indexOf("new AudioWorkletNode(ctx, 'motdeck-vad'") >= 0);
 check('utterances are POSTed to the EXISTING stt endpoint as wav',
   html.indexOf("'/api/voice/stt?fmt=wav'") >= 0);
 check('a 16 kHz mono wav is encoded client-side (no ffmpeg on the bridge side)',

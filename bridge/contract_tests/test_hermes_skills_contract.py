@@ -7,7 +7,7 @@ relies on is upstream-INTERNAL, so this purely static check greps the vendored
 source and fails loudly if a pin bump moves any of them. No network, no build,
 no running Hermes.
 
-Run: pytest bridge/contract_tests/   (from harness root).
+Run: pytest bridge/contract_tests/   (from motdeck root).
 """
 import re
 from pathlib import Path

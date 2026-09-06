@@ -691,7 +691,7 @@ APP = _APP_SOURCE
 PAGE = (ROOT / "bridge" / "panel" / "office.html").read_text(encoding="utf-8")
 SWIFT = (ROOT / "app" / "main.swift").read_text(encoding="utf-8")
 FETCH = (ROOT / "scripts" / "fetch_vendor_assets.sh").read_text(encoding="utf-8")
-YAML = (ROOT / "harness.yaml").read_text(encoding="utf-8")
+YAML = (ROOT / "motdeck.yaml").read_text(encoding="utf-8")
 REQ = (ROOT / "bridge" / "requirements.txt").read_text(encoding="utf-8")
 
 for route in ['@app.get("/office")', '@app.get("/api/office/files")',
@@ -770,11 +770,11 @@ check("the fidelity note reaches the panel from the module, not a second copy",
       "_office.FIDELITY_NOTE" in APP and office.FIDELITY_NOTE not in PAGE)
 
 check("main.swift has the LOffice tab, last, on the bridge origin",
-      'HarnessTab(id: "loffice", title: "LOffice", url: URL(string: "http://127.0.0.1:8700/office")!)' in SWIFT)
+      'MOTDeckTab(id: "loffice", title: "LOffice", url: URL(string: "http://127.0.0.1:8700/office")!)' in SWIFT)
 # STUDIO PHASE 2 (2026-08-21) split the table into a REGISTRY (everything that can be a
 # tab) and the strip, which the nav model orders. LOffice is still the tenth and last of
 # the DEFAULT strip; the registry additionally carries the three pinnable panel views.
-tab_titles = re.findall(r'HarnessTab\(id: "[^"]+", title: "([^"]+)"', SWIFT)
+tab_titles = re.findall(r'MOTDeckTab\(id: "[^"]+", title: "([^"]+)"', SWIFT)
 default_top = re.search(r'let navDefaultTopbar = \[([^\]]+)\]', SWIFT)
 default_ids = re.findall(r'"([^"]+)"', default_top.group(1)) if default_top else []
 # (OpenCode landed after LOffice and took the last slot, 2026-08-21 — so the assertion
@@ -805,8 +805,8 @@ check("the title is ONE word — a two-word title does not fit the strip budget"
 check("…and the reason Debi's 'Office Lane' was not taken is recorded next to it",
       "Office Lane" in SWIFT)
 
-check("harness.yaml pins univer", re.search(r'^\s*univer_pin:\s*"[\d.]+"', YAML, re.M))
-check("the fetch script reads the pin from harness.yaml", "univer_pin:" in FETCH
+check("motdeck.yaml pins univer", re.search(r'^\s*univer_pin:\s*"[\d.]+"', YAML, re.M))
+check("the fetch script reads the pin from motdeck.yaml", "univer_pin:" in FETCH
       and "UNIVER_V=" in FETCH)
 for asset in ["univer/rxjs.umd.min.js", "univer/presets.umd.js",
               "univer/preset-sheets-core.umd.js", "univer/preset-sheets-core.css",
@@ -852,7 +852,7 @@ check("the AI side-panel has a real composer, a send button and a model readout"
       'id="ai-in"' in _AI and 'id="ai-send"' in _AI and 'id="ai-model"' in _AI)
 check("…and can be collapsed and re-opened",
       'id="ai-hide"' in _AI and 'id="ai-tab"' in _AI)
-check("the panel speaks the harness's EXISTING direct chat lane, not a new office one",
+check("the panel speaks MOT Deck's EXISTING direct chat lane, not a new office one",
       "'/api/chat/direct'" in PAGE and "/api/office/chat" not in _AI)
 check("unsaved work is defended on navigation away", "beforeunload" in PAGE)
 check("switching files with unsaved work asks IN THE PAGE — window.confirm is a "
@@ -1076,7 +1076,7 @@ AIDER_PAGE = (ROOT / "bridge" / "panel" / "aider.html").read_text(encoding="utf-
 # stronger one: the document has no external subresource to be blocked by. Comments in
 # the page necessarily TALK about script and link tags to explain why there are none,
 # so the check reads the markup with comments stripped.
-# ⚠️ AND SCRIPT BODIES TOO, SINCE v1.5.25: the harness-design axis appends a
+# ⚠️ AND SCRIPT BODIES TOO, SINCE v1.5.25: MOT Deck-design axis appends a
 # stylesheet AT RUNTIME (assets/studio-office.css, only when the key says so), and the
 # block that does it has to be able to write the word "<link>" in its own comment.
 # What this check is about is the MARKUP of the SERVED document, which for Editorial
@@ -1121,9 +1121,9 @@ def app_block(page):
 # STRING rather than the invariant. The invariant is: the page declares its stamp in
 # ONE place (the <meta>) and every other appearance is a copy of that one.
 def _stamp(page, what):
-    m = re.search(r'<meta name="harness-build" content="([^"]+)">', page)
+    m = re.search(r'<meta name="motdeck-build" content="([^"]+)">', page)
     if not m:
-        raise SystemExit(f"{what}: no harness-build meta — the stamp is load-bearing")
+        raise SystemExit(f"{what}: no motdeck-build meta — the stamp is load-bearing")
     return m.group(1)
 
 OFFICE_STAMP = _stamp(PAGE, "office.html")
@@ -1158,7 +1158,7 @@ for label, page, stamp in [("office", PAGE, OFFICE_STAMP),
           and ".remove()" in stmts[:len(lead) + 90])
     check(f"{label}: the build stamp is in a <meta> AND printed in the banner, "
           "so a stale document is identifiable with no terminal",
-          f'name="harness-build" content="{stamp}"' in head
+          f'name="motdeck-build" content="{stamp}"' in head
           and stamp in body.split("</div>")[0])
     check(f"{label}: the static <title> is the BOOTING state — the shell reads "
           "webView.title, so a dead page is visible from outside too",
@@ -1184,8 +1184,8 @@ for label, page in [("office", PAGE), ("aider", AIDER_PAGE)]:
 # LOAD-BEARING copies cannot drift: the <meta> the script reads, and the no-script
 # fallback banner a person reads.
 check("the page reads its stamp from the meta rather than keeping a second copy",
-      'meta[name="harness-build"]' in PAGE
-      and f'<meta name="harness-build" content="{OFFICE_STAMP}">' in PAGE
+      'meta[name="motdeck-build"]' in PAGE
+      and f'<meta name="motdeck-build" content="{OFFICE_STAMP}">' in PAGE
       and f"Build <code>{OFFICE_STAMP}</code>" in PAGE)
 # ⚠️ CHANGED HONESTLY AT 2026-08-21e. There is nothing deferred to wait FOR any more,
 # so the boot no longer hangs on an event: the script sits at the end of the body, and
@@ -1396,7 +1396,7 @@ check("the /assets mount is wrapped so the Univer bundles are logged",
       "class _WatchedStatic(StaticFiles)" in APP
       and "_WatchedStatic(directory=" in APP)
 check("⚠️ …as a StaticFiles SUBCLASS, never as BaseHTTPMiddleware: a BaseHTTPMiddleware "
-      "wraps EVERY response in the harness, including the SSE chat relays whose 20s "
+      "wraps EVERY response in MOT Deck, including the SSE chat relays whose 20s "
       "heartbeat the panel's stall watchdog counts on — a diagnostic for the "
       "spreadsheet tab may not go near them",
       "app.middleware" not in re.sub(r'""".*?"""', "", APP, flags=re.S))
@@ -1413,7 +1413,7 @@ check("⚠️ REGRESSION PIN: the watch is a SUBSTRING match, not startswith. Th
       "correctly. Caught by driving the real page and finding zero lines.",
       "for w in self.WATCH" in _WS and "startswith(self.WATCH)" not in _WS)
 check("…and it is scoped to the office bundles, so it is a handful of lines per "
-      "rich-editor load and zero for every other request in the harness",
+      "rich-editor load and zero for every other request in MOT Deck",
       "/vendor/univer/" in _WS and "/vendor/react.production.min.js" in _WS)
 check("…and it never swallows an exception it logs", "raise" in _WS)
 
@@ -1435,7 +1435,7 @@ check("…and it can never throw: a diagnostic may not be the thing that breaks 
       BEACON.count("try {") >= 1 and "catch (e)" in BEACON)
 check("the beacon reads the build stamp from the <meta> instead of repeating it — a "
       "second copy could drift, and the stamp exists to be trusted",
-      'meta[name="harness-build"]' in BEACON
+      'meta[name="motdeck-build"]' in BEACON
       and OFFICE_STAMP not in BEACON)
 for _o, name, _c in SCRIPT_TAGS:
     tag = [t for t in re.findall(r"<script[^>]*>", PAGE) if name in t]

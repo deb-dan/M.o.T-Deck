@@ -1,7 +1,7 @@
-# AI Harness — Architecture Document
+# AI MOT Deck — Architecture Document
 
 > **NAMING (2026-08-21):** the product is now **MOT Deck** (*Mixture of Tools*), its home
-> screen **MOT Main**. `harness` remains the internal codename — every path, key and
+> screen **MOT Main**. `motdeck` remains the internal codename — every path, key and
 > identifier below is unchanged.
 
 ## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
@@ -10,8 +10,8 @@ This is the original v0.1 design (2026-07-10). It remains the best statement of 
 system has moved past it — far more than "Next" below suggests (voice/goose/comfy/office/music
 surfaces, isolation ladder, local API, and much more have since shipped; see
 `docs/ROADMAP.md` for the current done/next picture). **Authoritative today:
-`docs/HARNESS-INTERNALS.md`** (code-derived — ports, the two builds + snapshot rule,
-`harness.yaml` keys, the four chat lanes, session stores, models/registry, path-guard, endpoint
+`docs/MOT-DECK-INTERNALS.md`** (code-derived — ports, the two builds + snapshot rule,
+`motdeck.yaml` keys, the four chat lanes, session stores, models/registry, path-guard, endpoint
 index, ops gotchas, install footprint, test index), with decisions and dated history in
 `CLAUDE.md`, the deferred-work ledger in `docs/UNFORGET.md`, and the user-facing view in
 `docs/USER-EXPLAINERS.md`.
@@ -19,13 +19,13 @@ index, ops gotchas, install footprint, test index), with decisions and dated his
 Corrections and deltas:
 
 - **Odysseus is MIT**, not AGPL-3.0 (verified against its LICENSE). The only AGPL component in the
-  harness is SearXNG. Pins today: Hermes `v2026.7.30`, Odysseus commit `25c9e73`.
+  motdeck is SearXNG. Pins today: Hermes `v2026.7.30`, Odysseus commit `25c9e73`.
 - **We own the model runner.** There is no "Cookbook"/Jan serving layer: the Bridge launches
   `llama-server` (llama.cpp pin `b10295`) for GGUF and `mlx_lm.server` / `mlx_vlm.server` for MLX,
   always on **:6767**, plus an optional aux runner on **:6768**. Jan was removed in July 2026.
 - **Port map:** Bridge :8700 · runner :6767 · aux :6768 · Hermes dashboard :9119 (not :8721 MCP) ·
   Odysseus :7860 · SearXNG :8080 · gearbox :8710 **reserved but shelved**.
-- **The gearbox (policy-based local↔cloud routing) is SHELVED** — the harness is local-only by
+- **The gearbox (policy-based local↔cloud routing) is SHELVED** — MOT Deck is local-only by
   choice. `policies/routing.yaml` and `inference.cloud` are historical.
 - **The updater** (§blue-green + auto-rollback) was not built as designed; pin bumps are manual and
   gated by `bridge/contract_tests/`. `POST /api/components/{name}/update` is still a 501 stub.
@@ -49,7 +49,7 @@ Corrections and deltas:
 A single self-hosted AI workspace that merges two upstream open-source projects —
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) (agent runtime, MIT) and
 [Odysseus](https://github.com/pewdiepie-archdaemon/odysseus) (web workspace, AGPL-3.0) —
-without forking either, so each can be updated with one click. The harness adds a thin
+without forking either, so each can be updated with one click. MOT Deck adds a thin
 bridge layer that connects them, routes between local and cloud models by policy, and
 gives the agent the ability to compile, test, and visually verify software (e.g. Flutter
 macOS apps).
@@ -65,7 +65,7 @@ macOS apps).
 4. **Any OpenAI-compatible endpoint is a model.** Local (Cookbook/llama.cpp, Ollama,
    LM Studio) and cloud (Anthropic, OpenAI, OpenRouter) are interchangeable at the
    routing layer.
-5. **The harness maintains itself.** Upstream updates are canaried, contract-tested, and
+5. **MOT Deck maintains itself.** Upstream updates are canaried, contract-tested, and
    auto-rolled-back; the agent proposes bridge patches when upstream breaks the seam.
 
 ## 3. System overview
@@ -108,7 +108,7 @@ macOS apps).
 - Web search: bundled SearXNG requires Docker; native install uses the optional
   `ddgs` (DuckDuckGo) provider instead → fully Docker-free.
 - Desktop app: `./build-macos-app.sh` wraps Odysseus as a clickable Mac app. This is
-  the harness's "desktop app" — no new shell is written.
+  MOT Deck's "desktop app" — no new shell is written.
 - Odysseus's own agent is kept for lightweight in-UI tasks only; heavy agentic work
   routes to Hermes via the bridge.
 
@@ -143,7 +143,7 @@ routing view, budget meter). Buttons are equally available as chat commands.
 ## 5. Repository layout
 
 ```
-harness/
+motdeck/
 ├── vendor/
 │   ├── hermes-agent/     # git submodule → pinned release tag (e.g. v2026.7.1)
 │   └── odysseus/         # git submodule → pinned commit on `main` (not `dev`)
@@ -156,7 +156,7 @@ harness/
 │   └── approvals.yaml    # pre-approved command patterns for Hermes
 ├── scripts/              # bootstrap.sh, start.sh, stop.sh, doctor.sh
 ├── .github/workflows/    # windows-build.yml (later)
-└── harness.yaml          # pins, ports, endpoints — single source of truth
+└── motdeck.yaml          # pins, ports, endpoints — single source of truth
 ```
 
 ## 6. Component lifecycle: install, update, rollback
@@ -193,7 +193,7 @@ Valid modes (gearbox + panel always available, since they live in the bridge):
    Odysseus routes/settings the adapter relies on still exist? does a smoke conversation
    round-trip through the bridge?
 4. **Switch or rollback** — tests green → atomically repoint ports and update the pin in
-   `harness.yaml` (committed, so every upgrade is a git-revertable event). Tests red →
+   `motdeck.yaml` (committed, so every upgrade is a git-revertable event). Tests red →
    discard staging, keep running version, file a report.
 5. **Self-heal (M3)** — on red, Hermes is handed the upstream changelog + failing test
    output and asked to propose a bridge patch as a git branch. Human approves the merge;
@@ -249,10 +249,10 @@ Hermes keeps its own working memory but treats the workspace as the durable laye
 
 ## 10. Skills as versioned assets
 
-Hermes auto-creates and improves skills. The harness symlinks/syncs `~/.hermes/skills`
-↔ `harness/skills/` under git, so learned skills survive updates and machine moves, and
-`git log` becomes the agent's visible learning history. Harness-authored skills
-(build-flutter, update-harness, verify-visual) live here too.
+Hermes auto-creates and improves skills. MOT Deck symlinks/syncs `~/.hermes/skills`
+↔ `motdeck/skills/` under git, so learned skills survive updates and machine moves, and
+`git log` becomes the agent's visible learning history. MOT Deck-authored skills
+(build-flutter, update-motdeck, verify-visual) live here too.
 
 ## 11. Roadmap
 
@@ -262,8 +262,8 @@ Hermes auto-creates and improves skills. The harness symlinks/syncs `~/.hermes/s
 | **M1 — Bridge core** | Adapter hardened, contract tests, control panel v0, install + update buttons with permission flow and rollback (no self-heal) | One-click install and update of each upstream, safe rollback demonstrated |
 | **M2 — Gearbox** | Routing proxy, privacy rules, local→cloud escalation, budget | Same conversation transparently mixes local + cloud per policy |
 | **M3 — Self-healing + memory** | Agent-authored bridge patches on failed updates; unified memory sync | A deliberately-broken update produces a working agent patch PR |
-| **M4 — Build pipeline** | buildkit skills, GH Actions Windows build, visual verification | Harness builds & visually verifies a Flutter macOS app end-to-end |
-| **M5 — Reach (optional)** | Tailscale/webapp access from other devices, Hermes messaging gateway | Use harness from phone |
+| **M4 — Build pipeline** | buildkit skills, GH Actions Windows build, visual verification | MOT Deck builds & visually verifies a Flutter macOS app end-to-end |
+| **M5 — Reach (optional)** | Tailscale/webapp access from other devices, Hermes messaging gateway | Use motdeck from phone |
 
 ## 12. Risks & mitigations
 

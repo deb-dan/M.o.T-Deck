@@ -124,7 +124,7 @@ def test_explicit_rescan_reconciles_eleven_files_to_eight_manager_rows(tmp_path,
     registry = tmp_path / "models.json"
     registry.write_text(json.dumps({"models": existing}) + "\n")
     empty = tmp_path / "empty"; empty.mkdir()
-    monkeypatch.setenv("HARNESS_LMS_BIN", str(binary))
+    monkeypatch.setenv("MOT_DECK_LMS_BIN", str(binary))
     monkeypatch.setenv("FAKE_LMS_CATALOG", str(catalog))
     monkeypatch.setattr(SR, "REGISTRY_PATH", str(registry))
     monkeypatch.setattr(SR, "LMSTUDIO_MODELS_DIR", str(root))

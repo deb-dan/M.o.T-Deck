@@ -1,4 +1,4 @@
-# New Harness — working memory (canonical project home)
+# MOT Deck — working memory (canonical project home)
 
 > **📍 CURRENT STATE (2026-09-06, v1.5.82 Odysseus-login hotfix shipped) — supersedes the "2026-08-28, v1.5.12" banner
 > below for anything about what's shipped.** Full reader-facing status (done / in
@@ -113,24 +113,27 @@
 > ledger at QA time.
 
 
-> **🏠 CANONICAL-ROOT RULE (Debi, 2026-09-05, U81):** the sole source project is
-> `/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/harness`.
+> **🏠 CANONICAL-ROOT RULE (Debi, updated 2026-09-07, U81/U150):** the sole source project is
+> `/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck`.
 > The older `/Users/debik/Claude Proj Rootz/New Harness/harness` tree is a retained,
 > read-only archive: never edit/delete it, copy state or dependencies from it, execute
 > against it, or allow a generated link/config/process to depend on it. The installed
-> fat app runs from `~/Library/Application Support/Harness`; repository work and release
+> fat app runs from `~/Library/Application Support/MOT Deck`; repository work and release
 > inputs come only from the canonical source above. Historical prose may name the archive
 > as history. Registered Claude worktrees are preserved until their branches are audited;
-> they are never pruned or deleted merely to make a path search look clean.
+> they are never pruned or deleted merely to make a path search look clean. The complete
+> old→new identity map, external moves, intentional legacy literals, and exhaustive file
+> inventory live in `docs/U150-IDENTITY-CHANGE-INVENTORY.md`; future identity changes must
+> update that inventory rather than relying on a global text replacement.
 
 
-> **⛔ LIVE-STATE FILES RULE (bitten once: harness.yaml clobber, 2026-09-03, U74):** the
-> snapshot's `harness.yaml` and everything under the snapshot's `data/` are LIVE STATE —
-> installed flags, pins, registries, sessions. The repo's `harness.yaml` is a TEMPLATE.
+> **⛔ LIVE-STATE FILES RULE (bitten once: motdeck.yaml clobber, 2026-09-03, U74):** the
+> snapshot's `motdeck.yaml` and everything under the snapshot's `data/` are LIVE STATE —
+> installed flags, pins, registries, sessions. The repo's `motdeck.yaml` is a TEMPLATE.
 > Repo↔snapshot byte-parity applies ONLY to code the repo owns (bridge/, scripts/, app/,
 > panel, docs); NEVER copy a live-state file from repo to snapshot, at QA or in a builder
 > ship. Legitimate live-yaml changes go through targeted key edits (the way seeders and
-> installers do it) — never a whole-file copy. ship.sh's `harness.yaml.bak-*` rotation is
+> installers do it) — never a whole-file copy. ship.sh's `motdeck.yaml.bak-*` rotation is
 > the recovery path; a shallow `diff | head` is not an inspection.
 
 > **⛔ PROCESS-KILL RULE (bitten twice: Unsloth 2026-08-28, goose Desktop 2026-08-29):**
@@ -197,9 +200,9 @@
 > end with the exact commands to see it — restart/refresh/kill MOT Deck. The canonical set:
 > full ship `./scripts/ship.sh` (gate → snapshot → restarts app+bridge; components stay up);
 > component restart `./scripts/ship.sh --restart <name>`; app only: quit with
-> `osascript -e 'tell application id "local.harness.app" to quit'` then
-> `open -b local.harness.app`; stale tab = ⌘R in the tab. The installed filename may be
-> `Harness.app` or `M.O.T.app`; lifecycle identity is the bundle id, never either name.**
+> `osascript -e 'tell application id "local.motdeck.app" to quit'` then
+> `open -b local.motdeck.app`; stale tab = ⌘R in the tab. The installed filename may be
+> `MOT Deck.app`; lifecycle identity is the bundle id, never the filename.**
 
 
 > **🔢 VERSIONING (Debi's ruling, 2026-08-27):** the project is at **v1.5.0** (see `VERSION`).

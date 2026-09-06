@@ -2,7 +2,7 @@
 # fetch_vendor_assets.sh — download the pinned, self-hosted browser libraries that the
 # Mission Control panel's artifact renderer (Phase 2) loads from /assets/vendor/.
 #
-# WHY: everything in the harness must work FULLY OFFLINE — no runtime CDN. These libs
+# WHY: everything in MOT Deck must work FULLY OFFLINE — no runtime CDN. These libs
 # are fetched ONCE (here, on a Mac with network) into bridge/panel/assets/vendor/, then
 # the bridge serves them same-origin at /assets/vendor/<lib>. The dir is gitignored
 # (a runtime/build asset, like the venvs); the FAT build bundles it into the seed.
@@ -46,7 +46,7 @@ XTERM_FIT_V="0.11.0"   # @xterm/addon-fit — cols/rows from the element size
 # fetch-once-serve-ourselves shape everything above already uses, and is why the
 # office lane needs no new process, port or component.
 #
-# THE PIN LIVES IN harness.yaml (`build.univer_pin`) — read below with the same awk
+# THE PIN LIVES IN motdeck.yaml (`build.univer_pin`) — read below with the same awk
 # one-liner install_llamacpp.sh uses, so a bump is one edit in the manifest. The value
 # here is only the fallback when the manifest cannot be read.
 # ⚠️ Do NOT move to React 19: the UMD bundle carries a react-polyfill prelude and the
@@ -58,9 +58,9 @@ RXJS_V="7.8.2"         # rxjs UMD — Univer peer dep (>=7.0.0)
 
 UNIVER_V="$(awk '/^build:/{b=1;next} b&&/^[a-z]/{b=0} b&&/^[[:space:]]*univer_pin:/{
   gsub(/.*univer_pin:[[:space:]]*"?/,""); gsub(/".*/,""); gsub(/[[:space:]]*#.*/,"");
-  gsub(/[[:space:]]+$/,""); print; exit}' harness.yaml 2>/dev/null || true)"
+  gsub(/[[:space:]]+$/,""); print; exit}' motdeck.yaml 2>/dev/null || true)"
 if [[ -z "${UNIVER_V:-}" ]]; then
-  echo "[vendor] WARN: build.univer_pin not readable from harness.yaml — using ${UNIVER_V_DEFAULT}"
+  echo "[vendor] WARN: build.univer_pin not readable from motdeck.yaml — using ${UNIVER_V_DEFAULT}"
   UNIVER_V="$UNIVER_V_DEFAULT"
 fi
 echo "[vendor] univer pin: ${UNIVER_V}"

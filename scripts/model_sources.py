@@ -33,7 +33,7 @@ def _inside(path: str, root: str) -> bool:
 
 
 def _lms_binary() -> str | None:
-    candidates = [os.environ.get("HARNESS_LMS_BIN"),
+    candidates = [os.environ.get("MOT_DECK_LMS_BIN"),
                   os.path.expanduser("~/.lmstudio/bin/lms"), shutil.which("lms")]
     for candidate in candidates:
         if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):

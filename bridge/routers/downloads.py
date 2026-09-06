@@ -23,7 +23,7 @@ DL_TICK_S = 2.0
 
 
 # ── Download manager (Bridge-owned, no Jan) ──────────────────────────────────
-# Download the EXACT HuggingFace file the user clicks, into the harness's own
+# Download the EXACT HuggingFace file the user clicks, into MOT Deck's own
 # models dir (data/models/<model-id>/), with visible progress, pause/resume/cancel
 # and parallelism. HF `resolve` URLs 302 to a CDN off huggingface.co, so a
 # follow_redirects client is used against the absolute URL.

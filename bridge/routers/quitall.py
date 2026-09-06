@@ -51,7 +51,7 @@ calls os._exit(0). "Quit Everything" may not be the thing that leaves a zombie.
 
 SCOPE, STATED SO IT IS NOT ASSUMED
 ----------------------------------
-The targets are the nine things Mission Control shows as green — the eight harness.yaml
+The targets are the nine things Mission Control shows as green — the eight motdeck.yaml
 components plus the runner — in DEPENDENCY-REVERSE order (a consumer before what it
 consumes: hermes and odysseus before the runner and searxng), computed from the manifest
 rather than hardcoded. Two extras are included when, and only when, they are actually up:
@@ -89,7 +89,7 @@ def stop_order(components: dict, extras: dict[str, list[str]] | None = None) -> 
     """Names in the order they must be STOPPED: every node before the nodes it
     depends_on.
 
-    Why not a hardcoded list: harness.yaml owns the dependency graph (odysseus →
+    Why not a hardcoded list: motdeck.yaml owns the dependency graph (odysseus →
     runner + searxng, hermes → runner) and a second copy of it here would be a copy that
     can disagree. A new component with a new edge gets the right position for free.
 

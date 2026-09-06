@@ -38,14 +38,14 @@ so several claims are stale; several others describe OUR EXISTING code as if new
 - OpenCode installer heredoc fix: OUR installer works (1.18.23 verified live today); its fix
   was for its fork's environment. Our install_music.sh does carry a python heredoc — hygiene
   suite is green, but converting to `python -c` is cheap hardening; fold into any music slice.
-- harness.yaml "reset installed:false": that's the repo-vs-snapshot manifest split we
+- motdeck.yaml "reset installed:false": that's the repo-vs-snapshot manifest split we
   root-caused today — no action (the audit error came from misreading exactly this).
 
 ## TASTE ITEMS — Debi decides
 - 4-theme selector (Editorial/Luxury Gold/Cyber/Warm Paper) + sidebar collapse to 48px rail +
   chat spacing tightening. Real work, preserves DOM contract per its claims — but design is
   owned surface-by-surface here and current Appearance v2 shipped differently. If wanted:
-  one slice, panel-only, behind the existing theme mechanism (harness-theme), Fable-spec'd.
+  one slice, panel-only, behind the existing theme mechanism (motdeck-theme), Fable-spec'd.
 - Music Studio "deck view" genre gallery: taste; Music lane already has Studio v1.2.
 
 ## REJECTED

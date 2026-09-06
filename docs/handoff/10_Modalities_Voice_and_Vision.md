@@ -3,12 +3,12 @@
 ## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
 
 Both verdicts held; the sequencing gate is now clear. Live plan: `CLAUDE.md`; system reference:
-`docs/HARNESS-INTERNALS.md`.
+`docs/MOT-DECK-INTERNALS.md`.
 
 - **The model-memory ledger this doc gated everything on is BUILT** — `memory.budget_gb: 48` of 64,
   footprint approximated by weight-file size across the main + aux slots, enforced with HTTP 409 on
   model switch and aux start, surfaced as `· RAM x / y GB` in the Models pane.
-- **Vision is DONE for the harness's own chat** (ahead of this doc's schedule, and via a different
+- **Vision is DONE for MOT Deck's own chat** (ahead of this doc's schedule, and via a different
   route than ComfyUI): vision-capable GGUF/MLX models are flagged in the registry, the composer
   offers ⊕ attach / ⌘V paste / native drag-and-drop in the direct Chat lane, images ride as OpenAI
   `image_url` parts, and attachments persist in a `data/attachments.db` sidecar so thumbnails
@@ -34,7 +34,7 @@ Both verdicts held; the sequencing gate is now clear. Live plan: `CLAUDE.md`; sy
 
 ## Why these two (the thesis)
 
-Voice + vision turn the harness from *a text tool* into *a full multimodal local assistant that hears, speaks, sees, and creates* — under one supervised shell, which almost nothing else in the local-AI space does. That's a genuinely differentiated **destination**. Guardrail: it's the destination, not the **door** — if this is ever shipped, lead with a sharp wedge (see `09` §demand), and let modalities be the depth users discover later. For a personal tool, "encompassing for me" is a legitimate goal on its own.
+Voice + vision turn MOT Deck from *a text tool* into *a full multimodal local assistant that hears, speaks, sees, and creates* — under one supervised shell, which almost nothing else in the local-AI space does. That's a genuinely differentiated **destination**. Guardrail: it's the destination, not the **door** — if this is ever shipped, lead with a sharp wedge (see `09` §demand), and let modalities be the depth users discover later. For a personal tool, "encompassing for me" is a legitimate goal on its own.
 
 The compose architecture makes this cheap **as long as they stay optional**: each is one more one-switch component the Bridge supervises, off by default, flipped on when wanted. No impact on core identity or default provisioning weight.
 
@@ -48,15 +48,15 @@ The compose architecture makes this cheap **as long as they stay optional**: eac
 
 **Why it gels almost perfectly (the reasons this is a near-ideal fit):**
 - **License: MIT** — the cleanest in the whole stack (cleaner than Odysseus/Hermes MIT even in spirit; no AGPL/GPL concerns). Code may be lifted with attribution if ever useful.
-- **Identical stack to the harness:** **FastAPI (Python) + Tauri (Rust) + MLX** for Apple-Silicon inference ("4-5x via Neural Engine"). Practically a sibling project; low integration risk.
+- **Identical stack to MOT Deck:** **FastAPI (Python) + Tauri (Rust) + MLX** for Apple-Silicon inference ("4-5x via Neural Engine"). Practically a sibling project; low integration risk.
 - **Composability is a gift:** exposes a **REST API on `:17493`** *and* ships an **MCP server**. So it slots in two ways at once:
   1. As a **Bridge-managed component** (native Python venv, no Docker — fits the locked decision), with a status card + one-switch provisioning like the others.
-  2. As **MCP tools consumed by Hermes/Odysseus** → agents gain **voice output** for free, and the harness gains **dictation input**.
+  2. As **MCP tools consumed by Hermes/Odysseus** → agents gain **voice output** for free, and MOT Deck gains **dictation input**.
 - **Local + native:** runs entirely on-device; MLX/Metal on Apple Silicon.
 - **Mature:** ~45k★, v0.5.0 (Apr 2026), active.
 - **Models:** STT = Whisper (Base→Turbo); TTS = 7 engines (Qwen3-TTS, Kokoro, Chatterbox, etc.); a small Qwen3 (0.6–4B) for personality/refinement.
 
-**What it completes:** the input/output loop — talk to the harness, it talks back, agents speak. A real UX leap for a personal cockpit, not a gimmick. It also *strengthens the core* (assistant feel), unlike ComfyUI which *expands capability*.
+**What it completes:** the input/output loop — talk to MOT Deck, it talks back, agents speak. A real UX leap for a personal cockpit, not a gimmick. It also *strengthens the core* (assistant feel), unlike ComfyUI which *expands capability*.
 
 **Integration sketch (for whoever builds it):**
 - Add a `voicebox` component manifest (repo pin, venv, `:17493` health = REST ping, `verify` = one STT or TTS round-trip).
@@ -81,7 +81,7 @@ The compose architecture makes this cheap **as long as they stay optional**: eac
 **Why it's the right *choice* if/when added:** de-facto standard, API-first, massive model/node ecosystem, runs native Python (no Docker — fits), composable via **REST + WebSocket** (`/prompt`, `/history`, ws progress) → can be driven **fully headless** while you present your own surface. This directly matches Debi's "under the hood + new UI" instinct, and mirrors the Odysseus webview pattern but leaning *harder to headless* (drive the API, optionally expose the raw node graph as a "power tab").
 
 **The three frictions, in descending importance:**
-1. **Resource contention — the serious one (and the real gate).** On 64GB *unified* memory, a ~30B LLM and a Flux/video model draw from the **same pool**; video models are huge. You can't keep both hot. This forces **VRAM-aware model lifecycle** in the Bridge (load diffusion on demand, park the LLM, swap back) — logic the harness doesn't have (it treats components as independent). *This*, not licensing, is why ComfyUI waits.
+1. **Resource contention — the serious one (and the real gate).** On 64GB *unified* memory, a ~30B LLM and a Flux/video model draw from the **same pool**; video models are huge. You can't keep both hot. This forces **VRAM-aware model lifecycle** in the Bridge (load diffusion on demand, park the LLM, swap back) — logic MOT Deck doesn't have (it treats components as independent). *This*, not licensing, is why ComfyUI waits.
 2. **UI clash.** Node graph = opposite of the calm editorial aesthetic; Debi already disliked Odysseus's arrangement. Resolution = **headless + a new bespoke surface** (Fable-designed), node graph optional/hidden. Do **not** modify ComfyUI's own UI (complex, fragile, and forking breaks one-click updates — compose-not-fork rule).
 3. **License + platform.** **GPL-3.0** → zero obligations for personal use (like SearXNG's AGPL); arm's-length API-wrapping keeps it clean even for a future ship — but copyleft means **ideas/API only, never lift code**. Apple Silicon works via **MPS but needs nightly PyTorch**, and **some CUDA-only nodes/models won't run** — it's not ComfyUI's strongest platform (Draw Things is more Mac-optimized, but ComfyUI's ecosystem + clean API win for a composable backend).
 

@@ -2062,7 +2062,7 @@ def take_pre_agent(path):
 
 
 # ═══ 11. THE SIX TOOLS ══════════════════════════════════════════════════════
-# Each returns (result_dict, None) or (None, reason). `root` is the harness root, so
+# Each returns (result_dict, None) or (None, reason). `root` is MOT Deck root, so
 # every path decision goes through office.office_dir / office.doc_target and NOTHING
 # here ever sees a caller-supplied path.
 

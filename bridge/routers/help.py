@@ -15,7 +15,7 @@ document's SECTION STRUCTURE for its table of contents and its filter, which a s
 of pre-rendered HTML would have made it re-parse anyway.
 
 ⚠️ THE FILE HAS TO REACH THE SNAPSHOT. The fat app runs from ~/Library/Application
-Support/Harness, and until this slice ship.sh copied bridge/, scripts/, guards/ and
+Support/MOT Deck, and until this slice ship.sh copied bridge/, scripts/, guards/ and
 policies/ — not docs/. It now copies the top-level docs/*.md, and this route's 404
 branch names that as the fix rather than leaving the view blank, because "help is
 empty" with no explanation is precisely the class of dead end the Help surface exists

@@ -1,6 +1,6 @@
 """NO-KILL-BY-NAME CONTRACT — the PROCESS-KILL RULE (CLAUDE.md) pinned mechanically.
 
-The rule, in Debi's words: *agents/builders and the harness may terminate ONLY
+The rule, in Debi's words: *agents/builders and MOT Deck may terminate ONLY
 processes they themselves spawned, tracked by their own pidfile/child handle,
 identity-verified (full command line) before the kill. NEVER pkill/killall by name or
 pattern; never kill whatever holds a port.* She runs STANDALONE copies of the very apps
@@ -21,7 +21,7 @@ A fourth wrote its PYTHON arm:
                 from the shell while FIVE `pkill -f` calls went on living in
                 bridge/routers/: `_aux_kill` running the very `llama-server.*--port N`
                 pattern U19 had removed, `pkill -f "start_component.sh runner"` in
-                switch-cancel (which matches every harness root on the machine), and
+                switch-cancel (which matches every motdeck root on the machine), and
                 three dead `jan serve` sweeps. A sixth site turned up in the sweep:
                 the generic component Stop signalled whatever data/<name>.pid said,
                 with an explicit "exists but not ours — still attempt the kill" branch.
@@ -164,7 +164,7 @@ def test_hermes_ownership_has_no_name_signature():
     assert '*"hermes dashboard"*' not in code and '*"hermes serve"*' not in code, \
         "the hermes NAME signature is back — it matches the standalone app it must protect"
     assert '*"/data/hermes-venv/"*' in code, \
-        "hermes ownership must be proven by the harness venv PATH"
+        "hermes ownership must be proven by MOT Deck venv PATH"
 
 
 def test_runner_arms_reap_by_pidfile_not_by_engine_pattern():
@@ -179,11 +179,11 @@ def test_ship_quits_the_app_by_apple_event_and_verified_bundle_path():
     code = _code(SHIP)
     assert 'tell application \\"$_APP_AS\\" to quit' in code, \
         "ship.sh must ASK the exact resolved bundle path, not signal a process by name"
-    assert "osascript -e 'quit app \"Harness\"'" not in code, \
+    assert "osascript -e 'quit app \"MOT Deck\"'" not in code, \
         "the old filename-based Apple Event quit is back"
     assert '$APP/Contents/MacOS/' in code, \
         "a surviving app pid must be identified by its bundle path"
-    assert "REFUSING to ship" in code and "without a matching M.O.T launch record" in code, \
+    assert "REFUSING to ship" in code and "without a matching MOT Deck launch record" in code, \
         "a foreign :8700 holder must stop the ship, not be killed"
 
 
@@ -207,7 +207,7 @@ def test_owner_check_seam_answers_correctly_live():
         return subprocess.run(["bash", START, "--owner-check", comp, cmd],
                               capture_output=True, text=True, cwd=ROOT).returncode == 0
 
-    assert owns("hermes", "/somewhere/harness/data/hermes-venv/bin/hermes dashboard")
+    assert owns("hermes", "/somewhere/motdeck/data/hermes-venv/bin/hermes dashboard")
     assert not owns("hermes", os.path.expanduser("~/.hermes/hermes-agent/venv/bin/hermes")
                     + " dashboard --port 9119")
     assert not owns("hermes", "hermes dashboard")
@@ -296,12 +296,12 @@ def test_no_kill_by_name_in_the_python_layer(path):
 
 def test_python_has_no_unowned_port_clear_helper():
     """`_port_kill_cmd` built `lsof -ti tcp:N -sTCP:LISTEN | xargs kill` for the
-    old HARNESS_PORT_TAKEOVER branch — the move that closed Debi's Unsloth. No
+    old MOT_DECK_PORT_TAKEOVER branch — the move that closed Debi's Unsloth. No
     environment variable may restore an unowned kill."""
     procs = _read(os.path.join(BRIDGE, "core", "procs.py"))
     assert "_port_kill_cmd" not in _code(os.path.join(BRIDGE, "core", "procs.py")), \
         "the unowned port-clear helper is back"
-    assert 'os.environ.get("HARNESS_PORT_TAKEOVER")' not in procs, \
+    assert 'os.environ.get("MOT_DECK_PORT_TAKEOVER")' not in procs, \
         "an environment-controlled unowned port kill is back"
 
 
@@ -347,7 +347,7 @@ def test_switch_cancel_stops_the_script_we_launched_by_pidfile():
         "the switch's start script is untracked again — cancel can then only guess"
     assert "reap_pidfile(SWITCH_TRACK" in code
     assert "start_component.sh runner" not in code, \
-        "the cross-root start-script pattern is back (it names EVERY harness root)"
+        "the cross-root start-script pattern is back (it names EVERY motdeck root)"
 
 
 def test_component_stop_routes_the_pid_kill_through_the_verified_reaper():

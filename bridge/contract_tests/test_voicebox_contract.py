@@ -1,6 +1,6 @@
 """Voicebox contract — pin-bump gate for the second optional voice component.
 
-Voicebox (github.com/jamiepine/voicebox, MIT, pinned in harness.yaml) is composed
+Voicebox (github.com/jamiepine/voicebox, MIT, pinned in motdeck.yaml) is composed
 over HTTP only — we never modify it. But scripts/start_component.sh and bridge/app.py
 hard-depend on upstream facts Voicebox does not promise:
 
@@ -41,15 +41,15 @@ def _read(p: Path) -> str:
     return p.read_text(errors="replace")
 
 
-def test_voicebox_pinned_in_harness_yaml():
+def test_voicebox_pinned_in_motdeck_yaml():
     """Always runs: the pin/port/optionality contract is ours, not upstream's."""
-    c = yaml.safe_load((ROOT / "harness.yaml").read_text())
+    c = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
     comp = c["components"].get("voicebox")
-    assert comp, "components.voicebox disappeared from harness.yaml"
+    assert comp, "components.voicebox disappeared from motdeck.yaml"
     assert comp["pin"] and comp["pin"] not in ("main", "master"), (
         "voicebox must be pinned to a release tag, never a branch")
     assert int(comp["port"]) == 17493, (
-        "voicebox port changed — start_component.sh reads it from harness.yaml but the "
+        "voicebox port changed — start_component.sh reads it from motdeck.yaml but the "
         "plan text / notes in bridge/app.py still say 17493, and upstream's CORS "
         "allow-list only whitelists 17493")
     assert comp.get("depends_on") in (None, []), (
@@ -165,4 +165,4 @@ def test_no_auth_assumption_still_holds():
     src = _read(APP) if APP.exists() else ""
     assert "AuthenticationMiddleware" not in src and "HTTPBearer" not in src, (
         "voicebox appears to have gained authentication — update the NO AUTH warnings "
-        "in harness.yaml / install_component.sh / bridge/app.py _NOTES")
+        "in motdeck.yaml / install_component.sh / bridge/app.py _NOTES")

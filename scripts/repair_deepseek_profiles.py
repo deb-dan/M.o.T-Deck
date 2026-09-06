@@ -86,9 +86,9 @@ def _verify_local(tree: str, prefix_modules: str) -> Tuple[List[str], List[str]]
 
 
 HEALER_PROGRAM = """import { pathToFileURL } from 'node:url';
-const bootModule = process.env.HARNESS_DSH_BOOT_MODULE;
-const installAnchor = process.env.HARNESS_DSH_INSTALL_ANCHOR;
-const profileHome = process.env.HARNESS_DSH_PROFILE_HOME;
+const bootModule = process.env.MOT_DECK_DSH_BOOT_MODULE;
+const installAnchor = process.env.MOT_DECK_DSH_INSTALL_ANCHOR;
+const profileHome = process.env.MOT_DECK_DSH_PROFILE_HOME;
 const { healProfilesModuleFallback } = await import(pathToFileURL(bootModule).href);
 healProfilesModuleFallback(installAnchor, profileHome);
 """
@@ -133,9 +133,9 @@ def repair(prefix: str, home: str, node: str,
         # the fixed program has no interpolated paths and receives exact paths only
         # through its environment.
         env = dict(os.environ,
-                   HARNESS_DSH_BOOT_MODULE=boot_module,
-                   HARNESS_DSH_INSTALL_ANCHOR=install_anchor,
-                   HARNESS_DSH_PROFILE_HOME=home)
+                   MOT_DECK_DSH_BOOT_MODULE=boot_module,
+                   MOT_DECK_DSH_INSTALL_ANCHOR=install_anchor,
+                   MOT_DECK_DSH_PROFILE_HOME=home)
         run = subprocess.run([node, "--input-type=module", "--eval", HEALER_PROGRAM],
                              env=env, text=True,
                              capture_output=True, check=False, timeout=timeout)

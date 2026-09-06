@@ -184,8 +184,8 @@ curl -s http://127.0.0.1:4096/global/config | python3 -m json.tool | head -40
 curl -s http://127.0.0.1:4096/config | python3 -m json.tool | head -40
 
 # 5. and what the two files on disk say
-python3 -m json.tool < ~/Library/Application\ Support/Harness/data/opencode/xdg/config/opencode/opencode.json | head -30
-python3 -m json.tool < ~/Library/Application\ Support/Harness/data/opencode-workspace/opencode.json | head -30
+python3 -m json.tool < ~/Library/Application\ Support/MOT Deck/data/opencode/xdg/config/opencode/opencode.json | head -30
+python3 -m json.tool < ~/Library/Application\ Support/MOT Deck/data/opencode-workspace/opencode.json | head -30
 ```
 
 Reading them: if **(5)** shows `llama.cpp` but **(3)** does not, the XDG redirect is not

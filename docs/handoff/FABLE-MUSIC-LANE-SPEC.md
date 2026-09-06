@@ -34,7 +34,7 @@ view **Music** (sidebar entry `♫ Music`, between Models and Capabilities).
 ## Install path
 `scripts/install_music.sh <minimax|acestep>` — idempotent, lifted from
 measure_music.sh but writing to the PERMANENT homes above; reads pins from
-harness.yaml (awk pattern like install_mlx.sh); logs to `data/logs/music-install.log`
+motdeck.yaml (awk pattern like install_mlx.sh); logs to `data/logs/music-install.log`
 (add to `_LOG_NAMES` + panel LOG_SOURCES — the voicebox-install lesson: install logs
 must be viewable in-panel). Bridge: `POST /api/music/install {engine}` runs it in a
 background thread with the component-install timeout pattern; `GET /api/music/status`

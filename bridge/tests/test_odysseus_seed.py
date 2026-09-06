@@ -33,7 +33,7 @@ sys.path.insert(0, ROOT)
 from bridge.tests.model_fixture import gguf_bytes                # noqa: E402
 
 SEED_PATH = os.path.join(ROOT, "scripts", "seed_odysseus_jan.py")
-_spec = importlib.util.spec_from_file_location("harness_seed_odysseus", SEED_PATH)
+_spec = importlib.util.spec_from_file_location("motdeck_seed_odysseus", SEED_PATH)
 seed = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(seed)
 
@@ -65,13 +65,13 @@ def artifact(name, is_dir=False):
 MLX_9B = artifact("mlx-9b", is_dir=True)
 
 WANT = {"name": "Local runner", "base_url": "http://127.0.0.1:6767/v1",
-        "api_key": "harness-local", "models": ["big-27b", "small-4b", MLX_9B]}
+        "api_key": "motdeck-local", "models": ["big-27b", "small-4b", MLX_9B]}
 
 
 def row(**over):
     """A ModelEndpoint row as the seed reads it — OUR row, in its just-seeded state."""
     r = {"id": "local-jan", "name": "Local runner", "base_url": "http://127.0.0.1:6767/v1",
-         "api_key": "harness-local", "is_enabled": True, "model_type": "llm",
+         "api_key": "motdeck-local", "is_enabled": True, "model_type": "llm",
          "endpoint_kind": "local", "model_refresh_mode": "auto", "supports_tools": True,
          "owner": None, "cached_models": list(WANT["models"]),
          "pinned_models": list(WANT["models"]), "hidden_models": []}
@@ -80,7 +80,7 @@ def row(**over):
 
 
 MARKER = {"name": "Local runner", "base_url": "http://127.0.0.1:6767/v1",
-          "api_key": "harness-local", "pinned_models": list(WANT["models"]),
+          "api_key": "motdeck-local", "pinned_models": list(WANT["models"]),
           "cached_models": list(WANT["models"])}
 
 
@@ -95,7 +95,7 @@ def apply(r, changes):
 def test_create_seeds_everything_including_the_whole_registry():
     ch, notes = seed.endpoint_plan(None, {}, WANT)
     assert ch["id"] == "local-jan" and ch["name"] == "Local runner"
-    assert ch["base_url"] == WANT["base_url"] and ch["api_key"] == "harness-local"
+    assert ch["base_url"] == WANT["base_url"] and ch["api_key"] == "motdeck-local"
     assert ch["is_enabled"] is True, "a NEW endpoint must arrive switched on"
     assert ch["endpoint_kind"] == "local" and ch["model_refresh_mode"] == "auto"
     assert ch["supports_tools"] is True and ch["owner"] is None
@@ -150,15 +150,15 @@ def test_working_or_unverifiable_user_key_survives_but_rejected_managed_key_rota
     ch, notes = seed.endpoint_plan(
         row(api_key="stale-custom"), MARKER,
         dict(WANT, current_key_accepted=False))
-    assert ch["api_key"] == "harness-local"
+    assert ch["api_key"] == "motdeck-local"
     assert any("runner rejected" in n for n in notes)
-    # ours, gone stale (harness.yaml key changed) → rotated
+    # ours, gone stale (motdeck.yaml key changed) → rotated
     stale = dict(MARKER, api_key="old-key")
     ch, _ = seed.endpoint_plan(row(api_key="old-key"), stale, WANT)
-    assert ch["api_key"] == "harness-local"
+    assert ch["api_key"] == "motdeck-local"
     # empty → filled
     ch, _ = seed.endpoint_plan(row(api_key=None), MARKER, WANT)
-    assert ch["api_key"] == "harness-local"
+    assert ch["api_key"] == "motdeck-local"
 
 
 def test_rejected_key_never_authorizes_changes_to_adopted_or_remote_rows():
@@ -409,7 +409,7 @@ def test_no_unconditional_assignment_survives():
 # THE INCIDENT, AS A USER STORY: Debi switched the runner to Parable-Qwen3-4B and
 # deleted the old 27B's weights. Every Odysseus Start after that RE-SEEDED the deleted
 # 27B — as the default AND into `pinned_models` — because `_wire_model()` read
-# harness.yaml's pin instead of asking the runner what it was serving. llama.cpp
+# motdeck.yaml's pin instead of asking the runner what it was serving. llama.cpp
 # ignores the request's `model` field, so her chats worked and were labelled with a
 # model that had not existed for days. The seeder did not merely inherit the drift, it
 # PROPAGATED it into a third-party picker.
@@ -426,16 +426,16 @@ def test_a_probe_is_only_believed_when_it_maps_to_something_we_ship():
 
 
 def test_the_env_seam_finally_has_a_caller_and_it_wins():
-    """HARNESS_WIRE_MODEL existed from the start with ZERO callers (audit §1). The
+    """MOT_DECK_WIRE_MODEL existed from the start with ZERO callers (audit §1). The
     switch trigger now passes the model it just loaded; it outranks everything."""
-    old = os.environ.get("HARNESS_WIRE_MODEL")
-    os.environ["HARNESS_WIRE_MODEL"] = "just-loaded-4b"
+    old = os.environ.get("MOT_DECK_WIRE_MODEL")
+    os.environ["MOT_DECK_WIRE_MODEL"] = "just-loaded-4b"
     try:
         assert seed.resolve_wire() == ("just-loaded-4b", "env")
     finally:
-        os.environ.pop("HARNESS_WIRE_MODEL", None)
+        os.environ.pop("MOT_DECK_WIRE_MODEL", None)
         if old is not None:
-            os.environ["HARNESS_WIRE_MODEL"] = old
+            os.environ["MOT_DECK_WIRE_MODEL"] = old
 
 
 def test_a_ghost_pin_is_never_offered_and_never_becomes_a_default():
@@ -461,7 +461,7 @@ def test_a_ghost_pin_is_never_offered_and_never_becomes_a_default():
 
 
 def test_the_script_still_says_why_it_prefers_live():
-    for phrase in ("live_wire", "resolve_wire", "offerable", "HARNESS_WIRE_MODEL",
+    for phrase in ("live_wire", "resolve_wire", "offerable", "MOT_DECK_WIRE_MODEL",
                    "GHOST"):
         assert phrase in SRC, f"S28's reasoning must stay written: {phrase}"
     assert "pin_wire" in SRC and "_active_model_id" in SRC, \

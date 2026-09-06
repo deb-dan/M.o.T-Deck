@@ -71,7 +71,7 @@ def _live_registry() -> list:
     """The user's REAL registry when there is one — the corpus that actually
     matters, and the one a synthetic list cannot anticipate."""
     for p in (ROOT / "data" / "models.json",
-              Path.home() / "Library" / "Application Support" / "Harness"
+              Path.home() / "Library" / "Application Support" / "MOT Deck"
               / "data" / "models.json"):
         try:
             rows = json.loads(p.read_text()).get("models") or []

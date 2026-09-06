@@ -2,9 +2,9 @@
 # seed_odysseus_jan.py — Odysseus DB seed: wire it to the local runner endpoint,
 # ONCE, and then NEVER CLOBBER THE HUMAN AGAIN.
 #
-# Invoked by the harness (install_component.sh / start_component.sh) with the
+# Invoked by MOT Deck (install_component.sh / start_component.sh) with the
 # odysseus venv active and cwd = vendor/odysseus, after setup.py has created the DB:
-#   ( cd vendor/odysseus && python <harness>/scripts/seed_odysseus_jan.py )
+#   ( cd vendor/odysseus && python <motdeck>/scripts/seed_odysseus_jan.py )
 #
 # This is the "connect" half of one-switch provisioning for Odysseus: it creates a
 # single model endpoint pointing at our runner, pins EVERY chat model in our registry
@@ -73,12 +73,12 @@ ENDPOINT_ID = "local-jan"          # stable caller-supplied String PK (idempoten
 # a RANDOM 8-char uuid (routes/model_routes.py:2146), so a row whose id is exactly
 # `local-jan` can only have been created by this script. That is what lets us update it
 # at all; everything inside it still follows the marker rules above.
-# The harness root — this script is invoked by absolute path with cwd=vendor/odysseus.
-HARNESS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# MOT Deck root — this script is invoked by absolute path with cwd=vendor/odysseus.
+MOT_DECK_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # What WE last wrote. Not a cache and not state Odysseus reads — purely our evidence for
 # "this value is still ours", so a human's edit is distinguishable from our own leftover.
-STATE_PATH = os.environ.get("HARNESS_ODY_SEED_STATE") or os.path.join(
-    HARNESS_ROOT, "data", "ody_seed_state.json")
+STATE_PATH = os.environ.get("MOT_DECK_ODY_SEED_STATE") or os.path.join(
+    MOT_DECK_ROOT, "data", "ody_seed_state.json")
 # Our own URL shape: how a row we wrote LOOKS even when the marker file is gone
 # (fresh clone, user tidy-up). Loopback + the /v1 root the runner serves.
 _OUR_URL_RE = re.compile(r"^https?://(?:127\.0\.0\.1|localhost|\[::1\]):\d+/v1/?$", re.I)
@@ -93,8 +93,8 @@ _OUR_URL_RE = re.compile(r"^https?://(?:127\.0\.0\.1|localhost|\[::1\]):\d+/v1/?
 def _load_modelreg():
     try:
         import importlib.util
-        p = os.path.join(HARNESS_ROOT, "bridge", "core", "modelreg.py")
-        spec = importlib.util.spec_from_file_location("harness_modelreg", p)
+        p = os.path.join(MOT_DECK_ROOT, "bridge", "core", "modelreg.py")
+        spec = importlib.util.spec_from_file_location("motdeck_modelreg", p)
         if spec is None or spec.loader is None:
             return None
         mod = importlib.util.module_from_spec(spec)
@@ -192,7 +192,7 @@ def endpoint_plan(row, marker, want) -> tuple:
 
     `row`    — the existing DB row as a plain dict, or None to create it.
     `marker` — what we last wrote for this row ({} when we have no record).
-    `want`   — {"name","base_url","api_key","models"} from harness.yaml + the registry.
+    `want`   — {"name","base_url","api_key","models"} from motdeck.yaml + the registry.
 
     `changes` is only the fields that must actually be written; `notes` is the honest
     log of every field we deliberately did NOT touch and why.
@@ -380,9 +380,9 @@ def live_wire(probed, registry) -> str:
     """PURE: a /v1/models probe answer → the wire id we are willing to BELIEVE, or ''.
 
     ⚠️ THE RULE THE HERMES ARM ESTABLISHED (v1.5.56) AND THIS SCRIPT DID NOT HAVE:
-    *the runner's own answer outranks harness.yaml*. The post-switch coherence audit
+    *the runner's own answer outranks motdeck.yaml*. The post-switch coherence audit
     (docs/research/2026-08-29-post-switch-audit.md §1, root-cause class 4) measured what
-    pin-first seeding costs: harness.yaml's pin had drifted onto a 27B whose file was
+    pin-first seeding costs: motdeck.yaml's pin had drifted onto a 27B whose file was
     deleted, so every Odysseus Start re-seeded that ghost as the default AND force-
     inserted it into `pinned_models` — the stale pin did not merely persist, it
     PROPAGATED into a third-party picker, where llama.cpp's silent substitution made
@@ -401,13 +401,13 @@ def live_wire(probed, registry) -> str:
 
 
 def pin_wire() -> str:
-    """The wire identifier for harness.yaml's PINNED model — INTENT, not reality.
+    """The wire identifier for motdeck.yaml's PINNED model — INTENT, not reality.
 
     The registry id for llama.cpp (launched with --alias <id>), the model's local PATH
     for MLX (mlx_lm/mlx_vlm treat the request's `model` field as a model to LOAD and
     would resolve our id on HuggingFace → 404 → runner 400).
 
-    Read straight from harness.yaml + data/models.json (no yaml/pyyaml dependency —
+    Read straight from motdeck.yaml + data/models.json (no yaml/pyyaml dependency —
     this runs inside the ODYSSEUS venv), so every call site (start_component.sh,
     install_component.sh, firstrun_fat.sh, diagnose_odysseus.sh) gets it for free."""
     mid = _active_model_id()
@@ -422,13 +422,13 @@ def pin_wire() -> str:
 def resolve_wire() -> tuple:
     """(wire, source) — LIVE-FIRST, pin last. source ∈ {env, live, pin, none}.
 
-      1. HARNESS_WIRE_MODEL — the explicit caller's answer (the auto-rebind trigger in
+      1. MOT_DECK_WIRE_MODEL — the explicit caller's answer (the auto-rebind trigger in
          bridge/routers/models.py::_do_switch passes the model it just loaded). This
          seam existed from the start and had ZERO CALLERS until S28.
       2. the runner's own authenticated /v1/models, reconciled against our registry.
-      3. harness.yaml's pin — intent, correct whenever it has not drifted.
+      3. motdeck.yaml's pin — intent, correct whenever it has not drifted.
     """
-    env = os.environ.get("HARNESS_WIRE_MODEL", "").strip()
+    env = os.environ.get("MOT_DECK_WIRE_MODEL", "").strip()
     if env:
         return env, "env"
     lw = live_wire(_discover_model(BASE_URL), _registry())
@@ -459,9 +459,9 @@ def offerable(wire: str, source: str, registry) -> bool:
 
 
 def _active_model_id() -> str:
-    """The registry id named by harness.yaml `runner: model:` (no yaml dependency)."""
+    """The registry id named by motdeck.yaml `runner: model:` (no yaml dependency)."""
     try:
-        txt = open(os.path.join(HARNESS_ROOT, "harness.yaml")).read()
+        txt = open(os.path.join(MOT_DECK_ROOT, "motdeck.yaml")).read()
     except OSError:
         return ""
     m = re.search(r"^runner:\s*$(.*?)(?=^\S|\Z)", txt, re.S | re.M)
@@ -473,7 +473,7 @@ def _active_model_id() -> str:
 
 def _registry() -> list:
     try:
-        return json.load(open(os.path.join(HARNESS_ROOT, "data", "models.json"))).get("models", [])
+        return json.load(open(os.path.join(MOT_DECK_ROOT, "data", "models.json"))).get("models", [])
     except Exception:
         return []
 
@@ -536,7 +536,7 @@ def main() -> int:
     ghost = bool(wire) and not offerable(wire, source, reg)
     if ghost:
         # A pin that names neither a registered nor a served model. It is NOT written
-        # into the picker and NOT proposed as the default; harness.yaml is left exactly
+        # into the picker and NOT proposed as the default; motdeck.yaml is left exactly
         # as it is (the pin is a legitimate intent record — v1.5.57's ruling), and the
         # honest line below is the only thing this script does about it.
         wire = ""
@@ -639,7 +639,7 @@ def main() -> int:
           f"({'pinned from our registry — visible with the runner down' if models else 'none pinned'})")
     print(f"[seed] wire model: {wire or '(none)'} (source: {source})")
     if ghost:
-        print(f"[seed] harness.yaml pins “{pin_wire()}”, which is neither in the model "
+        print(f"[seed] motdeck.yaml pins “{pin_wire()}”, which is neither in the model "
               f"registry nor served by the runner — NOT offered in Odysseus's picker "
               f"and not proposed as its default (the pin itself is left alone)")
     if not wire:

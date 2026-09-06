@@ -33,7 +33,7 @@ _NOTES = {
     "opencode": ("opencode on :4096 — loopback only, no auth. The tab opens its "
                  "new-session composer for data/opencode-workspace (the bridge's "
                  "/opencode redirect), not its own 'Add project' home screen. "
-                 "Start seeds the `llama.cpp` provider -> the harness runner, so its "
+                 "Start seeds the `llama.cpp` provider -> MOT Deck runner, so its "
                  "model picker lists YOUR models (if it offers Big Pickle instead, the "
                  "config did not reach it — the log says so). "
                  "Needs a TOOL-CALLING model — look for the green 'tools' pill."),
@@ -41,7 +41,7 @@ _NOTES = {
     # tools warning is appended per-request by start_plan (it depends on the LIVE
     # model), the same way OpenCode's is.
     "deepseek": ("DeepSeek Harness on :3080 — loopback only (by its own policy), no "
-                 "auth. Start seeds the 'MOT Deck (local)' provider -> the harness "
+                 "auth. Start seeds the 'MOT Deck (local)' provider -> MOT Deck "
                  "runner, and it re-reads that file per request, so a model switch "
                  "reaches it with no restart. FIRST RUN asks you to pick a WORKSPACE "
                  "before it will take a message: 'Add workspace' -> "
@@ -309,7 +309,7 @@ def restart(name: str) -> JSONResponse:
 def update(name: str) -> JSONResponse:
     """M1: blue-green update with contract tests. Stub for now."""
     return JSONResponse(
-        {"ok": False, "log": "updater lands in M1 — see docs/harness-architecture.md §6.1"},
+        {"ok": False, "log": "updater lands in M1 — see docs/motdeck-architecture.md §6.1"},
         status_code=501)
 
 

@@ -1,6 +1,6 @@
 > **DONE — implemented and shipped (marked 2026-08-20).**
 
-# FABLE SPEC — Harness-native voice capability (MIT stack: llama.cpp · MLX · Whisper)
+# FABLE SPEC — MOT Deck-native voice capability (MIT stack: llama.cpp · MLX · Whisper)
 
 Fable 5, 2026-08-07. Successor to the voice-tabs item. Builders: Opus 5 / Opus 4.8,
 one phase at a time, identity protocol + ⚠️ PENDING FABLE QA tags apply. Ship rule:
@@ -38,7 +38,7 @@ chat models.
 
 ## What this is (and is not)
 
-"My agents/chat can SPEAK, and later LISTEN" as a **harness-native capability** built
+"My agents/chat can SPEAK, and later LISTEN" as a **MOT Deck-native capability** built
 from MIT/Apache parts we largely already ship. It is NOT the VoiceStudio/Voicebox
 route: those remain optional creative apps in tabs, never wired into agents, and this
 spec does not touch them. All-MIT posture is the point (Debi's licensing call).
@@ -73,7 +73,7 @@ Engine lineup (fixed):
    (per-file GGUF mode for TTS ggufs; whole-repo mode for mlx/Kokoro repos).
    Rescan extends `seed_registry.py` with an audio scan (HF cache + data/models).
 4. **Naming**: this feature's key is `voice` in the bridge, chip label is `AUDIO`.
-   Per-session: the CHOSEN tts model id is global (harness.yaml `voice:` block:
+   Per-session: the CHOSEN tts model id is global (motdeck.yaml `voice:` block:
    `tts_model`, `stt_model`, empty = off); the per-chat toggle is panel-local state.
 
 ## Phase 0 — recon (builder, read-only, evidence-cited; recon wins over this spec)
@@ -100,7 +100,7 @@ e. WKWebView audio PLAYBACK sanity (should be fine — `new Audio(blobUrl).play(
 - Audio tab: same two-pane grammar. LEFT rows: installed audio models — name +
   pills `tts`/`stt` (gold when it's the active default), engine (`llama.cpp`/`mlx`),
   size GB. RIGHT detail: actions **Set default TTS** / **Set default STT** (writes
-  harness.yaml `voice:` block via the bridge), **Delete** (existing guarded delete),
+  motdeck.yaml `voice:` block via the bridge), **Delete** (existing guarded delete),
   plus a **Get voice models** section offering the recon-verified starters
   (OuteTTS+vocoder pair, Kokoro, whisper base/turbo) through the EXISTING download
   manager UI (progress/pause/resume come free). **Rescan** button = existing rescan,
@@ -114,7 +114,7 @@ e. WKWebView audio PLAYBACK sanity (should be fine — `new Audio(blobUrl).play(
   recon; `tts-mlx` → `[<mlx-venv>/bin/python, -m, mlx_audio.tts.generate, ...]`.
   Hard caps: text ≤ 2000 chars per call (413 beyond), one render at a time per
   engine (lock), 120s subprocess timeout, always-cleaned temp files.
-- `POST /api/voice/tts {text, model_id?}` (default from harness.yaml) → audio/wav.
+- `POST /api/voice/tts {text, model_id?}` (default from motdeck.yaml) → audio/wav.
   Errors are JSON with the log tail, never a hung request. `GET /api/voice/config`
   → `{tts_model, stt_model, available:[audio entries]}`; `POST /api/voice/config`
   sets defaults. (Note: the existing `/api/voice/status|toggle` from the MCP batch

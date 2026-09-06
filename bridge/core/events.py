@@ -211,7 +211,7 @@ def _frame(ev: dict, missed: int = 0) -> str:
 
 def _is_loopback(req: Request) -> bool:
     """The bridge binds 127.0.0.1 (scripts/start.sh), so this can only ever be true in
-    practice. It is asserted anyway because this route is the one thing in the harness
+    practice. It is asserted anyway because this route is the one thing in MOT Deck
     that hands out a live feed of what the machine is doing, and 'the bind is the
     fence' is a fact about a sibling file that a future launch line could change
     without anyone rereading this one."""

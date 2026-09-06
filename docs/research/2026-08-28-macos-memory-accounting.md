@@ -1,7 +1,7 @@
 # macOS Memory Accounting for the RAM Fit Advisor (Apple Silicon)
 
 **Date:** 2026-08-28 · **Machine verified against:** Apple M5 Pro (`Mac17,8`), 64 GB unified, macOS 26.6.1 (25G76), 16 KB pages.
-**Live stack at measurement time:** llama-server (runner, 16 GB Q4_K_S gguf + 1.7 GB F32 mmproj, 65k ctx), two bridges, Hermes, Harness.app shell + WebKit XPC helpers, unsloth studio, voicestudio, searxng. Swap was under real load: 18.1 GB used of 19.4 GB.
+**Live stack at measurement time:** llama-server (runner, 16 GB Q4_K_S gguf + 1.7 GB F32 mmproj, 65k ctx), two bridges, Hermes, MOT Deck.app shell + WebKit XPC helpers, unsloth studio, voicestudio, searxng. Swap was under real load: 18.1 GB used of 19.4 GB.
 
 Everything below marked **[verified]** was measured on this machine today with read-only probes.
 
@@ -112,10 +112,10 @@ Failure mode **[verified]**: `proc_pid_rusage` returns non-zero only for exited 
 
 **Summing a tree:** enumerate pids (supervisor already knows them; for strays use ppid walk of `proc_listchildpids`/`ps -axo pid,ppid`) and **sum phys_footprint per pid**. Because footprint counts only dirty/compressed/owned memory, summing does **not** double-count shared libraries or clean shared mmaps — this is the property RSS lacks. Genuinely shared *dirty* memory (rare: explicit shm) is the only double-count risk; negligible for our stack. **[verified]** runner has no child processes (threads only); bridge spawns short-lived python children — sample at 1–2 s cadence and accept that sub-second children are missed (footprint of exited children is gone; `ri_child_*` fields in rusage only cover reaped direct children's CPU, not memory).
 
-**The WebKit XPC problem — solved by "responsible pid":** Harness.app's WKWebViews live in `com.apple.WebKit.WebContent/GPU/Networking.xpc` processes whose **ppid is 1 (launchd)** — invisible to any ppid walk **[verified]**. But the private-but-stable libSystem call **`responsibility_get_pid_responsible_for_pid(pid)`** (same mechanism Activity Monitor and exelban/stats use to group processes) returns the app shell's pid for all of them **[verified]**:
+**The WebKit XPC problem — solved by "responsible pid":** MOT Deck.app's WKWebViews live in `com.apple.WebKit.WebContent/GPU/Networking.xpc` processes whose **ppid is 1 (launchd)** — invisible to any ppid walk **[verified]**. But the private-but-stable libSystem call **`responsibility_get_pid_responsible_for_pid(pid)`** (same mechanism Activity Monitor and exelban/stats use to group processes) returns the app shell's pid for all of them **[verified]**:
 
 ```
-Harness.app shell = 69447 (30–36 MB footprint — the UI is NOT here)
+MOT Deck.app shell = 69447 (30–36 MB footprint — the UI is NOT here)
 responsible→69447: WebKit.GPU 151 MB · WebKit.Networking 10 MB ·
                    3× WebKit.WebContent 45/45/730 MB · audio.SandboxHelper 3 MB ·
                    SafariPlatformSupport.Helper 9 MB · bridge python (also a child)
@@ -133,7 +133,7 @@ Fallback honesty: if the responsibility call is ever unavailable (it's unexporte
 | bridge :8700 | 69453 | 60 | 69 | 60 |
 | bridge :8791 | 41621 | 56 | 34 | 58 |
 | hermes | 80152 | 243 | 163 | 243 |
-| Harness.app shell | 69447 | 36 | 114 | 37 |
+| MOT Deck.app shell | 69447 | 36 | 114 | 37 |
 | — WebKit.WebContent (main UI) | 70137 | 730 | 764 | 945 |
 | — WebKit.GPU | 69451 | 151 | 71 | 164 |
 | — WebKit.WebContent ×2, Networking, helpers | | ~113 | ~196 | |

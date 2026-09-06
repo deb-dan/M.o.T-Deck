@@ -2,7 +2,7 @@
 
 Two surfaces, both pure:
 
-* the PLUGIN matcher (guards/harness-path-guard/__init__.py) — imported directly
+* the PLUGIN matcher (guards/motdeck-path-guard/__init__.py) — imported directly
   from the file (never through Hermes) so no hermes venv is needed;
 * the BRIDGE audit tier's containment helper (bridge/app.py guard_path_outside),
   extracted by ast so neither fastapi nor websockets is required.
@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[2]
 import sys as _sys                                          # noqa: E402
 _sys.path.insert(0, str(ROOT))                              # noqa: E402
 from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
-GUARD = ROOT / "guards" / "harness-path-guard" / "__init__.py"
+GUARD = ROOT / "guards" / "motdeck-path-guard" / "__init__.py"
 
 PASS = 0
 
@@ -39,7 +39,7 @@ def check(name, cond):
 
 
 def _load_plugin():
-    spec = importlib.util.spec_from_file_location("harness_path_guard_under_test", GUARD)
+    spec = importlib.util.spec_from_file_location("motdeck_path_guard_under_test", GUARD)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -83,20 +83,20 @@ os.makedirs(os.path.join(home, ".hermes"), exist_ok=True)
 cwd = tempfile.mkdtemp()
 hroot = tempfile.mkdtemp()
 os.makedirs(os.path.join(hroot, "data"), exist_ok=True)
-roots = G.resolve_roots(["{HERMES_CWD}", "~/.hermes", "{HARNESS_ROOT}/data", "/tmp",
+roots = G.resolve_roots(["{HERMES_CWD}", "~/.hermes", "{MOT_DECK_ROOT}/data", "/tmp",
                          "{TMPDIR}"],
-                        cwd=cwd, harness_root=hroot, tmpdir="", home=home)
+                        cwd=cwd, motdeck_root=hroot, tmpdir="", home=home)
 check("{HERMES_CWD} resolved", os.path.realpath(cwd) in roots)
 check("~ expanded against the given home",
       os.path.realpath(os.path.join(home, ".hermes")) in roots)
-check("{HARNESS_ROOT} substituted",
+check("{MOT_DECK_ROOT} substituted",
       os.path.realpath(os.path.join(hroot, "data")) in roots)
 check("empty {TMPDIR} DROPPED (never collapses to /)",
       "/" not in roots and len(roots) == 4)
 check("unknown placeholder dropped",
-      G.resolve_roots(["{NOPE}/x"], cwd=cwd, harness_root=hroot) == [])
+      G.resolve_roots(["{NOPE}/x"], cwd=cwd, motdeck_root=hroot) == [])
 check("relative root dropped",
-      G.resolve_roots(["relative/dir"], cwd=cwd, harness_root=hroot) == [])
+      G.resolve_roots(["relative/dir"], cwd=cwd, motdeck_root=hroot) == [])
 
 # realpath: a symlinked workspace resolves to its target
 link_parent = tempfile.mkdtemp()
@@ -163,13 +163,13 @@ finally:
     G.load_policy = _orig
 
 # ── policy parsing ─────────────────────────────────────────────────────────
-pol = G.parse_policy_text((ROOT / "guards" / "harness-path-guard" / "policy.yaml").read_text())
+pol = G.parse_policy_text((ROOT / "guards" / "motdeck-path-guard" / "policy.yaml").read_text())
 check("shipped policy parses with the 5 allow roots", len(pol["allow"]) == 5)
 check("shipped policy parses with the 5 deny roots", len(pol["deny"]) == 5)
 check("shipped policy allows the workspace placeholder", "{HERMES_CWD}" in pol["allow"])
 check("shipped policy denies ~/.ssh", "~/.ssh" in pol["deny"])
 check("mini parser matches the yaml parser",
-      G._mini_parse((ROOT / "guards" / "harness-path-guard" / "policy.yaml").read_text())
+      G._mini_parse((ROOT / "guards" / "motdeck-path-guard" / "policy.yaml").read_text())
       == pol)
 check("garbage policy → empty lists (escalate-all, not allow-all)",
       G.parse_policy_text("not: a policy") == {"allow": [], "deny": []})
@@ -233,7 +233,7 @@ check("audit trail: every line is valid JSON",
 _audit(None, None, None)
 check("audit trail: None args never raise (stringified)",
       _json.loads(_glog.read_text().strip().splitlines()[-1])["path"] == "")
-_load_guard_audit("/proc/nonexistent-harness-root")("/x", "write_file", "s")
+_load_guard_audit("/proc/nonexistent-motdeck-root")("/x", "write_file", "s")
 check("audit trail: unwritable root degrades silently", True)
 
 print(f"\n{PASS}/{PASS} path-guard checks passed")

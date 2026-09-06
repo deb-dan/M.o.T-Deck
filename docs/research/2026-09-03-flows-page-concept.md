@@ -51,7 +51,7 @@ Two things the codebase makes easy and one it makes hard:
 - **Easy:** the resource-arbiter the Gemini doc spends two pages designing **already exists** —
   `bridge/core/fit.py` plus `GET /api/memory/fit`. Flows must call it, never re-implement it.
 - **Hard, and the real cost of the idea:** there is **no scheduler, no cron, no recurring-run
-  machinery of any kind** in this product. Grep over `bridge/`, `app/`, `harness.yaml` found only a
+  machinery of any kind** in this product. Grep over `bridge/`, `app/`, `motdeck.yaml` found only a
   15-second RAM sampler loop. "Every morning" is net-new infrastructure, and on a personal Mac it
   raises a genuine product question (§4) rather than an engineering one.
 
@@ -102,7 +102,7 @@ Three facts from that table change the design:
 `bridge/app.py`, `bridge/appsrc.py`): a lane is its own HTML doc plus its own router file, then a
 four-place registration ritual that tests cross-assert — `NAV_ENTRIES` + `DEFAULT_SIDEBAR` +
 `DEFAULT_TOPBAR` in `nav.py`, the mirror table in `index.html` (unique glyph, enforced by a census
-test), a `HarnessTab` in `main.swift`, and the module name in both `_LANES` and `FILES`. Note the
+test), a `MOTDeckTab` in `main.swift`, and the module name in both `_LANES` and `FILES`. Note the
 strip is at **11 of `NAV_TOPBAR_MAX = 12` pins with exactly one free pin**, and `goose`, `comfy`
 (Generate) and `gooseui` are each already declared-but-unpinned queuing for it, each with a written
 argument for why it didn't spend it. A rules page joins that queue; it does not jump it.
@@ -112,7 +112,7 @@ argument for why it didn't spend it. A rules page joins that queue; it does not 
 ## 1. The idea, in Debi's terms
 
 A new page that starts blank. On it you put **rules** — as many as you like, each one a small standing
-instruction the harness keeps for you. Every rule is the same three-part thought: *where the stuff
+instruction MOT Deck keeps for you. Every rule is the same three-part thought: *where the stuff
 comes from* (and when), *what to do with it*, and *where the result goes*. Processing covers both the
 engine and the tools, but you don't pick either unless you want to — the page already knows which
 model is loaded, whether it fits, and which surface owns the kind of thing you're making. You should
@@ -253,7 +253,7 @@ the only labels on the page.
 
 **Glance state.** You read *down* a column to see everything of one kind ("what do I have coming in?"),
 and *across* a row to read one rule. That vertical read is the shape's genuine advantage and the reason
-to consider it: it makes the harness's *capabilities* legible, not just its rules. A cell shows its
+to consider it: it makes MOT Deck's *capabilities* legible, not just its rules. A cell shows its
 setting as a chip plus, for OUT cells, the last artefact thumb.
 
 **Expand behaviour.** Click a **cell** → that cell grows into its picker while its row's other cells
@@ -402,7 +402,7 @@ everything. The cure is **a page of standing sentences that point at everything.
 ## 4. Where rules would actually run (sketch, with the real questions flagged)
 
 **Hard fact first:** there is **no scheduler**. An exhaustive grep of `bridge/`, `app/` and
-`harness.yaml` for `apscheduler|crontab|cron|scheduler|interval|timer` found: a diffusion sampler
+`motdeck.yaml` for `apscheduler|crontab|cron|scheduler|interval|timer` found: a diffusion sampler
 named "scheduler", a comment about upstream Hermes's cron ticker, `goosed` being spawned with
 `--enable-scheduler` that **the bridge never calls**, and one real recurring loop — the 15-second RAM
 sampler in `bridge/core/memory.py` (`start_sampler`), which samples memory and cannot run jobs. The
@@ -418,7 +418,7 @@ plainly: **a first slice with no scheduler at all is a real product**, and it is
 
 **(b) On an event.** Subscribe the runner to `GET /api/events`, which already carries component, job
 and memory events — so "when a song finishes" and "when a download completes" are nearly free. "When a
-file appears" needs one new primitive: a watched folder (`~/Harness/Inbox` or similar). Small.
+file appears" needs one new primitive: a watched folder (`~/MOT Deck/Inbox` or similar). Small.
 
 **(c) On a clock.** Net-new, and it is not mainly an engineering question — **it is a product question,
 because a personal Mac is asleep at 08:00.** Three candidate answers:

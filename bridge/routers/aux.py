@@ -61,7 +61,7 @@ async def aux_set(req: Request) -> JSONResponse:
 def aux_start(req: Request) -> JSONResponse:
     """Launch the aux model on its own port using the SAME engine dispatch as the
     main runner (registry format: gguf→llama-server, mlx→mlx servers). The old
-    `jan serve` path knew nothing about harness-downloaded models."""
+    `jan serve` path knew nothing about motdeck-downloaded models."""
     import json as _json, os as _os, glob as _glob
     note = ""                    # the W-04 line about a foreign binary, "" when ours
     ax = cfg().get("aux", {}) or {}
@@ -173,7 +173,7 @@ def aux_start(req: Request) -> JSONResponse:
     # thing an hour later will be looking (bug-echo W-04). `note` is "" on every ordinary
     # start, so this costs the normal path nothing.
     if note:
-        logf.write(("[harness] " + note + "\n").encode())
+        logf.write(("[motdeck] " + note + "\n").encode())
         logf.flush()
     proc = subprocess.Popen(cmd, stdout=logf, stderr=logf, start_new_session=True)
     # ⛔ AND WE WRITE DOWN THE PID (U64) — without it Stop aux has no identity to verify,

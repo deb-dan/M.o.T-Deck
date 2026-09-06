@@ -18,7 +18,7 @@ try:
 except ModuleNotFoundError:
     # The operator-facing executable must work on a stock macOS shell. Re-enter with
     # this exact root's bridge interpreter rather than requiring a global dependency
-    # or accidentally borrowing another Harness copy's environment.
+    # or accidentally borrowing another MOT Deck copy's environment.
     _root = Path(__file__).resolve().parents[1]
     _python = _root / "data" / "bridge-venv" / "bin" / "python"
     if _python.is_file() and os.access(_python, os.X_OK) \
@@ -38,9 +38,9 @@ RUNNER_CONSUMERS = (
 
 
 def _load(root: Path) -> dict:
-    value = yaml.safe_load((root / "harness.yaml").read_text()) or {}
+    value = yaml.safe_load((root / "motdeck.yaml").read_text()) or {}
     if not isinstance(value, dict):
-        raise ValueError("harness.yaml root must be a mapping")
+        raise ValueError("motdeck.yaml root must be a mapping")
     return value
 
 
@@ -104,9 +104,9 @@ def plan(root: Path, *, rotate: bool,
     # initial provision, rotation always changes the runner key, while preservation
     # changes it only when no manifest key existed and a new one must be generated.
     runner_key_changed = bool(rotate_active_managed or (not stored and (
-        rotate or not manifest_values["MOT_RUNNER_API_KEY"])))
-    aux_existing = bool(manifest_values["MOT_AUX_API_KEY"] or
-                        (stored or {}).get("MOT_AUX_API_KEY"))
+        rotate or not manifest_values["MOT_DECK_RUNNER_API_KEY"])))
+    aux_existing = bool(manifest_values["MOT_DECK_AUX_API_KEY"] or
+                        (stored or {}).get("MOT_DECK_AUX_API_KEY"))
     return {
         "store": "already-provisioned" if stored else "will-create",
         "yaml": "will-scrub" if any(manifest_values.values()) else "already-scrubbed",
@@ -137,16 +137,16 @@ def apply_migration(root: Path, *, rotate: bool,
         desired = localsecrets.generate()
         # Rotating active managed credentials must not silently change account
         # identity or the externally consumed auxiliary key.
-        desired["MOT_ODYSSEUS_ADMIN_USER"] = existing["MOT_ODYSSEUS_ADMIN_USER"]
-        desired["MOT_AUX_API_KEY"] = existing["MOT_AUX_API_KEY"]
+        desired["MOT_DECK_ODYSSEUS_ADMIN_USER"] = existing["MOT_DECK_ODYSSEUS_ADMIN_USER"]
+        desired["MOT_DECK_AUX_API_KEY"] = existing["MOT_DECK_AUX_API_KEY"]
     elif existing:
         desired = existing
     elif rotate:
         desired = localsecrets.generate()
         # Username migration is a separate account-identity operation. Preserve the
         # current account while rotating its password and every local API key.
-        if before["MOT_ODYSSEUS_ADMIN_USER"]:
-            desired["MOT_ODYSSEUS_ADMIN_USER"] = before["MOT_ODYSSEUS_ADMIN_USER"]
+        if before["MOT_DECK_ODYSSEUS_ADMIN_USER"]:
+            desired["MOT_DECK_ODYSSEUS_ADMIN_USER"] = before["MOT_DECK_ODYSSEUS_ADMIN_USER"]
         # The optional aux server is launched by the Models pane, while its key may
         # have been copied into Odysseus's user-owned Background Tasks endpoint.  M.O.T
         # has no authoritative, transactional API for that endpoint configuration.
@@ -154,8 +154,8 @@ def apply_migration(root: Path, *, rotate: bool,
         # rotating it here would knowingly strand that endpoint (and any running aux
         # server) on the old value.  A future managed endpoint adapter can perform an
         # explicit coordinated auxiliary-key rotation with independent verification.
-        if before["MOT_AUX_API_KEY"]:
-            desired["MOT_AUX_API_KEY"] = before["MOT_AUX_API_KEY"]
+        if before["MOT_DECK_AUX_API_KEY"]:
+            desired["MOT_DECK_AUX_API_KEY"] = before["MOT_DECK_AUX_API_KEY"]
     else:
         desired = localsecrets.generate()
         for key, value in before.items():
@@ -165,9 +165,9 @@ def apply_migration(root: Path, *, rotate: bool,
     client = None
     authenticated = "not-installed"
     effective_before = existing or before
-    old_password = effective_before["MOT_ODYSSEUS_ADMIN_PASSWORD"]
-    new_password = desired["MOT_ODYSSEUS_ADMIN_PASSWORD"]
-    user = desired["MOT_ODYSSEUS_ADMIN_USER"]
+    old_password = effective_before["MOT_DECK_ODYSSEUS_ADMIN_PASSWORD"]
+    new_password = desired["MOT_DECK_ODYSSEUS_ADMIN_PASSWORD"]
+    user = desired["MOT_DECK_ODYSSEUS_ADMIN_USER"]
     password_needs_change = False
     if _installed_odysseus(data):
         client = client_factory(base_url=f"http://127.0.0.1:{_ody_port(data)}",
@@ -226,11 +226,11 @@ def apply_migration(root: Path, *, rotate: bool,
     # protected store exists it is already the effective credential, even though YAML
     # is intentionally blank. Comparing that store back to blank YAML would create a
     # false rotation and an unnecessary restart loop on every idempotent rerun.
-    runner_key_changed = bool(desired["MOT_RUNNER_API_KEY"] !=
-                              effective_before["MOT_RUNNER_API_KEY"])
-    aux_preserved = bool(effective_before["MOT_AUX_API_KEY"] and
-                         desired["MOT_AUX_API_KEY"] ==
-                         effective_before["MOT_AUX_API_KEY"])
+    runner_key_changed = bool(desired["MOT_DECK_RUNNER_API_KEY"] !=
+                              effective_before["MOT_DECK_RUNNER_API_KEY"])
+    aux_preserved = bool(effective_before["MOT_DECK_AUX_API_KEY"] and
+                         desired["MOT_DECK_AUX_API_KEY"] ==
+                         effective_before["MOT_DECK_AUX_API_KEY"])
     return {
         "ok": True,
         "credentials": ("rotated-managed-secrets; aux-preserved"

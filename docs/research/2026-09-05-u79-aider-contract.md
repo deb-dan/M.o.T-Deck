@@ -12,7 +12,7 @@ Replace only `test_edit_format_whole_is_still_offered`'s stale `"whole" in HELP`
 predicate. Run the real parser twice with the repo-local executable:
 
 1. `[BIN, "--edit-format", "whole", "--help"]` must exit 0 and return usage text;
-2. `[BIN, "--edit-format", "__harness_invalid_format__", "--help"]` must exit nonzero
+2. `[BIN, "--edit-format", "__motdeck_invalid_format__", "--help"]` must exit nonzero
    and name the rejected sentinel in its output.
 
 The invalid control is required: without it, a parser that silently ignores the option

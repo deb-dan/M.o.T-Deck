@@ -8,7 +8,7 @@ mkdir -p data/logs
 
 # shellcheck disable=SC1091
 source data/bridge-venv/bin/activate
-PORT=$(awk '/^bridge:/{f=1} f && /port:/{print $2; exit}' harness.yaml)
-echo "[harness] Bridge starting on http://127.0.0.1:${PORT}  (Ctrl+C to stop)"
+PORT=$(awk '/^bridge:/{f=1} f && /port:/{print $2; exit}' motdeck.yaml)
+echo "[motdeck] Bridge starting on http://127.0.0.1:${PORT}  (Ctrl+C to stop)"
 exec python -m uvicorn bridge.app:app --host 127.0.0.1 --port "${PORT}" 2>&1 \
   | tee -a data/logs/bridge.log

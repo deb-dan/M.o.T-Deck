@@ -78,7 +78,7 @@ eq("the module and the script agree on the installer path",
    ooai.INSTALLER, "scripts/install_oo_ai_plugin.sh")
 check("it is NOT a component — no port, no manifest key, no venv, no registry row",
       "flip_installed" not in SRC and "uv venv" not in SRC
-      and "harness.yaml" not in SRC)
+      and "motdeck.yaml" not in SRC)
 check("it is its OWN installer, not folded into install_onlyoffice.sh — separate "
       "upstream, separate pin, separate licence line",
       "install_onlyoffice.sh" in SRC and "PLUGIN_SHA256=" in SRC)
@@ -300,7 +300,7 @@ check("…and it names the installer, so the gate is actionable",
 # A runner-down gate against a plugin that IS installed, using the real tree when it
 # is there — this is the sentence Debi actually reads.
 real = ooai.install_state(ROOT)
-snap = Path(os.path.expanduser("~/Library/Application Support/Harness"))
+snap = Path(os.path.expanduser("~/Library/Application Support/MOT Deck"))
 base = ROOT if real["installed"] else (snap if ooai.install_state(snap)["installed"]
                                        else None)
 if base is not None:
@@ -317,7 +317,7 @@ if base is not None:
     st = ooai.status(base, cfg_ok, lambda p: "live-model")
     check("plugin installed AND runner live ⇒ enabled true", st["enabled"] is True)
     eq("…and the gate sentence is empty", st["gate"], "")
-    check("…and the seed carries the LIVE model id, not harness.yaml's intent",
+    check("…and the seed carries the LIVE model id, not motdeck.yaml's intent",
           st["seed"]["storage"]["models"][0]["id"] == "live-model")
 
     # ⚠️ THE FENCE AGAINST A SILENT PLUGIN BUMP. AI.Storage.load throws our whole seed
@@ -799,7 +799,7 @@ check("…and it distinguishes a model that is THINKING from one that is WRITING
       "'AI is thinking'" in OO and "'AI is writing — '" in OO
       and "'AI is working — nothing has come back yet'" in OO)
 check("…with explicit LIGHT colours, like body.embed above: the editor is pinned to "
-      "default-light under every harness design, so a chip on our dark tokens would be "
+      "default-light under every motdeck design, so a chip on our dark tokens would be "
       "the one dark object on a white sheet",
       "#aichip{" in OO and "background:#ffffff" in OO and "var(--bg)" not in OO.split(
           "#aichip{")[1].split("}")[0])

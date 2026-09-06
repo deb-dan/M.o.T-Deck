@@ -1,7 +1,7 @@
 """Vision attachments on the direct lane — the pure content builder.
 
 `build_user_content` decides what the runner sees for a user turn that carries an
-attached image. It is the ONLY place the harness turns a dataURL into OpenAI image
+attached image. It is the ONLY place MOT Deck turns a dataURL into OpenAI image
 parts, and the only guard between an attachment and a model that can't see it, so
 its decision table is pinned here. Extracted from bridge/app.py by ast so neither
 fastapi nor websockets is required.

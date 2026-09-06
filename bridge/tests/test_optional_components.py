@@ -53,7 +53,7 @@ def test_comfyui_keeps_every_write_out_of_vendor():
 def test_unsloth_port_is_never_8888():
     """8888 belongs to Debi's standalone Unsloth app; our listener-scoped port clear
     would kill it on every start."""
-    manifest = yaml.safe_load((ROOT / "harness.yaml").read_text())
+    manifest = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
     assert manifest["components"]["unsloth"]["port"] == 8899
     assert "US_PORT=8899" in START, "the awk fallback must mirror the manifest"
     for rel in ("scripts/start_component.sh", "scripts/install_component.sh",
@@ -68,5 +68,5 @@ def test_port_is_read_from_the_manifest_not_hardcoded():
     for name, fallback in (("comfyui", "CU_PORT=8188"), ("unsloth", "US_PORT=8899")):
         var = "CU_PORT" if name == "comfyui" else "US_PORT"
         assert f"{var}=$(_manifest_value components.{name}.port int)" in START, \
-            f"{name}'s port is no longer read through the typed harness.yaml boundary"
+            f"{name}'s port is no longer read through the typed motdeck.yaml boundary"
         assert fallback in START

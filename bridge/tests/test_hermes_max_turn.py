@@ -1,7 +1,7 @@
 """Unit tests for the Hermes MAX-GENERATION-SEGMENT guard (2026-08-14h).
 
 REVISED from the 2026-08-14g total-turn cap after Debi's objection: capping TOTAL
-turn time punishes exactly the work the harness exists for — an hour-long research
+turn time punishes exactly the work MOT Deck exists for — an hour-long research
 turn that keeps making tool calls. What must be bounded is ONE UNBROKEN GENERATION
 SEGMENT, so the clock RESETS on tool.start / tool.complete and on card resolution
 (and still PAUSES while a card is pending).
@@ -258,19 +258,19 @@ check("a segment reset at t=590 cannot overrun at t=600",
 check("no reset for 601s DOES overrun",
       overrun(spent(601.0, 0.0), 600.0) is True)
 
-# ── WIRING: harness.yaml ─────────────────────────────────────────────────────
-YML = (ROOT / "harness.yaml").read_text()
-check("harness.yaml carries a TOP-LEVEL hermes block",
+# ── WIRING: motdeck.yaml ─────────────────────────────────────────────────────
+YML = (ROOT / "motdeck.yaml").read_text()
+check("motdeck.yaml carries a TOP-LEVEL hermes block",
       any(l.rstrip() == "hermes:" for l in YML.splitlines()))
-check("harness.yaml default is 600",
+check("motdeck.yaml default is 600",
       any(l.strip().startswith("max_turn_s: 600") for l in YML.splitlines()))
 try:
     import yaml as _yaml
     _c = _yaml.safe_load(YML)
-    check("harness.yaml parses and the guard reads 600 from it",
+    check("motdeck.yaml parses and the guard reads 600 from it",
           max_turn_s(_c) == 600.0)
 except ImportError:
-    print("  --  pyyaml absent: skipping the live harness.yaml read")
+    print("  --  pyyaml absent: skipping the live motdeck.yaml read")
 
 # ── WIRING: ship.sh hardening (task 2) ───────────────────────────────────────
 # NOTE (2026-08-21 ops slice): ship.sh also gained a contract gate, --restart and a
@@ -296,16 +296,16 @@ check("empty openapi body is NOT hashed",
 # The additive merge moved to one line-preserving transaction helper. Pin both the
 # call and the reason the old PyYAML null representer must not return.
 check("manifest merge still present",
-      'scripts/merge_manifest.py"' in SHIP and '"$ROOT/harness.yaml" "$DST/harness.yaml"' in SHIP)
+      'scripts/merge_manifest.py"' in SHIP and '"$ROOT/motdeck.yaml" "$DST/motdeck.yaml"' in SHIP)
 check("manifest merge no longer serializes live YAML through a null representer",
       "tag:yaml.org,2002:null" not in SHIP and "safe_dump" not in SHIP)
 check("ship never guesses that a Git lock is stale",
       ".git/HEAD.lock" not in SHIP and ".git/index.lock" not in SHIP)
 check("recompile rule still newer-than-binary",
-      '"$ROOT/app/main.swift" -nt "$APP/Contents/MacOS/Harness"' in SHIP)
+      '"$ROOT/app/main.swift" -nt "$APP/Contents/MacOS/MOTDeck"' in SHIP)
 check("listener-scoped port kill still present", "-sTCP:LISTEN" in SHIP)
-check("harness.yaml still never copied wholesale",
-      'cp "$ROOT/harness.yaml"' not in SHIP)
+check("motdeck.yaml still never copied wholesale",
+      'cp "$ROOT/motdeck.yaml"' not in SHIP)
 
 print(f"\n{PASS} checks passed" + (f", {len(FAIL)} FAILED: {FAIL}" if FAIL else ""))
 sys.exit(1 if FAIL else 0)

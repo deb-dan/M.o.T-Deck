@@ -1,4 +1,4 @@
-"""Harness-native voice capability — Phase B engine dispatch (FABLE-VOICE-CAPABILITY-SPEC).
+"""MOT Deck-native voice capability — Phase B engine dispatch (FABLE-VOICE-CAPABILITY-SPEC).
 
 One-shot subprocesses, never a resident server: `llama-tts` from OUR pinned llama.cpp
 build, and `python -m mlx_audio.tts.generate` from OUR mlx venv. No new port, no
@@ -1086,7 +1086,7 @@ def clip_length_verdict(secs: object, have_ffmpeg: object,
                           f"{REF_CLIP_MAX_SECS}s. The model only listens to the first "
                           f"~10s, so a long clip adds minutes of render time and no "
                           f"voice — trim it to ~10s, or install ffmpeg (it ships with "
-                          f"the voicebox / voicestudio install) and the harness will "
+                          f"the voicebox / voicestudio install) and MOT Deck will "
                           f"trim it for you.")
     return "warn", (f"that clip is {about} long — the model only listens to the first "
                     f"~10s, so the extra is render time for nothing. Trimming needs "
@@ -1160,7 +1160,7 @@ def validate_ref_choice(entry: "dict | None", path: object,
                 f"(format {entry_format(entry) or 'unknown'})")
     if entry_format(entry) == "tts-gguf":
         return ("llama.cpp models have no ref_audio parameter — llama-tts uses "
-                "--tts-speaker-file, a different mechanism the harness does not "
+                "--tts-speaker-file, a different mechanism MOT Deck does not "
                 "wire yet")
     if not isinstance(path, str):
         return "clip path must be a string"
@@ -2024,7 +2024,7 @@ def get_worker(entry: dict, root: "str | Path | None" = None,
     """The resident worker for `entry`, spawning or respawning as needed.
 
     `spawn_guard(size_bytes) -> str | None` is the ledger hook: the bridge owns
-    harness.yaml and the RAM budget, so voice.py asks rather than reads. A returned
+    motdeck.yaml and the RAM budget, so voice.py asks rather than reads. A returned
     string is the refusal shown to the user (VoiceBudget → 409). It is consulted
     ONLY on a real spawn — an already-resident model is already accounted for.
     """
@@ -2256,7 +2256,7 @@ def needs_ref_text(entry: "dict | None") -> bool:
 # VoiceStudio export dir, a folder of samples) without copying them into data/voices.
 #
 # ⚠️ PENDING FABLE QA — the folder LIST is persisted in its own json under data/,
-# NOT in harness.yaml. `_set_yaml_scalar` is a line-scan SCALAR writer; representing a
+# NOT in motdeck.yaml. `_set_yaml_scalar` is a line-scan SCALAR writer; representing a
 # list would mean teaching the critical ops path (which ship.sh's manifest merge also
 # round-trips) a new shape, and the empty-as-empty incident is a standing reminder of
 # what a yaml round-trip costs. A folder list is per-machine runtime state, exactly
@@ -2304,7 +2304,7 @@ def save_folders(folders: list, root: "str | Path | None" = None) -> None:
     """Atomic write, same tmp+replace shape as the registry."""
     p = folders_path(root)
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    tmp = p + ".harness-tmp"
+    tmp = p + ".motdeck-tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"folders": list(folders or [])[:FOLDER_LIST_MAX]}, f, indent=2)
     os.replace(tmp, p)

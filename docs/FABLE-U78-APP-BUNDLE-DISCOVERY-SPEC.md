@@ -8,17 +8,17 @@ the process-kill rule, and the delegation doctrine preserved in the archive.
 
 ## 0. Proven failure
 
-`scripts/ship.sh` assigns `APP="/Applications/Harness.app"` and refuses before its
+`scripts/ship.sh` assigns `APP="/Applications/MOT Deck.app"` and refuses before its
 gate when that exact directory is absent. On Debi's machine the installed bundle is
 `/Applications/M.O.T.app`; its `Info.plist` still carries the expected internal identity:
 
-- `CFBundleIdentifier = local.harness.app`
-- `CFBundleExecutable = Harness`
+- `CFBundleIdentifier = local.motdeck.app`
+- `CFBundleExecutable = MOT Deck`
 - `CFBundleName = M.O.T`
 - `CFBundleDisplayName = M.O.T`
 
-The expected live snapshot exists at `~/Library/Application Support/Harness`, and the
-repo build artifact remains `dist/Harness.app`. Finder can therefore install the same
+The expected live snapshot exists at `~/Library/Application Support/MOT Deck`, and the
+repo build artifact remains `dist/MOT Deck.app`. Finder can therefore install the same
 bundle under its localized display name even though the build output retains its legacy
 filename. Treating the filename as identity is the defect.
 
@@ -30,22 +30,22 @@ run `ship.sh`, component scripts, or app lifecycle commands. Never touch `vendor
 
 Add one pure/read-only resolver to `scripts/ship.sh`, before any gate or copy:
 
-1. If `HARNESS_APP_PATH` is non-empty, consider only that explicit path.
+1. If `MOT_DECK_APP_PATH` is non-empty, consider only that explicit path.
 2. Otherwise consider these exact paths:
-   - `/Applications/Harness.app`
+   - `/Applications/MOT Deck.app`
    - `/Applications/M.O.T.app`
-   - `$HOME/Applications/Harness.app`
+   - `$HOME/Applications/MOT Deck.app`
    - `$HOME/Applications/M.O.T.app`
 3. A candidate is valid only when all are true:
    - it is a directory;
    - `Contents/Info.plist` exists;
-   - `CFBundleIdentifier` read from that plist is exactly `local.harness.app`;
-   - `CFBundleExecutable` is exactly `Harness` and `Contents/MacOS/Harness` is
+   - `CFBundleIdentifier` read from that plist is exactly `local.motdeck.app`;
+   - `CFBundleExecutable` is exactly `MOT Deck` and `Contents/MacOS/MOTDeck` is
      executable (the later incremental-compile path targets that same executable).
 4. Zero valid candidates: fail before the gate with an actionable sentence listing the
-   accepted locations and the `HARNESS_APP_PATH` override.
+   accepted locations and the `MOT_DECK_APP_PATH` override.
 5. More than one valid candidate without an override: fail closed, list the paths, and
-   ask for an explicit `HARNESS_APP_PATH`. Never guess which installed copy owns the
+   ask for an explicit `MOT_DECK_APP_PATH`. Never guess which installed copy owns the
    user's running app.
 6. Exactly one valid candidate: canonicalize the existing bundle directory to a full
    physical path, assign that path to `APP`, and print one selection line before the
@@ -63,7 +63,7 @@ CLI seams so tests can pass temporary candidate roots without probing live appli
 Replace the filename/display-name AppleScript quit request with the stable bundle id:
 
 ```sh
-osascript -e 'tell application id "local.harness.app" to quit'
+osascript -e 'tell application id "local.motdeck.app" to quit'
 ```
 
 Keep `_ship_app_pids` as the post-request survivor check; because `APP` is now the
@@ -73,8 +73,8 @@ resolved bundle path, its executable-path evidence remains exact. Do not add `pk
 The canonical app-only commands in `CLAUDE.md` become:
 
 ```sh
-osascript -e 'tell application id "local.harness.app" to quit'
-open -b local.harness.app
+osascript -e 'tell application id "local.motdeck.app" to quit'
+open -b local.motdeck.app
 ```
 
 `ship.sh` itself must continue to open the exact resolved `APP`, not use Launch Services
@@ -83,28 +83,28 @@ bundle-id selection, so multiple registered copies cannot redirect the post-ship
 ## 3. Same-class echo
 
 `scripts/install_component.sh` searches installed FAT-app wheelhouses under only
-`Harness.app`. Extend that read-only candidate list to the same four filename/location
+`MOT Deck.app`. Extend that read-only candidate list to the same four filename/location
 forms so reinstall/bootstrap behavior does not fail later for the identical reason. Do
 not change candidate precedence outside adding the corresponding M.O.T forms.
 
-Audit all first-party executable shell/Python code for `/Applications/Harness.app` and
+Audit all first-party executable shell/Python code for `/Applications/MOT Deck.app` and
 name-based app lifecycle calls. Fix only operational reads/actions in this slice;
-historical prose and build-output paths (`dist/Harness.app`) remain valid. Report every
+historical prose and build-output paths (`dist/MOT Deck.app`) remain valid. Report every
 operational hit and disposition.
 
 ## 4. Permanent gates
 
 Update `bridge/contract_tests/test_app_identity_contract.py` so it pins the new truth:
 
-- build output remains `dist/Harness.app` with visible name M.O.T;
+- build output remains `dist/MOT Deck.app` with visible name M.O.T;
 - ship accepts either installed filename only after bundle-id/executable validation;
 - a spaced temporary candidate path is preserved;
 - wrong bundle id, missing/alternate/slash-containing executable declarations, and a
-  non-executable `Contents/MacOS/Harness` are rejected;
+  non-executable `Contents/MacOS/MOTDeck` are rejected;
 - zero candidates and ambiguous candidates fail closed;
 - explicit override selects only the requested valid candidate and rejects an invalid
   override without fallback;
-- quit uses `local.harness.app`, not the strings `Harness` or `M.O.T` as process identity;
+- quit uses `local.motdeck.app`, not the strings `MOT Deck` or `M.O.T` as process identity;
 - ship opens the exact resolved path;
 - install-component wheelhouse discovery includes both installed filenames.
 
@@ -130,7 +130,7 @@ Run:
 - Add U78 to `docs/UNFORGET.md` only after Sol verification, with the observed failure
   and accepted filenames.
 - Correct the naming note in `README.md` and the operational app-path text in
-  `docs/HARNESS-INTERNALS.md`; preserve the internal codename/snapshot conventions.
+  `docs/MOT-DECK-INTERNALS.md`; preserve the internal codename/snapshot conventions.
 - `VERSION` remains `1.5.76`. This is still an unshipped candidate: doctrine requires a
   successful `ship.sh` and real-stack walk before the release may become v1.5.77.
 - Builder must not edit docs, version, commit, push, or touch live paths. Sol owns those.

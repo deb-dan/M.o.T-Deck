@@ -1,4 +1,4 @@
-"""One transaction primitive for the live ``harness.yaml`` document (stdlib only)."""
+"""One transaction primitive for the live ``motdeck.yaml`` document (stdlib only)."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -21,7 +21,7 @@ def _require_regular(path: str, *, absent_ok: bool = False) -> os.stat_result | 
             return None
         raise
     if not stat.S_ISREG(info.st_mode):
-        raise ValueError(f"refusing non-regular harness.yaml state file: {path}")
+        raise ValueError(f"refusing non-regular motdeck.yaml state file: {path}")
     return info
 
 
@@ -30,7 +30,7 @@ def _read_regular(path: str) -> str:
     fd = os.open(path, flags)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise ValueError(f"refusing non-regular harness.yaml state file: {path}")
+            raise ValueError(f"refusing non-regular motdeck.yaml state file: {path}")
         with os.fdopen(fd, "r", encoding="utf-8") as fh:
             fd = -1
             return fh.read()
@@ -50,7 +50,7 @@ def _locked(path: str):
                      | getattr(os, "O_NOFOLLOW", 0), 0o600)
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise ValueError(f"refusing non-regular harness.yaml lock: {lock_path}")
+                raise ValueError(f"refusing non-regular motdeck.yaml lock: {lock_path}")
             fcntl.flock(fd, fcntl.LOCK_EX)
             yield absolute
         finally:
@@ -73,12 +73,12 @@ def transform_file(path, transform):
         else:
             new, result = changed, None
         if not isinstance(new, str):
-            raise TypeError("harness.yaml transform must return text")
+            raise TypeError("motdeck.yaml transform must return text")
         if new == old:
             return result
         directory = os.path.dirname(absolute) or "."
         mode = stat.S_IMODE(_require_regular(absolute).st_mode)
-        fd, temporary = tempfile.mkstemp(prefix=".harness-yaml-", suffix=".tmp",
+        fd, temporary = tempfile.mkstemp(prefix=".motdeck-yaml-", suffix=".tmp",
                                          dir=directory)
         try:
             os.fchmod(fd, mode)

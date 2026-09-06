@@ -70,7 +70,7 @@ def configure(monkeypatch, client: Client, *, user="admin", password="protected-
 def test_tab_enters_through_bridge_not_a_direct_password_form():
     swift = (ROOT / "app" / "main.swift").read_text()
     row = next(line for line in swift.splitlines()
-               if 'HarnessTab(id: "odysseus"' in line)
+               if 'MOTDeckTab(id: "odysseus"' in line)
     assert "127.0.0.1:8700/odysseus" in row
     assert "7860" not in row
 

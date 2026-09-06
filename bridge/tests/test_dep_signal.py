@@ -61,10 +61,10 @@ def ok(cond, label):
         print("FAIL " + label)
 
 
-# The dependency graph as harness.yaml actually declares it (read once, so a future
+# The dependency graph as motdeck.yaml actually declares it (read once, so a future
 # edit to the manifest is caught here rather than in production).
 import yaml                                                     # noqa: E402
-_CFG = yaml.safe_load((ROOT / "harness.yaml").read_text())
+_CFG = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
 HARD = {n: (c.get("depends_on") or []) for n, c in (_CFG.get("components") or {}).items()}
 
 
@@ -121,13 +121,13 @@ def test_runner_down():
         n = out[who]["needs"][0]
         ok(n["state"] == "down" and n["action"] == "start" and n["target"] == "runner",
            f"{who}'s offered action is to START the runner")
-    # OpenCode is here BY THE SOFT TABLE, and that matters: harness.yaml deliberately
+    # OpenCode is here BY THE SOFT TABLE, and that matters: motdeck.yaml deliberately
     # gives it depends_on: [] so a Start never drags the runner up. The signal and the
     # start closure are allowed to disagree; only this table may make them.
-    ok(HARD.get("opencode") == [], "harness.yaml still declares opencode depends_on: []")
+    ok(HARD.get("opencode") == [], "motdeck.yaml still declares opencode depends_on: []")
     ok("opencode" in NEEDS_SOFT, "…and the SOFT table is what puts it in the signal")
     # …and the DeepSeek lane, on exactly the same two terms.
-    ok(HARD.get("deepseek") == [], "harness.yaml still declares deepseek depends_on: []")
+    ok(HARD.get("deepseek") == [], "motdeck.yaml still declares deepseek depends_on: []")
     ok("deepseek" in NEEDS_SOFT, "…and the SOFT table is what puts IT in the signal too")
     # THE SENTENCE ITSELF, in her words rather than ours: the banner must lead with the
     # tab title the strip shows, never the internal id.
@@ -426,7 +426,7 @@ def test_the_failure_sentence_is_a_sentence():
                                    file_state="unknown")
     ok("could not read" in unknown["text"],
        "an unreadable path is reported as unreadable, never as deleted")
-    nomodel = start_failure_reason("ERROR: runner.model not set in harness.yaml")
+    nomodel = start_failure_reason("ERROR: runner.model not set in motdeck.yaml")
     ok("no model is pinned" in nomodel["text"], "the un-pinned case has its own line")
     # TOTALITY: whatever the script says, the card gets a non-empty sentence, and it is
     # never the raw multi-line vomit.
@@ -779,7 +779,7 @@ def test_a_switch_re_seeds_every_dependent():
     for who in ("hermes", "odysseus", "goose"):
         ok(who in src.split("def _rebind_dependents(")[1][:1400]
            or f"_rebind_{who}" in src, f"{who} is named in the fan-out")
-    ok("HARNESS_WIRE_MODEL" in src,
+    ok("MOT_DECK_WIRE_MODEL" in src,
        "…and the Odysseus seed is finally CALLED through its zero-caller seam")
     ok("repair_config_model" in src,
        "…and goose's dangling model choice is repaired file-side")
@@ -795,7 +795,7 @@ def test_a_switch_re_seeds_every_dependent():
 # — pick one in Models" on the line below it. /api/status agreed with the green half in
 # every field — pin = pin_intent = live_id = Qwen3.5-9B-Q4_0, running true, health ok —
 # and carried the red half anyway, in `last_error`, with stale: false, model: "",
-# path: "". The sentence was TRUE about a start attempt made while harness.yaml had no
+# path: "". The sentence was TRUE about a start attempt made while motdeck.yaml had no
 # runner.model; it was published as though it described now.
 #
 # REPRODUCED before it was fixed, on a scratch bridge on a free port with the runner

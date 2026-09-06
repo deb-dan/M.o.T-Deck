@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   let requestCounter = 0;
-  const MARKER_KEY = 'harness-active-turns-v1';
+  const MARKER_KEY = 'motdeck-active-turns-v1';
 
   function markerKey(lane, session){ return lane + '\n' + session; }
 
@@ -175,11 +175,11 @@
     } else if (j.type === 'hermes_session') {
       if (j.id) {
         chatPane.hermesSid = j.id; turn.hermesSid = j.id;
-        localStorage.setItem('harness-hermes-sid', j.id);
+        localStorage.setItem('motdeck-hermes-sid', j.id);
       }
       if (j.stored_id) {
         chatPane.hermesStoredSid = j.stored_id;
-        localStorage.setItem('harness-hermes-stored', j.stored_id);
+        localStorage.setItem('motdeck-hermes-stored', j.stored_id);
       }
     } else if (j.type === 'hermes_status') {
       turnStage('prefill (bridge says hermes is working)');
@@ -410,7 +410,7 @@
       hermesSid:String(record.session_id || ''), ctl:new AbortController(), holder:holder,
       ended:false, detached:false, timer:null, stopArmed:false, lastSeq:0, recovered:true};
     chatPane.hermesSid = turn.hermesSid || chatPane.hermesSid;
-    if (turn.hermesSid) localStorage.setItem('harness-hermes-sid', turn.hermesSid);
+    if (turn.hermesSid) localStorage.setItem('motdeck-hermes-sid', turn.hermesSid);
     chatPane.curTurn = turn; chatPane.busy = true; sendPaint('Stop');
     if (seed.pending_approval) {
       turnStage('awaiting approval');
@@ -462,11 +462,11 @@
     if (!response.ok || !made.id || !made.stored_id)
       throw new Error(made.error || 'Hermes created no durable live/stored identity');
     chatPane.hermesSid = made.id;
-    localStorage.setItem('harness-hermes-sid', made.id);
+    localStorage.setItem('motdeck-hermes-sid', made.id);
     chatPane.hermesStoredSid = made.stored_id || null;
     if (chatPane.hermesStoredSid)
-      localStorage.setItem('harness-hermes-stored', chatPane.hermesStoredSid);
-    else localStorage.removeItem('harness-hermes-stored');
+      localStorage.setItem('motdeck-hermes-stored', chatPane.hermesStoredSid);
+    else localStorage.removeItem('motdeck-hermes-stored');
     return made;
   }
 
@@ -511,7 +511,7 @@
     }
   }
 
-  window.HarnessTurnStream = {create:create, active:active, metadata:metadata,
+  window.MOTDeckTurnStream = {create:create, active:active, metadata:metadata,
     reconcile:reconcile, remember:remember, forget:forget,
     stop:stop, consume:consume, recover:recover, recoverHermes:recoverHermes,
     prepareHermesSession:prepareHermesSession, renderHermesSnapshot:renderHermesSnapshot,
@@ -533,8 +533,8 @@ async function stopTurnNow(reason){
   if (!chatPane.curTurn && !chatPane.busy) return false;
   const turn = chatPane.curTurn;
   if (turn && turn.lane === 'hermes') hermesStop(reason);
-  else if (turn && turn.id && window.HarnessTurnStream) {
-    try { await HarnessTurnStream.stop(turn); } catch (_) {}
+  else if (turn && turn.id && window.MOTDeckTurnStream) {
+    try { await MOTDeckTurnStream.stop(turn); } catch (_) {}
   }
   forceEndTurn(reason);
   if (!chatPane.curTurn && !chatPane.busy) return true;

@@ -40,7 +40,7 @@ def _run(*args) -> str:
 
 
 def _pin() -> str:
-    c = yaml.safe_load(open(os.path.join(ROOT, "harness.yaml"), encoding="utf-8").read())
+    c = yaml.safe_load(open(os.path.join(ROOT, "motdeck.yaml"), encoding="utf-8").read())
     return str(c["build"]["opencode_pin"])
 
 

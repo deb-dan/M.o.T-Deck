@@ -3,7 +3,7 @@
 
 WRITES exactly two sections of $DSH_HOME/settings.yaml and nothing else:
 
-  llm-pi-ai.providers["mot-deck"]   the OpenAI-compatible route -> the harness runner,
+  llm-pi-ai.providers["mot-deck"]   the OpenAI-compatible route -> MOT Deck runner,
                                     with the registry's models enumerated as facts.
   agent-default-model              {provider, model} — SEEDED when unset, REPLACED
                                     when it dangles against OUR route, HONOURED
@@ -22,7 +22,7 @@ ENV (all read here, nothing implicit):
   DS_BASE        the runner's base url (e.g. http://127.0.0.1:6767/v1)
   DS_KEY_ENV     the NAME of the env var dsh should read the key from (not the key)
   DS_MODEL       the model to seed a default from (a CANDIDATE, never an answer)
-  HARNESS_ROOT   where data/models.json lives (default: cwd)
+  MOT_DECK_ROOT   where data/models.json lives (default: cwd)
 
 ⚠️ `DS_`, NOT `DSH_`, AND THAT IS DELIBERATE RATHER THAN TERSE. `DSH_*` is UPSTREAM'S
 OWN environment namespace — DSH_HOME, DSH_TELEMETRY_DISABLED, DSH_TELEMETRY_MODE,
@@ -124,7 +124,7 @@ except Exception:                                                   # noqa: BLE0
     # The house rule (seed_hermes_provider.py): a missing PyYAML must NEVER fail a
     # Start. Say it and leave the file untouched — a lane with no provider is
     # recoverable; a lane whose Start refuses is not.
-    print("[harness] WARNING: PyYAML unavailable — DeepSeek provider NOT seeded")
+    print("[motdeck] WARNING: PyYAML unavailable — DeepSeek provider NOT seeded")
     raise SystemExit(0)
 
 PID = "mot-deck"                    # our route id, everywhere — never spelled twice
@@ -133,7 +133,7 @@ PRODUCT_NAME = "MOT Deck (local)"   # the DISPLAY name, and the same string the 
 NS = "llm-pi-ai"                    # the settings namespace the adapter registers
 DEFAULT_NS = "agent-default-model"  # the deployment default an entry point resolves
 API = "openai-completions"          # the protocol; ours is an OpenAI-compatible gateway
-MARKER = "harness_seed_state.json"  # written beside settings.yaml
+MARKER = "motdeck_seed_state.json"  # written beside settings.yaml
 
 
 # ── S29: the ONE definition of an offerable model (bridge/core/modelreg.py) ──
@@ -145,7 +145,7 @@ def _load_modelreg():
     try:
         p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          os.pardir, "bridge", "core", "modelreg.py")
-        spec = importlib.util.spec_from_file_location("harness_modelreg", p)
+        spec = importlib.util.spec_from_file_location("motdeck_modelreg", p)
         if spec is None or spec.loader is None:
             return None
         mod = importlib.util.module_from_spec(spec)
@@ -163,7 +163,7 @@ def key_env_name(name: str = PRODUCT_NAME) -> str:
 
     Deliberately the same shape gooseprov.api_key_env() derives ("the provider name
     upper-cased + _API_KEY") rather than a second hand-picked constant, because two
-    hand-picked names is how the goose lane ended up with a `HARNESS_RUNNER_API_KEY`
+    hand-picked names is how the goose lane ended up with a `MOT_DECK_RUNNER_API_KEY`
     that nothing read. "MOT Deck (local)" -> MOT_DECK_LOCAL_API_KEY.
 
     ⚠️ NOT byte-identical to gooseprov's answer for the same product name
@@ -235,7 +235,7 @@ def catalog(registry) -> list:
             ctx = 0
         if ctx > 0:
             # ⚠️ builder numbers, and they mean different things: contextWindow is the
-            # registry's own fact; maxTokens mirrors the harness's 4096 max_tokens
+            # registry's own fact; maxTokens mirrors MOT Deck's 4096 max_tokens
             # default and BECOMES the request default ("a model's CONFIGURED maxTokens
             # becomes the seam's defaultMaxTokens"), so it must be a cap we actually
             # want sent. Both omitted when ctx is unknown — the route then falls back
@@ -273,7 +273,7 @@ def validate_route(block) -> str:
     if not str(block.get("api") or "").strip():
         return "no `api` protocol"
     if not str(block.get("baseURL") or "").strip():
-        return "no `baseURL` (the runner endpoint is empty in harness.yaml)"
+        return "no `baseURL` (the runner endpoint is empty in motdeck.yaml)"
     ms = block.get("models")
     if not isinstance(ms, list) or not ms:
         return ("no models — a hand-declared route with an empty `models` list is "
@@ -390,14 +390,14 @@ def plan_default(cur, want, model_ids):
 
 
 def main() -> int:
-    root = os.environ.get("HARNESS_ROOT") or os.getcwd()
+    root = os.environ.get("MOT_DECK_ROOT") or os.getcwd()
     path = os.environ.get("DS_SETTINGS") or ""
     base = (os.environ.get("DS_BASE") or "").strip()
     key_env = (os.environ.get("DS_KEY_ENV") or "").strip() or key_env_name()
     want = (os.environ.get("DS_MODEL") or "").strip()
 
     if not path:
-        print("[harness] deepseek config: DS_SETTINGS not set — nothing written")
+        print("[motdeck] deepseek config: DS_SETTINGS not set — nothing written")
         return 1
 
     registry = (MR.load_registry(root) if MR is not None
@@ -413,14 +413,14 @@ def main() -> int:
         # stopped, the disk unplugged, the rescan not yet run. Leaving the previous
         # good block in place is strictly better than replacing it with something the
         # adapter will reject.
-        print("[harness] deepseek config: NOT WRITTEN — %s" % bad)
-        print("[harness]   the existing settings.yaml is left exactly as it was; run "
+        print("[motdeck] deepseek config: NOT WRITTEN — %s" % bad)
+        print("[motdeck]   the existing settings.yaml is left exactly as it was; run "
               "Rescan in Models (or start the runner) and Start again.")
         return 0
 
     doc, err = load_doc(path)
     if err:
-        print("[harness] deepseek config: %s" % err)
+        print("[motdeck] deepseek config: %s" % err)
         return 0
 
     # ── MERGE, NEVER OVERWRITE. Only the keys we own are replaced, so every other
@@ -438,7 +438,7 @@ def main() -> int:
         # so, because it is the one case where we drop something the user may have
         # written.
         if isinstance(provs, list) and provs:
-            print("[harness]   REPAIRED: llm-pi-ai.providers was the pre-release LIST "
+            print("[motdeck]   REPAIRED: llm-pi-ai.providers was the pre-release LIST "
                   "shape (which fails to load upstream) — converted to a mapping; %d "
                   "hand-written entr%s could not be carried over"
                   % (len(provs), "y" if len(provs) == 1 else "ies"))
@@ -473,7 +473,7 @@ def main() -> int:
     try:
         save_doc(path, doc)
     except Exception as e:                                          # noqa: BLE001
-        print("[harness] deepseek config: could not write %s (%s) — left untouched"
+        print("[motdeck] deepseek config: could not write %s (%s) — left untouched"
               % (path, str(e)[:100]))
         return 1
 
@@ -497,17 +497,17 @@ def main() -> int:
         pass                            # the marker is diagnostics, never the gate
 
     for r in repairs:
-        print("[harness]   REPAIRED: %s" % r)
+        print("[motdeck]   REPAIRED: %s" % r)
     dropped = before - len(models)
     sel = doc.get(DEFAULT_NS) if isinstance(doc.get(DEFAULT_NS), dict) else {}
-    print("[harness] deepseek config -> %s" % path)
-    print("[harness]   provider %s (%s) -> %s · %d model(s)%s · default %s"
+    print("[motdeck] deepseek config -> %s" % path)
+    print("[motdeck]   provider %s (%s) -> %s · %d model(s)%s · default %s"
           % (PID, PRODUCT_NAME, base or "(no endpoint!)", len(models),
              (" (%d dropped — gone from the registry or from disk)" % dropped)
              if dropped > 0 else "",
              ("%s/%s" % (sel.get("provider"), sel.get("model")))
              if sel.get("model") else "unset"))
-    print("[harness]   key: read by dsh from $%s at request time — the secret is NOT "
+    print("[motdeck]   key: read by dsh from $%s at request time — the secret is NOT "
           "in this file" % key_env)
     return 0
 

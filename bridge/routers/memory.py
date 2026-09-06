@@ -82,7 +82,7 @@ def _live_slot() -> dict:
     counting it is how an advisor tells you a 7 GB model will not fit while the 20 GB
     one it replaces is still on the books.
 
-    ⚠️ THE LIVE MODEL IS WHAT THE RUNNER REPORTS SERVING, NOT WHAT harness.yaml PINS.
+    ⚠️ THE LIVE MODEL IS WHAT THE RUNNER REPORTS SERVING, NOT WHAT motdeck.yaml PINS.
     The two can disagree, and the adversarial pass hit it live: a switch whose
     readiness probe failed reverted the PIN to the old model while the process went on
     serving the NEW one — and the ledger then labelled the pinned model "Live · ~5.0

@@ -191,7 +191,7 @@ console.log('\n1. the nav seam — sidebar-only, and NOT tab_only');
      'no other nav row wears its glyph');
   ok(['✦', '▣', '◐', '«', '⧉'].indexOf(e.ico) < 0,
      '…and it is not a chrome control\u2019s mark either');
-  ok(swift.indexOf('HarnessTab(id: "api"') < 0,
+  ok(swift.indexOf('MOTDeckTab(id: "api"') < 0,
      'the shell declares NO api tab — a sidebar-only entry must have nothing to pin');
   // nav.py is the AUTHORITY; the panel is the mirror.
   ok(/\{"id": "api",\s+"kind": "view",\s+"bars": \("sidebar",\), "always": True\}/.test(navpy),
@@ -246,7 +246,7 @@ console.log('\n2. the wiring');
   // the empty-markup rule: nothing in the document may be a fact that can go stale
   const view = /<div id="view-api" hidden>[\s\S]*?\n  <\/div>/.exec(html)[0];
   ok(!/mot-/.test(view), 'the DOCUMENT contains no key-shaped literal');
-  ok(!/127\.0\.0\.1:\d/.test(view), '…and no hard-coded endpoint (it comes from harness.yaml)');
+  ok(!/127\.0\.0\.1:\d/.test(view), '…and no hard-coded endpoint (it comes from motdeck.yaml)');
   ok((view.match(/<table/g) || []).length === 0,
      '…and no table markup: every row is rendered from real data or not at all');
 }
@@ -286,7 +286,7 @@ ok(/>Serving</.test(daily) && /Qwen3\.6-27B-Fable-Q4_K_S/.test(daily),
    '…and the status + loaded model come from the status the panel already holds');
 ok(/mot-1a2b…/.test(daily) && !/mot-1a2b[0-9a-f]/.test(daily),
    'daily: a key row shows its PREFIX and nothing more');
-ok(/Harness built-in/.test(daily) && /harness\.yaml/.test(daily),
+ok(/MOT Deck built-in/.test(daily) && /motdeck\.yaml/.test(daily),
    '…and the built-in is named as a row that cannot be revoked here');
 ok(/>prompt 14\.2k</.test(daily) && />generated 2211</.test(daily),
    'daily: the runner totals are chips off /metrics — thousands abbreviated, small '
@@ -347,7 +347,7 @@ ok(/>Loading</.test(loading),
 
 // (g) NO CONFIG AT ALL, and the null shapes — nothing may throw.
 ok(/No runner endpoint is configured/.test(M.apiEndpointHtml({ base_url: '' }, null)),
-   'no runner in harness.yaml lands on an empty line, not a blank');
+   'no runner in motdeck.yaml lands on an empty line, not a blank');
 ok(M.apiEndpointHtml(null, null).indexOf('cs-empty') >= 0, 'a null keys payload renders');
 ok(M.apiKeysHtml(null, null, '').indexOf('cs-empty') >= 0, 'a null keys section renders');
 ok(M.apiLogHtml(null).indexOf('cs-empty') >= 0, 'a null log renders');

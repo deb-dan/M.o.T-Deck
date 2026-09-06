@@ -1,6 +1,6 @@
 # aider — pin decision + PTY-tab integration recon (2026-08-20, Opus-5 research)
 
-Brief: Fable approved aider as the harness's coding agent in a PTY tab. This is the pin
+Brief: Fable approved aider as MOT Deck's coding agent in a PTY tab. This is the pin
 decision + the integration shape. **Nothing built.** Evidence = URL or `file:line`.
 Sandbox note: outbound `curl` is proxy-blocked (403 on CONNECT) and `api.github.com` was
 **not** reachable; everything below came from `web_fetch`/WebSearch on HTML+raw files, or
@@ -55,9 +55,9 @@ project's centre of gravity has moved away from that use case.
 - NOT the `v0.86.0` tag: it is ~1 year old and predates the Feb-2026 dependency refresh
   (openai 2.x / litellm 1.82) that a current OpenAI-compatible endpoint wants.
 - An untagged commit pin is **native to this repo's doctrine** — `odysseus` is already pinned
-  to a bare commit on a non-default branch (`harness.yaml`, odysseus pin `25c9e73` on `dev`).
+  to a bare commit on a non-default branch (`motdeck.yaml`, odysseus pin `25c9e73` on `dev`).
 - ⚠️ **The exact SHA could not be resolved from the sandbox.** Resolve at build time and record
-  it in `harness.yaml` with the date, exactly as the odysseus pin does:
+  it in `motdeck.yaml` with the date, exactly as the odysseus pin does:
   `git ls-remote https://github.com/Aider-AI/aider.git refs/heads/main`
 - **Plan B, documented not adopted:** if upstream `main` goes >6 months without a commit, move
   to `cecli-dev/cecli` at a release tag (Apache-2.0 verified, so the licence stays clean) and
@@ -94,10 +94,10 @@ LM Studio lane: *"Even though LM Studio doesn't require an API Key out of the bo
 … API_KEY must have a dummy value like `dummy-api-key` set or the client request will fail
 trying to send an empty `Bearer` token"* (https://aider.chat/docs/llms/lm-studio.html). ⚠️
 UNVERIFIED as an explicit statement for the generic `openai/` lane, but it is the same client
-and the same empty-Bearer failure. Use `OPENAI_API_KEY=harness-local`.
+and the same empty-Bearer failure. Use `OPENAI_API_KEY=motdeck-local`.
 
 ⚠️ **Use `wire_model_id()`, do not reinvent it.** `bridge/app.py` already encodes the rule the
-harness learned the hard way: gguf → the registry id (llama-server is launched with `--alias`),
+motdeck learned the hard way: gguf → the registry id (llama-server is launched with `--alias`),
 **MLX → the registry PATH** (mlx_lm.server resolves the request's `model` field as a model to
 LOAD; a registry id 404s on huggingface.co → 400). So the argv is
 `--model openai/<wire_model_id(entry)>`.
@@ -114,7 +114,7 @@ enforces token limits, it only reports token limit errors from the API provider"
 group owns `--ctx-size`). Behavioural settings (e.g. pinning `edit_format` per model) go in
 `.aider.model.settings.yml`.
 
-### 2.4 Lockdown flags for a harness default
+### 2.4 Lockdown flags for a motdeck default
 | flag | env var | why |
 |---|---|---|
 | `--analytics-disable` | `AIDER_ANALYTICS_DISABLE` | **permanent** opt-out. `--no-analytics` is session-only. Default behaviour enables analytics *"for a random subset of users"* (https://aider.chat/docs/more/analytics.html) |
@@ -130,7 +130,7 @@ group owns `--ctx-size`). Behavioural settings (e.g. pinning `edit_format` per m
 
 ⚠️ **Do NOT set `--yes-always`** and **do NOT set `--no-git`** — see guardrails, §3.4.
 Config precedence is `.aider.conf.yml` home → git root → cwd, **last wins**
-(https://aider.chat/docs/config/aider_conf.html), so a harness-written per-workspace file
+(https://aider.chat/docs/config/aider_conf.html), so a MOT Deck-written per-workspace file
 beats a user's home config — decide deliberately which layer we own.
 
 ---
@@ -170,7 +170,7 @@ Swift tab "Coding"  ──▶  http://127.0.0.1:8700/pty/aider      (static page
                              │  bytes ⇄ bytes;  \x1b[RESIZE:c;r]  consumed server-side
                              ▼
    pty.openpty() + Popen(argv, stdin/stdout/stderr=slave, start_new_session=True, cwd=<workspace>)
-   env: OPENAI_API_BASE=http://127.0.0.1:6767/v1   OPENAI_API_KEY=harness-local
+   env: OPENAI_API_BASE=http://127.0.0.1:6767/v1   OPENAI_API_KEY=motdeck-local
         TERM=xterm-256color   (COLUMNS/LINES unset — TIOCSWINSZ owns the size)
    argv: data/aider-venv/bin/aider --model openai/<wire_model_id> --edit-format whole
          --analytics-disable --no-check-update --no-auto-commits --no-dirty-commits
@@ -203,9 +203,9 @@ Swift tab "Coding"  ──▶  http://127.0.0.1:8700/pty/aider      (static page
    one) and a sane `TERM`. ⚠️ Unverified in a WKWebView: mouse reporting and bracketed paste.
 
 ### 3.4 Guardrails — say this part out loud
-- **The harness path-guard fence does NOT cover aider.** `guards/harness-path-guard` is a
+- **MOT Deck path-guard fence does NOT cover aider.** `guards/motdeck-path-guard` is a
   *Hermes plugin* on Hermes's `pre_tool_call` hook. aider is a separate process outside it.
-- **Run only in a chosen workspace dir** (`cwd=`), never `$HOME`, never the harness repo by
+- **Run only in a chosen workspace dir** (`cwd=`), never `$HOME`, never MOT Deck repo by
   default. A workspace picker is slice 2; slice 1 hardcodes one configured path.
 - **Keep git ON.** `--no-auto-commits` (don't commit for the user) but **not** `--no-git` —
   git is the *only* undo aider has (`/undo`, `/diff`). Disabling it removes the safety net
@@ -222,7 +222,7 @@ Swift tab "Coding"  ──▶  http://127.0.0.1:8700/pty/aider      (static page
   commit, installed editable into **`data/aider-venv`**. This also makes
   `bridge/contract_tests/` possible (they read vendored source).
 - **Python:** upstream `pyproject.toml` says `requires-python = ">=3.10,<3.15"`. Our bundled
-  standalone CPython is **3.12.11** (`harness.yaml` `build.python_version`) — in range.
+  standalone CPython is **3.12.11** (`motdeck.yaml` `build.python_version`) — in range.
 - **uv resolved by explicit path** (the standing Finder-minimal-PATH rule), falling back to
   `python -m pip`; never `bin/pip`.
 - **Size ⚠️ ESTIMATE ~350–450 MB**: `litellm`, `tokenizers`, `tree-sitter-language-pack 0.13.0`,
@@ -250,7 +250,7 @@ Swift tab "Coding"  ──▶  http://127.0.0.1:8700/pty/aider      (static page
 ## 5. Build plan
 
 ### Slice 1 — the tab exists and talks to our runner
-1. `harness.yaml`: `components.aider` (repo, commit pin + date, `installed:false`,
+1. `motdeck.yaml`: `components.aider` (repo, commit pin + date, `installed:false`,
    `enabled:false`) + `aider.workspace` (one path) + `aider.edit_format: whole`.
 2. `scripts/install_component.sh` aider branch → `vendor/aider` shallow clone at the pin →
    `data/aider-venv` (bundled CPython, explicit-path uv, `python -m pip install -e`).
@@ -276,7 +276,7 @@ Swift tab "Coding"  ──▶  http://127.0.0.1:8700/pty/aider      (static page
   restarts aider on a model change, with a visible "restart to apply" affordance rather than a
   silently stale process.
 - **Workspace picker:** a small chooser (recent dirs, persisted), a refusal to start in `$HOME`
-  or the harness root, and the chosen path shown in the tab header — because the workspace
+  or MOT Deck root, and the chosen path shown in the tab header — because the workspace
   **is** the security boundary and must never be implicit.
 - `.aider.conf.yml` / `.aider.model.settings.yml` written per workspace so our defaults are
   visible and editable rather than buried in argv (and so `/help` reports the truth).

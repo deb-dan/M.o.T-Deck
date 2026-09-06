@@ -56,7 +56,7 @@ global.TURN_STALL_MS = 75000;
 const source = fs.readFileSync(
   path.join(__dirname, '..', 'panel', 'assets', 'turn-stream.js'), 'utf8');
 vm.runInThisContext(source, {filename:'turn-stream.js'});
-const H = window.HarnessTurnStream;
+const H = window.MOTDeckTurnStream;
 
 function brokenResponse(intentional) {
   return {ok:true, status:200, body:{getReader(){ return {async read(){

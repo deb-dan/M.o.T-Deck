@@ -63,7 +63,7 @@ header, `gensparkAttributionHeaders` (`packages/ai-provider/src/providers.ts:24-
   `needsBaseUrl: true`; `stream.ts:932` *"A custom provider requires a Base URL"*).
 - Therefore pointing it at **our runner `http://127.0.0.1:6767/v1`** works by construction, and
   pointing it at our Hermes needs only the gateway's api_server platform enabled on **:8642**
-  (`docs/hermes-integration.md:29-45`) — which our harness does **not** run today (we run
+  (`docs/hermes-integration.md:29-45`) — which our motdeck does **not** run today (we run
   `hermes dashboard` :9119 and keep the messaging gateway off by design).
 
 ⚠️ **But the config surface is a JSON file, not UI.** `baseUrl` appears in exactly one renderer
@@ -96,17 +96,17 @@ Cost if we tried anyway: Node ≥22 + a full Rust toolchain, an Electron monorep
 (⚠️ **disk estimated 3-6 GB** node_modules + Electron binaries + cargo target — not measured), and
 a second Electron runtime resident beside our Swift shell. It also **spawns `hermes gateway start`**
 when :8642 is dead (`apps/shell/src/main/hermes-launcher.ts:66`, consent-gated per its own comment
-at :4-8) — i.e. it would start a Hermes surface our harness deliberately keeps off, against the
+at :4-8) — i.e. it would start a Hermes surface our motdeck deliberately keeps off, against the
 same `~/.hermes` config we patch. No 0.0.0.0 binds found (nothing listens at all); the only outbound
 paths are the opt-in Drive sync and `hermes send` share, both off by default.
 
-## 7. Verdict — **REJECT as a harness tab component; note it as a standalone app Debi may install herself.**
+## 7. Verdict — **REJECT as a motdeck tab component; note it as a standalone app Debi may install herself.**
 
 It genuinely fixes the one thing that killed genoffice — the AI is an OpenAI-compatible base URL
 defaulting to a *local* Hermes gateway, with a `custom` provider for any endpoint, so our :6767
 runner is reachable by construction. But that fix does not make it composable *with us*: it is an
 Electron desktop suite with no server surface, so there is nothing to put in a tab, nothing to
-health-probe, and nothing for install/start/stop to own — adopting it would mean the harness
+health-probe, and nothing for install/start/stop to own — adopting it would mean MOT Deck
 "installing" a second desktop app, building a Rust sidecar and an Electron bundle, and letting that
 app start a Hermes gateway we keep switched off. Against that cost the maturity is 3 stars, one
 author, 27 commits, no releases, an unresolved merge conflict in NOTICE and a broken repository URL
@@ -114,6 +114,6 @@ author, 27 commits, no releases, an unresolved merge conflict in NOTICE and a br
 grounds. Recommendation: **do not build a component**; if Debi wants byte-preserving `.docx`/`.xlsx`
 editing with a local agent, she installs it as an ordinary Mac app, points its `ai-settings.json`
 wherever she likes, and we revisit only if it grows releases and a second maintainer. If we ever do
-want office editing *inside* the harness, upstream `genspark-ai/genoffice` plus our own provider
+want office editing *inside* MOT Deck, upstream `genspark-ai/genoffice` plus our own provider
 patch is the same amount of work on a healthier base — and it would still be an Electron app, not
 a tab.

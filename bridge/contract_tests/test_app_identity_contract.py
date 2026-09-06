@@ -1,6 +1,4 @@
-"""THE APP'S NAME IS "M.O.T"; ITS INSTALLED FILENAME IS NOT ITS IDENTITY — U78.
-
-Debi: *"the dock hover shows Harness — i think it should show M.O.T"*.
+"""THE APP'S PUBLIC NAME IS "MOT Deck"; ITS FILENAME IS NOT AUTHORITY — U78/U150.
 
 THE MECHANISM (researched, not assumed). The Dock's hover label is Launch Services'
 display name for the bundle — `lsappinfo info -only name <asn>` prints exactly the
@@ -10,32 +8,26 @@ string the Dock shows. LS resolves it in this order:
       → CFBundleDisplayName
         → the .app FILENAME
 
-The installed bundle had neither key (its CFBundleName still said "Harness", predating
-build_app.sh's "MOT Deck"), so the filename won and hover read "Harness". CFBundleName
-is a different question: it is what the MENU BAR reads.
-
-⛔ THE BUILD OUTPUT IS NOT RENAMED: it remains dist/Harness.app. Finder may install the
-same bundle as Harness.app or M.O.T.app, however, and the installed filename is not a
-safe lifecycle identity. ship.sh resolves a candidate by its CFBundleIdentifier and its
-executable before any gate or copy, then uses the stable bundle id for its quit request.
+The v1.5.83 FAT image showed `Harness` at the volume and app-file surfaces. U150 makes
+the public name, app bundle and installer agree while keeping lifecycle resolution tied
+to `local.motdeck.app` + `MOTDeck`, never a filename.
 
 WHAT IS PINNED:
   1. ship.sh sets the display name AND the menu-bar name AND the localized name, and
      re-signs + refreshes Launch Services when it does (an ad-hoc signature covers
      Contents/, so editing Info.plist invalidates it exactly as replacing the icon does).
   2. build_app.sh writes the same names, so a FRESH fat install matches a shipped one.
-  3. The app menu's Quit item names the SAME string, because "M.O.T" in the Dock over
-     "Quit MOT Deck" in the menu is the incoherence this slice removed.
+  3. The app menu's Quit item names the SAME string.
   4. Temporary fixture bundles prove zero/ambiguous/invalid resolution fails closed;
      the exact valid override wins and a spaced path remains one argv item.
   5. ship opens that exact resolved path but asks macOS to quit by bundle id, not by a
      filename or display name.
 
 ⚠️ NO ASSERTION HERE READS A LIVE INSTALLED BUNDLE. ship.sh runs this gate BEFORE its
-bundle step, so a test that required the live plist to already say M.O.T would refuse
+bundle step, so a test that required the live plist to already say MOT Deck would refuse
 the very ship that sets it. Resolver assertions use temporary fixtures; the live check
 belongs in the walk, and it is:
-    lsappinfo info -only name "$(lsappinfo find bundleid=local.harness.app)"
+    lsappinfo info -only name "$(lsappinfo find bundleid=local.motdeck.app)"
 
 Run: data/bridge-venv/bin/python -m pytest \
        bridge/contract_tests/test_app_identity_contract.py -q
@@ -52,7 +44,7 @@ INSTALL_COMPONENT = os.path.join(ROOT, "scripts", "install_component.sh")
 APP_IDENTITY = os.path.join(ROOT, "scripts", "app_bundle_identity.sh")
 SWIFT = os.path.join(ROOT, "app", "main.swift")
 
-NAME = "M.O.T"
+NAME = "MOT Deck"
 
 
 def _read(p):
@@ -65,8 +57,8 @@ def _code(p):
                      if not ln.lstrip().startswith(("#", "//")))
 
 
-def _fixture_app(tmp_path, name, *, bundle_id="local.harness.app",
-                 executable="Harness", executable_mode=0o755, create_binary=True):
+def _fixture_app(tmp_path, name, *, bundle_id="local.motdeck.app",
+                 executable="MOTDeck", executable_mode=0o755, create_binary=True):
     """Create the smallest app bundle the real shell resolver accepts or rejects."""
     app = tmp_path / name
     macos = app / "Contents" / "MacOS"
@@ -86,16 +78,16 @@ def _fixture_app(tmp_path, name, *, bundle_id="local.harness.app",
 def _resolve_fixture_apps(*apps, override=None):
     """Run only ship.sh's resolver; fixture mode exits before live paths or gates."""
     env = os.environ.copy()
-    env.pop("HARNESS_APP_PATH", None)
+    env.pop("MOT_DECK_APP_PATH", None)
     if override is not None:
-        env["HARNESS_APP_PATH"] = str(override)
+        env["MOT_DECK_APP_PATH"] = str(override)
     return subprocess.run(["bash", SHIP, "--resolve-app-fixtures", *map(str, apps)],
                           cwd=ROOT, env=env, capture_output=True, text=True)
 
 
 def _resolve_fixture_roots(*roots):
     env = os.environ.copy()
-    env.pop("HARNESS_APP_PATH", None)
+    env.pop("MOT_DECK_APP_PATH", None)
     return subprocess.run(["bash", SHIP, "--resolve-app-root-fixtures",
                            *map(str, roots)], cwd=ROOT, env=env,
                           capture_output=True, text=True)
@@ -109,7 +101,7 @@ def test_ship_sets_the_display_name_the_menu_name_and_the_localized_name():
     assert "en.lproj/InfoPlist.strings" in code, (
         "the LOCALIZED name is gone. CFBundleDisplayName alone may be IGNORED when it "
         "differs from the .app filename (Apple's anti-spoofing rule); the localized "
-        "name always wins, and the filename stays Harness.app on purpose.")
+        "name always wins, and the filename stays MOT Deck.app on purpose.")
     assert "PlistBuddy" in code and "Add :" in code, \
         "the Set-then-Add fallback is gone: a bundle without the key gets nothing"
 
@@ -130,13 +122,16 @@ def test_a_name_change_resigns_and_refreshes_launch_services():
 
 def test_fresh_fat_installs_get_the_same_name():
     code = _code(BUILD)
-    assert 'APP=dist/Harness.app' in code, "the build artifact filename is contract truth"
+    assert 'APP="dist/MOT Deck.app"' in code, "the build artifact filename is contract truth"
     assert f"<key>CFBundleDisplayName</key><string>{NAME}</string>" in code
     assert f"<key>CFBundleName</key><string>{NAME}</string>" in code
     assert "en.lproj/InfoPlist.strings" in code, \
         "the fat build must write the localized name too, or a fresh install disagrees"
     assert f"{NAME} uses the microphone" in code, \
         "the mic prompt names the app to the user in a system dialog — keep it in step"
+    assert 'cp app/MOTDeck.icns "$APP/Contents/Resources/MOTDeck.icns"' in code, (
+        "a clean/FAT build must preserve the committed per-size M.O.T artwork rather "
+        "than regenerate a visibly weaker small icon")
 
 
 def test_the_menu_bar_quit_item_agrees_with_the_display_name():
@@ -146,18 +141,18 @@ def test_the_menu_bar_quit_item_agrees_with_the_display_name():
     assert m.group(1) == NAME, (
         f"the Quit item says “Quit {m.group(1)}” while the Dock says “{NAME}”. macOS "
         f"names the Quit item after the app; a disagreement here IS the bug this slice "
-        f"fixed (the menu said MOT Deck while hover said Harness).")
+        f"fixed (the prior menu and Finder/Dock labels disagreed).")
 
 
 def test_ship_resolves_installed_bundle_by_identity_and_opens_that_exact_path():
     code = _code(SHIP) + "\n" + _code(APP_IDENTITY)
-    assert 'CFBundleIdentifier' in code and 'local.harness.app' in code
-    assert 'CFBundleExecutable' in code and '"$executable" == "Harness"' in code
-    assert 'Contents/MacOS/Harness' in code
+    assert 'CFBundleIdentifier' in code and 'local.motdeck.app' in code
+    assert 'CFBundleExecutable' in code and '"$executable" == "MOTDeck"' in code
+    assert 'Contents/MacOS/MOTDeck' in code
     assert 'cd -P "$1"' in code and 'pwd -P' in code
-    assert '_harness_discover_app_bundles' in code and '/usr/bin/find' in code
+    assert '_motdeck_discover_app_bundles' in code and '/usr/bin/find' in code
     assert 'inputs=(/Applications "$HOME/Applications")' in code
-    assert "_harness_valid_app" in code, \
+    assert "_motdeck_valid_app" in code, \
         "every filename candidate must still pass bundle id + executable validation"
     assert 'open "$APP"' in code, "ship must open the precise resolved app, not LS selection"
 
@@ -194,20 +189,20 @@ def test_resolver_rejects_wrong_id_missing_or_nonexecutable_binary(tmp_path):
     alternate_executable = _fixture_app(tmp_path, "alternate-executable.app",
                                         executable="M.O.T")
     slash_executable = _fixture_app(tmp_path, "slash-executable.app",
-                                    executable="../Harness", create_binary=False)
+                                    executable="../MOTDeck", create_binary=False)
     for app in (wrong_id, missing_declared_executable, missing_binary, non_executable,
                 alternate_executable, slash_executable):
         result = _resolve_fixture_apps(app)
         assert result.returncode != 0
-        assert "no valid installed Harness bundle found" in result.stdout
+        assert "no valid installed MOT Deck bundle found" in result.stdout
 
 
 def test_resolver_zero_and_ambiguous_candidates_fail_closed(tmp_path):
     zero = _resolve_fixture_apps()
     assert zero.returncode != 0
-    assert "no valid installed Harness bundle found" in zero.stdout
+    assert "no valid installed MOT Deck bundle found" in zero.stdout
 
-    first = _fixture_app(tmp_path, "Harness.app")
+    first = _fixture_app(tmp_path, "MOT Deck.app")
     second = _fixture_app(tmp_path, "M.O.T.app")
     ambiguous = _resolve_fixture_apps(first, second)
     assert ambiguous.returncode != 0
@@ -247,10 +242,10 @@ def test_explicit_override_selects_only_its_valid_candidate_and_never_falls_back
     invalid = tmp_path / "invalid.app"
     rejected = _resolve_fixture_apps(other, override=invalid)
     assert rejected.returncode != 0
-    assert "HARNESS_APP_PATH" in rejected.stdout
+    assert "MOT_DECK_APP_PATH" in rejected.stdout
     assert str(invalid) in rejected.stdout
-    assert "CFBundleIdentifier local.harness.app" in rejected.stdout
-    assert "CFBundleExecutable Harness at Contents/MacOS/Harness" in rejected.stdout
+    assert "CFBundleIdentifier local.motdeck.app" in rejected.stdout
+    assert "CFBundleExecutable MOTDeck at Contents/MacOS/MOTDeck" in rejected.stdout
     assert "selected installed app" not in rejected.stdout
 
 
@@ -260,8 +255,9 @@ def test_ship_quits_the_exact_resolved_bundle_path_not_an_id_or_display_name():
     assert '_APP_AS="$(_applescript_string "$APP")"' in code
     assert "tell application id" not in code, \
         "a duplicate bundle id could quit a different installed copy"
-    assert "osascript -e 'quit app \"Harness\"'" not in code
+    assert "osascript -e 'quit app \"MOT Deck\"'" not in code
     assert "tell application \"M.O.T\"" not in code
+    assert "local.harness.app" not in code
 
 
 def test_ship_never_promotes_bundle_path_evidence_into_signal_authority():
@@ -278,13 +274,13 @@ def test_ship_never_promotes_bundle_path_evidence_into_signal_authority():
 def test_component_wheelhouse_discovery_uses_the_shared_identity_resolver():
     code = _code(INSTALL_COMPONENT)
     assert '. "$ROOT/scripts/app_bundle_identity.sh"' in code
-    assert "harness_resolve_installed_app" in code
-    assert '$HARNESS_RESOLVED_APP/Contents/Resources/wheelhouse' in code
-    assert "/Applications/Harness.app/Contents/Resources/wheelhouse" not in code
+    assert "motdeck_resolve_installed_app" in code
+    assert '$MOT_DECK_RESOLVED_APP/Contents/Resources/wheelhouse' in code
+    assert "/Applications/MOT Deck.app/Contents/Resources/wheelhouse" not in code
     assert "/Applications/M.O.T.app/Contents/Resources/wheelhouse" not in code
 
 
 def test_build_quarantine_advice_never_assumes_the_installed_bundle_filename():
     code = _code(BUILD)
-    assert "xattr -dr com.apple.quarantine /Applications/Harness.app" not in code
+    assert "xattr -dr com.apple.quarantine /Applications/MOT Deck.app" not in code
     assert "xattr -dr com.apple.quarantine <installed-app-path>" in code

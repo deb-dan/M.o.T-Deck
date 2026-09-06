@@ -43,7 +43,7 @@
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..', '..');
-/* COMFY_HTML lets the same harness measure a DIFFERENT copy of the page, which is how
+/* COMFY_HTML lets the same motdeck measure a DIFFERENT copy of the page, which is how
    the at-rest count below is compared old-vs-new across a redesign rather than quoted
    from a previous report. The gate itself always runs against the shipped file. */
 const PAGE = process.env.COMFY_HTML || path.join(ROOT, 'bridge', 'panel', 'comfy.html');
@@ -240,7 +240,7 @@ const BASE = {
 const STATE = (over) => Object.assign({}, BASE, over || {});
 const GAL = {
   ok: true, total_h: '2 MB', output_dir: '/x/output',
-  items: [{ filename: 'image_00002_.png', subfolder: 'harness', job: 'j1', pick: 'sdxl',
+  items: [{ filename: 'image_00002_.png', subfolder: 'motdeck', job: 'j1', pick: 'sdxl',
             pick_title: 'SDXL base 1.0', mode: 'image', prompt: 'a red fox in the snow',
             seed: 128339186323896, steps: 25, shape: '1024×1024', wall_s: 38.3,
             peak_bytes: 13265768096, bytes: 1578515, size_h: '2 MB', state: 'ok',
@@ -483,10 +483,10 @@ const hexes = (cssBody.match(/#[0-9a-fA-F]{3,8}\b/g) || []);
 ok(hexes.length === 0, `no hard-coded colour in any layout rule (found ${hexes.join(', ') || 'none'})`);
 const rgba = (cssBody.match(/rgba?\(/g) || []);
 ok(rgba.length === 0, 'no hard-coded rgba() either');
-ok(!/localStorage\.setItem\(\s*['"]harness-(theme|chrome|design)/.test(html),
+ok(!/localStorage\.setItem\(\s*['"]motdeck-(theme|chrome|design)/.test(html),
    'the page NEVER writes the panel\'s three appearance keys');
-ok(/getItem\('harness-theme'\)/.test(html) && /getItem\('harness-chrome'\)/.test(html)
-   && /getItem\('harness-design'\)/.test(html), '…it only reads all three');
+ok(/getItem\('motdeck-theme'\)/.test(html) && /getItem\('motdeck-chrome'\)/.test(html)
+   && /getItem\('motdeck-design'\)/.test(html), '…it only reads all three');
 ok(html.indexOf('function skin()') < html.indexOf('<style>'),
    'the skin is applied in the HEAD, before the stylesheet — no dark-then-flip flash');
 ok(/addEventListener\('storage', skin\)/.test(html),
@@ -760,19 +760,19 @@ ok(/ArrowUp/.test(html) && /ArrowDown/.test(html),
 const store = makeStore();
 const persisted = runPage(STATE(), G4, (S) => { S.split = 4; S.stagef = 0.34; }, store);
 persisted.M.saveView();
-ok(!!store._m['harness-comfy-view'], 'the view state persists under its OWN key');
-ok(JSON.parse(store._m['harness-comfy-view']).split === 4 &&
-   JSON.parse(store._m['harness-comfy-view']).stagef === 0.34,
+ok(!!store._m['motdeck-comfy-view'], 'the view state persists under its OWN key');
+ok(JSON.parse(store._m['motdeck-comfy-view']).split === 4 &&
+   JSON.parse(store._m['motdeck-comfy-view']).stagef === 0.34,
    '…carrying the split and the stage fraction');
-ok(!('harness-theme' in store._m) && !('harness-chrome' in store._m) &&
-   !('harness-design' in store._m),
+ok(!('motdeck-theme' in store._m) && !('motdeck-chrome' in store._m) &&
+   !('motdeck-design' in store._m),
    '…and the page still writes NONE of the panel’s three appearance keys');
 const restored = runPage(STATE(), G4, null,
-  makeStore({ 'harness-comfy-view': '{"split":2,"stagef":0.7,"panes":["c.png"]}' }));
+  makeStore({ 'motdeck-comfy-view': '{"split":2,"stagef":0.7,"panes":["c.png"]}' }));
 ok(restored.M.S.split === 2 && restored.M.S.stagef === 0.7,
    'a reload restores the stage you left');
 const junk = runPage(STATE(), G4, null,
-  makeStore({ 'harness-comfy-view': 'not json at all' }));
+  makeStore({ 'motdeck-comfy-view': 'not json at all' }));
 ok(junk.M.S.split === 1 && junk.M.S.stagef === 0.58,
    '…and a corrupt stored value is ignored silently rather than throwing on boot');
 ok(rz.M.aspectOf({ shape: '832×480' }).toFixed(3) === (832 / 480).toFixed(3),
@@ -819,7 +819,7 @@ ok(/>2</.test(runPage(STATE(), { ok: true, total_h: '4 MB', output_dir: '/x',
    'the "models here" legend counts the REAL gallery, so it can never over-report');
 // a record missing a field renders NO row rather than a dash
 const sparse = runPage(STATE(), { ok: true, total_h: '2 MB', output_dir: '/x/output',
-  items: [{ filename: 'z.png', subfolder: 'harness', kind: 'image', state: 'ok',
+  items: [{ filename: 'z.png', subfolder: 'motdeck', kind: 'image', state: 'ok',
             pick: 'sdxl', pick_title: 'SDXL base 1.0', mode: 'image',
             prompt: 'x', shape: '1024×1024' }] });
 // the FACT rows (the results rail's key/value list), not the settings rail's fields:
@@ -1013,7 +1013,7 @@ ok(/nothing to start from/.test(cam.markup),
 const camSrc = runPage(STATE(), GAL, withCat((S) => {
   S.form.model = 'm:wan2.1'; S.form.workflow = WF_CAM.id;
   S.sources = [{ origin:'gallery', kind:'image', filename:'image_00002_.png',
-                 subfolder:'harness', label:'image_00002_.png', at:2 }]; }));
+                 subfolder:'motdeck', label:'image_00002_.png', at:2 }]; }));
 ok(/id="p-src"/.test(camSrc.markup) && /image_00002_\.png/.test(camSrc.markup),
    '…and a real result from the rail becomes the source it starts from');
 proseAudit('a discovered image-to-video workflow', camSrc, 0);
@@ -1070,12 +1070,12 @@ const rp = runPage(STATE(), G4, (S) => {
   S.railw = 260; S.resw = 320; S.form.model = 'm:wan2.1'; S.form.workflow = 'text_to_video_wan';
 }, rstore);
 rp.M.saveView();
-const rv = JSON.parse(rstore._m['harness-comfy-view']);
+const rv = JSON.parse(rstore._m['motdeck-comfy-view']);
 ok(rv.railw === 260 && rv.resw === 320,
-   'both widths persist in the SAME harness-comfy-view key as the stage');
+   'both widths persist in the SAME motdeck-comfy-view key as the stage');
 ok(rv.model === 'm:wan2.1' && rv.workflow === 'text_to_video_wan',
    '…and so do the model and workflow you left on');
-const rr = runPage(STATE(), G4, null, makeStore({ 'harness-comfy-view':
+const rr = runPage(STATE(), G4, null, makeStore({ 'motdeck-comfy-view':
   '{"railw":300,"resw":180,"model":"m:sdxl","workflow":"image_sdxl_simple"}' }));
 ok(rr.M.S.railw === 300 && rr.M.S.resw === 180,
    'a reload restores the rails you left');
@@ -1155,7 +1155,7 @@ ok(/#centre\.sized #lower \{ flex:1 1 auto; max-height:none/.test(css.replace(/\
 // two sites (the sheet header and the item menu) and two legitimate anchors (licence
 // texts on huggingface.co, which are exactly what a browser is for).
 console.log('\n11. an in-app destination switches tabs; only the web opens a browser');
-ok(/cmd: *'switchTab'/.test(html) && /messageHandlers[\s\S]{0,80}harness/.test(html),
+ok(/cmd: *'switchTab'/.test(html) && /messageHandlers[\s\S]{0,80}motdeck/.test(html),
    'the page speaks the shell’s own switchTab handler (the v1.5.38 / v1.5.46 pattern)');
 ok(/postMessage\(\{ cmd:'switchTab', title:title, id:id \}\)/.test(html),
    '…posting id AND title, so the shell resolves the stable id against its registry');

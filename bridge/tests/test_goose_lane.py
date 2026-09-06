@@ -113,7 +113,7 @@ def test_env_fence():
                "COLUMNS": "131072", "LINES": "9",
                "GOOSE_MODE": "auto", "GOOSE_TOOLSHIM": "true",
                "PATH": "/usr/bin:/bin"}
-    env = G.goose_env(hostile, ROOT, "http://127.0.0.1:6767/v1", "harness-local", "m")
+    env = G.goose_env(hostile, ROOT, "http://127.0.0.1:6767/v1", "motdeck-local", "m")
     for key in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
                 "XDG_CACHE_HOME"):
         ok(env[key].startswith(home),
@@ -158,13 +158,13 @@ def test_env_fence():
     ok(env["GOOSE_PROVIDER"] == PR.PROVIDER_NAME,
        "provider is OUR NAMED one (custom_mot_deck__local), not the anonymous stock "
        "`openai` — that is the whole isolation-mode slice")
-    ok(env[PR.api_key_env()] == "harness-local",
+    ok(env[PR.api_key_env()] == "motdeck-local",
        "…and the key rides the env var goose DERIVES from the provider name "
        "(CUSTOM_MOT_DECK__LOCAL_API_KEY), which is what it actually reads — measured, "
        "and it BEATS secrets.yaml, which is why we never write that file")
     ok(env["OPENAI_HOST"] == "http://127.0.0.1:6767", "host is the ORIGIN, not the base")
     ok(env["OPENAI_BASE_PATH"] == "v1/chat/completions", "…and the path is written out")
-    ok(env["OPENAI_API_KEY"] == "harness-local", "the runner's REAL key, not a dummy")
+    ok(env["OPENAI_API_KEY"] == "motdeck-local", "the runner's REAL key, not a dummy")
     try:
         G.goose_env({}, ROOT, "", "", "m")
     except ValueError as exc:
@@ -708,7 +708,7 @@ def test_page_is_theme_aware():
     for theme in ("light", "gold", "cyber"):
         ok(f'html[data-theme="{theme}"]' in page, f"the {theme} pack has a palette here")
     ok('html[data-chrome="studio"]' in page, "…and the studio chrome axis")
-    ok("harness-theme" in page and "harness-chrome" in page,
+    ok("motdeck-theme" in page and "motdeck-chrome" in page,
        "it reads the panel's persisted keys")
     ok("localStorage.setItem" not in page,
        "…and NEVER writes them: leaving a theme in the panel restores this tab")
@@ -721,7 +721,7 @@ def test_page_is_theme_aware():
     ok("button.primary{background:var(--cream);color:var(--bg)" in page.replace(" ", "")
        or "color:var(--bg)" in page,
        "the ink on a cream fill is var(--bg), never a hardcoded near-black (bug-echo W-06)")
-    ok("harness-design" in page,
+    ok("motdeck-design" in page,
        "the design axis is addressed in writing (this page has no studio sheet, and "
        "half-painting it would be worse than Editorial)")
 
@@ -797,19 +797,19 @@ def test_wiring():
     ok("{n:'goose', label:'goose'}" in panel, "the log dialog lists the lane's log")
 
     sw = (ROOT / "app" / "main.swift").read_text()
-    ok('HarnessTab(id: "goose", title: "Goose CLI"' in sw,
+    ok('MOTDeckTab(id: "goose", title: "Goose CLI"' in sw,
        "the shell has the tab row, titled Goose CLI — the ID did not churn with the "
        "wordmark (it is also the route, the pidfile and every saved nav.json's row)")
     ok("http://127.0.0.1:8700/goose" in sw, "…pointing at the bridge page")
     ok('t.id == "goose"' in sw,
-       "…and it is a FIRST-PARTY page: it gets the `harness` script handler, so the "
+       "…and it is a FIRST-PARTY page: it gets the `motdeck` script handler, so the "
        "sidebar row can switch to it")
     m = re.search(r'let navDefaultTopbar = \[([^\]]+)\]', sw)
     ok(m and "goose" not in m.group(1),
        "goose is NOT in the shell's pinned default strip (it is declared unpinned in "
        "nav.py, and test_nav_model asserts the three-way agreement)")
 
-    ymlpath = ROOT / "harness.yaml"
+    ymlpath = ROOT / "motdeck.yaml"
     yml = ymlpath.read_text()
     ok("goose_pin:" in yml and G.PIN_TAG in yml, "the manifest documents the pin")
     ok(G.PIN_ASSET_SHA256 in yml, "…including the asset digest")
@@ -1068,7 +1068,7 @@ def test_the_prune_is_gooses_own_deletion_and_refuses_to_improvise():
        "the prune names ONE session id — never --regex, which deletes more than the "
        "user pointed at")
     real = ("The following sessions will be removed:\r\n"
-            "- 20260829_1 harness-probe-A\r\n"
+            "- 20260829_1 motdeck-probe-A\r\n"
             "\x1b[?25l\x1b[36m◆\x1b[0m  Are you sure you want to delete these "
             "sessions?\r\n")
     ok(G._removal_targets(real) == ["20260829_1"],
@@ -1176,7 +1176,7 @@ def test_the_sessions_route_live():
         ok(r["title"] and len(r["title"].split(" ")) <= G.CHIP_WORDS + 1,
            f"every chip title obeys the seven-word rule ({r['title']!r})")
         ok("<turn-context>" not in r.get("preview", ""),
-           "…and a preview never shows the harness's own scaffolding as the user's words")
+           "…and a preview never shows MOT Deck's own scaffolding as the user's words")
         ok(r["title"] != "CLI Session" or not r.get("preview"),
            "…and goose's generic name is the LAST resort, not the first: a strip of "
            "five identical chips is a list nobody can choose from")

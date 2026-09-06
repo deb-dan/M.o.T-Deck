@@ -106,7 +106,7 @@ async function main(){
     {seq:16, type:'future_upstream_event', detail:'inspect-only'},
     {seq:17, type:'terminal', state:'completed'},
   ];
-  await window.HarnessTurnStream.consume(response(grammar), {turn, holder, body, think});
+  await window.MOTDeckTurnStream.consume(response(grammar), {turn, holder, body, think});
 
   const has = name => calls.some(call => call[0] === name);
   for (const name of ['approval','ask','ask_expire','file','tool_error','render','tool_redraw'])
@@ -125,7 +125,7 @@ async function main(){
   const crlfHolder = new El('article'), crlfBody = new El('div'), crlfThink = new El('div');
   const crlfTurn = {lane:'chat', lastSeq:0, timer:null, done:false};
   chatPane.curTurn = crlfTurn; chatPane.busy = true;
-  await window.HarnessTurnStream.consume(
+  await window.MOTDeckTurnStream.consume(
     response([{seq:1, delta:'crlf'}, {seq:2, type:'terminal', state:'completed'}],
              '\r\n\r\n', [19, 1, 2, 7]),
     {turn:crlfTurn, holder:crlfHolder, body:crlfBody, think:crlfThink});
@@ -137,7 +137,7 @@ async function main(){
   chatPane.curTurn = byteTurn; chatPane.busy = true;
   const byteWire = ': keepalive\rdata:{"seq":1,"delta":"héllo",\r'
     + 'data:"thinking":false}\r\rdata:{"seq":2,"type":"terminal","state":"completed"}';
-  await window.HarnessTurnStream.consume(
+  await window.MOTDeckTurnStream.consume(
     rawResponse(byteWire, Array(new TextEncoder().encode(byteWire).length).fill(1)),
     {turn:byteTurn, holder:byteHolder, body:byteBody, think:byteThink});
   if (byteBody.textContent !== 'héllo' || !byteTurn.done || byteTurn.lastSeq !== 2)
@@ -146,7 +146,7 @@ async function main(){
   const errHolder = new El('article'), errBody = new El('div'), errThink = new El('div');
   const errTurn = {lane:'hermes', lastSeq:0, timer:null, done:false};
   chatPane.curTurn = errTurn; chatPane.busy = true;
-  await window.HarnessTurnStream.consume(
+  await window.MOTDeckTurnStream.consume(
     rawResponse('event: error\r\ndata:{"error":"upstream won"}\r\n\r\ndata: [DONE]\r\n\r\n'),
     {turn:errTurn, holder:errHolder, body:errBody, think:errThink});
   if (!errTurn.done || !errBody.textContent.includes('upstream won'))
@@ -155,7 +155,7 @@ async function main(){
   const sentinelBody = new El('div'), sentinelTurn = {lane:'hermes', lastSeq:0,
     timer:null, done:false};
   chatPane.curTurn = sentinelTurn; chatPane.busy = true;
-  await window.HarnessTurnStream.consume(rawResponse('event: error\ndata:[DONE]\n\n'),
+  await window.MOTDeckTurnStream.consume(rawResponse('event: error\ndata:[DONE]\n\n'),
     {turn:sentinelTurn, holder:new El('article'), body:sentinelBody, think:new El('div')});
   if (!sentinelTurn.done || !sentinelBody.textContent.includes('error sentinel'))
     throw new Error('named error sentinel was reported as successful completion');
@@ -164,7 +164,7 @@ async function main(){
   chatPane.curTurn = badTurn; chatPane.busy = true;
   let malformedFailed = false;
   try {
-    await window.HarnessTurnStream.consume(rawResponse('data: {"seq":1,"delta":'),
+    await window.MOTDeckTurnStream.consume(rawResponse('data: {"seq":1,"delta":'),
       {turn:badTurn, holder:new El('article'), body:new El('div'), think:new El('div')});
   } catch (error) { malformedFailed = /unreadable event/.test(error.message); }
   if (!malformedFailed) throw new Error('malformed final SSE event was silently accepted');
@@ -175,7 +175,7 @@ async function main(){
   }; }}};
   let utf8Failed = false;
   try {
-    await window.HarnessTurnStream.consume(utf8Response,
+    await window.MOTDeckTurnStream.consume(utf8Response,
       {turn:{lane:'chat',lastSeq:0,timer:null,done:false}, holder:new El('article'),
        body:new El('div'), think:new El('div')});
   } catch (error) { utf8Failed = /encoding|encoded data|utf-8/i.test(error.message); }

@@ -40,7 +40,7 @@ except Exception:      # missing dep degrades the lane with a clear error, never
 
 
 # ── PATH-GUARD audit tier (C) ────────────────────────────────────────────────
-# Detect-only twin of the guards/harness-path-guard plugin (B1 = the enforcement).
+# Detect-only twin of the guards/motdeck-path-guard plugin (B1 = the enforcement).
 # The plugin can be disabled or misconfigured in ~/.hermes; this tier reads the
 # SAME policy roots straight from the repo and flags any COMPLETED write that
 # landed outside the allowlist, so the panel shows a faint warning line even when
@@ -49,9 +49,9 @@ _GUARD_ROOTS: list | None = None
 
 
 def _guard_allow_roots() -> list:
-    """Resolved allow roots from guards/harness-path-guard/policy.yaml (cached).
+    """Resolved allow roots from guards/motdeck-path-guard/policy.yaml (cached).
 
-    Placeholders resolve the same way the plugin resolves them: {HARNESS_ROOT} =
+    Placeholders resolve the same way the plugin resolves them: {MOT_DECK_ROOT} =
     this repo, {TMPDIR} = env, {HERMES_CWD} = the bridge's cwd — which IS the
     Hermes launch cwd (start_component.sh runs both from the repo root).
     ⚠ PENDING FABLE QA: if Hermes is ever launched from a different cwd than the
@@ -63,10 +63,10 @@ def _guard_allow_roots() -> list:
     roots: list = []
     try:
         pol = yaml.safe_load(
-            (ROOT / "guards" / "harness-path-guard" / "policy.yaml").read_text()) or {}
+            (ROOT / "guards" / "motdeck-path-guard" / "policy.yaml").read_text()) or {}
         raw = pol.get("allow") if isinstance(pol.get("allow"), list) else []
         home = os.path.expanduser("~")
-        subs = {"{HARNESS_ROOT}": str(ROOT), "{TMPDIR}": os.environ.get("TMPDIR", ""),
+        subs = {"{MOT_DECK_ROOT}": str(ROOT), "{TMPDIR}": os.environ.get("TMPDIR", ""),
                 "{HERMES_CWD}": os.getcwd()}
         for entry in raw:
             r = str(entry or "").strip()
@@ -525,7 +525,7 @@ def hermes_max_turn_s(conf) -> float:
 
 
 # SEGMENT, NOT TURN (2026-08-14h, Fable revision after Debi's objection): a cap on
-# TOTAL turn time punishes exactly the work the harness exists for — a research turn
+# TOTAL turn time punishes exactly the work MOT Deck exists for — a research turn
 # that legitimately spends an hour making tool call after tool call. What must be
 # bounded is an UNBROKEN GENERATION STRETCH: the model talking to itself with nothing
 # to show for it. So the clock is a SEGMENT clock — it restarts every time the turn

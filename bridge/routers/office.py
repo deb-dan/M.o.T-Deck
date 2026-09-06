@@ -55,7 +55,7 @@ def office_page() -> FileResponse:
     opens one: `goHome()` talks to the shell's message handler and otherwise sets
     location.href. Nothing here calls window.open.
     ⚠️ AND IT MUST STAY A TOP-LEVEL DOCUMENT. app/main.swift gives LOffice its own
-    HarnessTab and bridge/panel/index.html marks the entry `view:null`, which makes it
+    MOTDeckTab and bridge/panel/index.html marks the entry `view:null`, which makes it
     ineligible for the ⧉ peek overlay (peekEligible requires a view) — the one place
     that would otherwise put /office inside an iframe of the panel and silently cost
     it isolation.

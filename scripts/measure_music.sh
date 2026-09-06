@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Music-engine MEASUREMENT harness — throwaway, adopts nothing.
+# Music-engine MEASUREMENT motdeck — throwaway, adopts nothing.
 #
 #   ./scripts/measure_music.sh minimax     MiniMax-Music3 via the pure-MLX port
 #   ./scripts/measure_music.sh acestep      acestep.cpp (GGML/Metal, GGUF)
@@ -66,8 +66,8 @@ preflight() {
 
   echo ""
   say "⚠️  RAM: a MiniMax-Music3 render wants 32GB minimum, 48GB recommended, and the"
-  say "    harness budget is memory.budget_gb: 48. EJECT THE CHAT MODEL FIRST:"
-  say "      Harness panel → Models → the row with the gold 'live' pill → Eject"
+  say "    motdeck budget is memory.budget_gb: 48. EJECT THE CHAT MODEL FIRST:"
+  say "      MOT Deck panel → Models → the row with the gold 'live' pill → Eject"
   say "    (and stop the Aux runner if it is up: Models → Aux runner → Stop)"
   say "    Nothing here talks to the ledger — this script is outside it, so the"
   say "    only thing stopping a swap storm is that click."

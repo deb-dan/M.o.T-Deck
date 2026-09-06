@@ -3,9 +3,9 @@
 ## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
 
 Licensing posture is unchanged and still correct; only the component list moved. Living
-references: `CLAUDE.md`, `docs/HARNESS-INTERNALS.md`.
+references: `CLAUDE.md`, `docs/MOT-DECK-INTERNALS.md`.
 
-- **Jan (Apache-2.0) is no longer part of the harness at all** — removed July 2026. Its licensing
+- **Jan (Apache-2.0) is no longer part of MOT Deck at all** — removed July 2026. Its licensing
   analysis below is now moot. In its place we run **llama.cpp** (MIT, pinned binary release) and
   **Apple MLX / mlx-lm / mlx-vlm** (MIT, pip-pinned in our own venv) — both permissive, both used
   as separate processes, neither forked.
@@ -20,13 +20,13 @@ references: `CLAUDE.md`, `docs/HARNESS-INTERNALS.md`.
 ---
 
 
-*Part of the Harness handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture these rules protect: [02_Architecture.md](02_Architecture.md).*
+*Part of the MOT Deck handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture these rules protect: [02_Architecture.md](02_Architecture.md).*
 
 **Framing note:** this is engineering-grade license reasoning, not legal advice. For personal use it's more than sufficient; if you ever actually ship commercially, spend an hour with a lawyer then.
 
-**CORRECTION (2026-07-19, second research pass):** Odysseus is **MIT, not AGPL** — verified against its LICENSE file on `main` ([raw](https://raw.githubusercontent.com/pewdiepie-archdaemon/odysseus/main/LICENSE); repo now `odysseus-dev/odysseus`). The table and reasoning below still list it as AGPL in places — read those as superseded. Practical upshot: Odysseus joins Hermes as a component whose **patterns AND code you may lift with attribution**; the "ideas not code" restriction applied to it earlier is lifted. The only AGPL components left in the harness are ~~Jan's app and~~ **SearXNG** only (Jan turned out to be Apache-2.0 — see the 2026-07-20 correction below), touched only over APIs. Details in [06_Landscape_and_PriorArt.md](06_Landscape_and_PriorArt.md). (One new AGPL cousin appears in that doc — **Cherry Studio** — but only as an optional *user-facing* chat client you'd talk to over its endpoint, never link; same posture as Jan.)
+**CORRECTION (2026-07-19, second research pass):** Odysseus is **MIT, not AGPL** — verified against its LICENSE file on `main` ([raw](https://raw.githubusercontent.com/pewdiepie-archdaemon/odysseus/main/LICENSE); repo now `odysseus-dev/odysseus`). The table and reasoning below still list it as AGPL in places — read those as superseded. Practical upshot: Odysseus joins Hermes as a component whose **patterns AND code you may lift with attribution**; the "ideas not code" restriction applied to it earlier is lifted. The only AGPL components left in MOT Deck are ~~Jan's app and~~ **SearXNG** only (Jan turned out to be Apache-2.0 — see the 2026-07-20 correction below), touched only over APIs. Details in [06_Landscape_and_PriorArt.md](06_Landscape_and_PriorArt.md). (One new AGPL cousin appears in that doc — **Cherry Studio** — but only as an optional *user-facing* chat client you'd talk to over its endpoint, never link; same posture as Jan.)
 
-**CORRECTION (2026-07-20, fourth pass):** **Jan is Apache-2.0, not AGPLv3** — verified against the root LICENSE ("Copyright 2025 Menlo Research … Licensed under the Apache License, Version 2.0") and README ("Apache 2.0 — Because sharing is caring") in a fresh clone of `janhq/jan`. The earlier "AGPL app / MIT SDK" split is retired. Consequences: (a) the "license trap" argument against forking Jan is void — the no-fork decision rests entirely on merge debt and gaps-closed-upstream, which are sufficient; (b) the only AGPL component in the harness is now **SearXNG**; (c) Jan joins Hermes/Odysseus as pattern-AND-code donors (Apache-2.0 requires attribution + NOTICE preservation). Table and reasoning below updated in place.
+**CORRECTION (2026-07-20, fourth pass):** **Jan is Apache-2.0, not AGPLv3** — verified against the root LICENSE ("Copyright 2025 Menlo Research … Licensed under the Apache License, Version 2.0") and README ("Apache 2.0 — Because sharing is caring") in a fresh clone of `janhq/jan`. The earlier "AGPL app / MIT SDK" split is retired. Consequences: (a) the "license trap" argument against forking Jan is void — the no-fork decision rests entirely on merge debt and gaps-closed-upstream, which are sufficient; (b) the only AGPL component in MOT Deck is now **SearXNG**; (c) Jan joins Hermes/Odysseus as pattern-AND-code donors (Apache-2.0 requires attribution + NOTICE preservation). Table and reasoning below updated in place.
 
 ---
 
@@ -51,7 +51,7 @@ references: `CLAUDE.md`, `docs/HARNESS-INTERNALS.md`.
 
 ## Personal-use-now: you have ZERO obligations today
 
-AGPL's obligations trigger on **distribution** (giving the software to others) or **network interaction** (letting others use it over a network — the clause that distinguishes AGPL from GPL). While the harness:
+AGPL's obligations trigger on **distribution** (giving the software to others) or **network interaction** (letting others use it over a network — the clause that distinguishes AGPL from GPL). While MOT Deck:
 - runs only on your machines,
 - binds only to 127.0.0.1,
 - and is used only by you,

@@ -14,7 +14,7 @@ proved that the live manifest is operational state and must not be rewritten who
 
 - `data/.env.local` is the one local launch-secret store. It is a no-follow regular
   file, mode `0600`, atomically replaced and directory-fsynced.
-- `harness.yaml` retains the four keys as blank documented schema fields. It is not a
+- `motdeck.yaml` retains the four keys as blank documented schema fields. It is not a
   secret fallback after migration.
 - The store contains runner and Aux API keys plus the Odysseus administrator user and
   password. Values use lossless base64url encoding so punctuation is data, not shell

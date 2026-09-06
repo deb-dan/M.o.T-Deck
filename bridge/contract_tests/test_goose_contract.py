@@ -77,7 +77,7 @@ def _installer_src() -> str:
 
 
 def _manifest() -> dict:
-    with open(os.path.join(ROOT, "harness.yaml"), encoding="utf-8") as fh:
+    with open(os.path.join(ROOT, "motdeck.yaml"), encoding="utf-8") as fh:
         return yaml.safe_load(fh.read())
 
 
@@ -98,7 +98,7 @@ def _strings(path: str) -> str:
 
 # ── 1. BY DIGEST — runs everywhere, installed or not ─────────────────────────
 def test_the_three_copies_of_the_pin_agree():
-    """installer ← the authority · bridge/pty_goose.py · harness.yaml.
+    """installer ← the authority · bridge/pty_goose.py · motdeck.yaml.
 
     Three copies is two too many in the abstract, and every one of them earns its
     place: the shell script cannot import Python, the bridge must be able to SAY what

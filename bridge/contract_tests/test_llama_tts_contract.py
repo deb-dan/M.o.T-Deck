@@ -1,4 +1,4 @@
-"""llama-tts contract — pin-bump gate for the harness-native voice capability.
+"""llama-tts contract — pin-bump gate for MOT Deck-native voice capability.
 
 `llama-tts` ships in the SAME macos-arm64 tarball as `llama-server`, so it rides
 `runner.llamacpp_pin` for free — and it therefore changes whenever that pin moves.
@@ -56,7 +56,7 @@ def _help():
 
 def test_pin_is_a_tagged_llamacpp_release():
     """Always runs: the pin contract is ours, not upstream's."""
-    c = yaml.safe_load((ROOT / "harness.yaml").read_text())
+    c = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
     pin = str(((c.get("runner") or {}).get("llamacpp_pin") or "")).strip()
     assert pin.startswith("b") and pin[1:].isdigit(), (
         f"runner.llamacpp_pin {pin!r} is not a bNNNN release tag — llama-tts rides "
@@ -65,9 +65,9 @@ def test_pin_is_a_tagged_llamacpp_release():
 
 def test_voice_block_exists():
     """Always runs: bridge/voice.py reads these two slots."""
-    c = yaml.safe_load((ROOT / "harness.yaml").read_text())
+    c = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
     v = c.get("voice")
-    assert isinstance(v, dict), "the top-level `voice:` block vanished from harness.yaml"
+    assert isinstance(v, dict), "the top-level `voice:` block vanished from motdeck.yaml"
     assert "tts_model" in v and "stt_model" in v, (
         "voice.tts_model / voice.stt_model are the registry ids the bridge writes")
 
@@ -82,7 +82,7 @@ def test_llama_tts_ships_with_the_pinned_build():
     assert BIN.is_file(), (
         "data/llamacpp/build/bin/llama-tts is missing while llama-server is present — "
         "the pinned macos-arm64 tarball no longer ships the TTS tool, so the "
-        "harness-native voice capability has no llama.cpp engine")
+        "MOT Deck-native voice capability has no llama.cpp engine")
 
 
 def test_mmproj_flag_present():

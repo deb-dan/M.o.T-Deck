@@ -147,9 +147,9 @@ def test_argv():
 
 def test_env():
     env = P.aider_env({"PATH": "/usr/bin", "COLUMNS": "999", "LINES": "9"},
-                      "http://127.0.0.1:6767/v1", "harness-local")
+                      "http://127.0.0.1:6767/v1", "motdeck-local")
     ok(env["OPENAI_API_BASE"] == "http://127.0.0.1:6767/v1", "base url")
-    ok(env["OPENAI_API_KEY"] == "harness-local", "key forwarded")
+    ok(env["OPENAI_API_KEY"] == "motdeck-local", "key forwarded")
     ok(env["TERM"] == "xterm-256color", "a real TERM (rich + prompt_toolkit need one)")
     ok("COLUMNS" not in env and "LINES" not in env,
        "COLUMNS/LINES removed — the winsize ioctl owns the size")
@@ -226,7 +226,7 @@ def test_session_eof_and_group_kill():
 
     # 2. THE PROCESS GROUP. aider spawns children (/run, linters); a dropped socket must
     #    take them with it. Without start_new_session=True this grandchild would survive.
-    marker = f"/tmp/harness-aider-test-{os.getpid()}.pid"
+    marker = f"/tmp/motdeck-aider-test-{os.getpid()}.pid"
     sess = P.PtySession(
         ["/bin/sh", "-c", f"sleep 300 & echo $! > {marker}; sleep 300"],
         "/tmp", {"PATH": "/bin:/usr/bin"})
@@ -685,11 +685,11 @@ def test_wiring():
     ok("xterm.js|" in fetch and "xterm.css|" in fetch and "xterm-addon-fit.js|" in fetch,
        "all three assets are fetched")
 
-    yml = (ROOT / "harness.yaml").read_text()
+    yml = (ROOT / "motdeck.yaml").read_text()
     m = re.search(r'^  aider_pin:\s*"([0-9a-f]{40})"', yml, re.M)
     ok(bool(m), "build.aider_pin is a full 40-char commit sha")
     inst = (ROOT / "scripts" / "install_aider.sh").read_text()
-    ok("_yb aider_pin" in inst, "the installer reads the pin from harness.yaml")
+    ok("_yb aider_pin" in inst, "the installer reads the pin from motdeck.yaml")
     ok("Aider-AI/aider.git" in inst, "upstream, not the cecli fork")
     ok("cecli" not in inst, "the fork is not what gets cloned")
     ok("-m pip install" in inst and "/bin/pip" not in inst,
@@ -697,10 +697,10 @@ def test_wiring():
     ok("data/aider-venv" in inst, "its own venv")
 
     sw = (ROOT / "app" / "main.swift").read_text()
-    ok('HarnessTab(id: "aider", title: "Aider"' in sw, "the tab row exists")
+    ok('MOTDeckTab(id: "aider", title: "Aider"' in sw, "the tab row exists")
     ok('http://127.0.0.1:8700/aider' in sw, "…pointing at the bridge page")
     ok("NSSize(width: 1160" in sw, "minSize.width raised for the 9th tab")
-    ok(sw.count("HarnessTab(title:") == len(re.findall(r"HarnessTab\(title:", sw)),
+    ok(sw.count("MOTDeckTab(title:") == len(re.findall(r"MOTDeckTab\(title:", sw)),
        "tabs are declared only in the table")
 
 

@@ -7,7 +7,7 @@ result, a receipt or a file that says one thing and means another. The 2026-08-2
 (`"$2,500"` written as text, `=SUM` returning 0, nothing warning) is the template.
 
 **Method.** Real workbooks built by openpyxl (i.e. by something that is *not* this lane),
-real `stage_changes` → `apply_changeset` cycles against a scratch harness root, real
+real `stage_changes` → `apply_changeset` cycles against a scratch motdeck root, real
 re-reads off disk. Nothing here is inferred from reading the source; every finding was
 executed. Every one has a repro in `bridge/tests/test_office_adversarial.py`, same id.
 

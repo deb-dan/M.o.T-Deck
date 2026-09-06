@@ -19,9 +19,9 @@ KEY = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_-]+):")
 def _yamlfile_module():
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
                         "bridge", "yamlfile.py")
-    spec = importlib.util.spec_from_file_location("harness_yamlfile", path)
+    spec = importlib.util.spec_from_file_location("motdeck_yamlfile", path)
     if spec is None or spec.loader is None:
-        raise RuntimeError("shared harness.yaml transaction helper is unavailable")
+        raise RuntimeError("shared motdeck.yaml transaction helper is unavailable")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -75,7 +75,7 @@ def merge_text(source, destination):
     dst_parsed = yaml.safe_load(destination)
     for label, parsed in (("repo", src_parsed), ("live", dst_parsed)):
         if not isinstance(parsed, dict):
-            raise ValueError(f"{label} harness.yaml must be a YAML mapping")
+            raise ValueError(f"{label} motdeck.yaml must be a YAML mapping")
     src_lines = source.splitlines(keepends=True)
     dst_lines = destination.splitlines(keepends=True)
     src_top, dst_top = _spans(src_lines, 0), _spans(dst_lines, 0)
@@ -142,13 +142,13 @@ def merge_text(source, destination):
         added.append(f"components.searxng.pin(main→{src_pin[:12]})")
     merged = "".join(dst_lines)
     if not isinstance(yaml.safe_load(merged), dict):
-        raise ValueError("merged harness.yaml is not a YAML mapping")
+        raise ValueError("merged motdeck.yaml is not a YAML mapping")
     return merged, added
 
 
 def main(argv):
     if len(argv) != 3:
-        print("usage: merge_manifest.py <repo-harness.yaml> <live-harness.yaml>", file=sys.stderr)
+        print("usage: merge_manifest.py <repo-motdeck.yaml> <live-motdeck.yaml>", file=sys.stderr)
         return 2
     source_path, destination_path = map(os.path.abspath, argv[1:])
     try:

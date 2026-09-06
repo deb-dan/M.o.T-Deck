@@ -105,7 +105,7 @@ def _health_track(name: str, expected: bool, running: bool) -> tuple:
 
     ⚠️ SSE (2026-08-28) — THE ONE PUSH THAT IS NOT AT A STATE TRANSITION WE CAUSED, AND
     THE HONEST REASON IT LIVES HERE. Every other event in the hub is emitted where the
-    harness itself changes something (a start, a stop, a switch, a download tick, a nav
+    motdeck itself changes something (a start, a stop, a switch, a download tick, a nav
     save). A component that dies ON ITS OWN — an OOM, an upstream crash — changes
     nothing we wrote; the only place that fact comes into existence is the debounced
     verdict computed HERE, and this function runs only inside GET /api/status. So there

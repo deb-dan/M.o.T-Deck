@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def manifest(root: Path, runner="", aux="", user="", password="") -> None:
-    (root / "harness.yaml").write_text(yaml.safe_dump({
+    (root / "motdeck.yaml").write_text(yaml.safe_dump({
         "runner": {"api_key": runner}, "aux": {"api_key": aux},
         "components": {"odysseus": {"admin_user": user,
                                        "admin_password": password}},
@@ -24,28 +24,28 @@ def manifest(root: Path, runner="", aux="", user="", password="") -> None:
 
 
 def test_fresh_install_generates_every_value_and_overlays_without_yaml_secret(tmp_path):
-    manifest(tmp_path, "harness-local", "harness-aux", "admin", "admin123")
+    manifest(tmp_path, "motdeck-local", "motdeck-aux", "admin", "admin123")
     values = localsecrets.ensure(tmp_path, fresh=True)
     assert set(values) == set(localsecrets.SECRET_PATHS.values())
     assert all(values[key] != weak for key, weak in localsecrets.WEAK_DEFAULTS.items())
-    assert len(values["MOT_RUNNER_API_KEY"]) >= 40
+    assert len(values["MOT_DECK_RUNNER_API_KEY"]) >= 40
     store = tmp_path / "data" / ".env.local"
     assert stat.S_IMODE(store.stat().st_mode) == 0o600
-    config = yaml.safe_load((tmp_path / "harness.yaml").read_text())
+    config = yaml.safe_load((tmp_path / "motdeck.yaml").read_text())
     localsecrets.overlay_config(config, tmp_path)
-    assert config["runner"]["api_key"] == values["MOT_RUNNER_API_KEY"]
+    assert config["runner"]["api_key"] == values["MOT_DECK_RUNNER_API_KEY"]
     assert config["components"]["odysseus"]["admin_password"] \
-        == values["MOT_ODYSSEUS_ADMIN_PASSWORD"]
+        == values["MOT_DECK_ODYSSEUS_ADMIN_PASSWORD"]
 
 
 def test_nonfresh_staging_preserves_custom_values_until_live_migration(tmp_path):
     manifest(tmp_path, "my.runner!$key", "my aux:#key", "debi", "long$password!")
     values = localsecrets.ensure(tmp_path)
     assert values == {
-        "MOT_RUNNER_API_KEY": "my.runner!$key",
-        "MOT_AUX_API_KEY": "my aux:#key",
-        "MOT_ODYSSEUS_ADMIN_USER": "debi",
-        "MOT_ODYSSEUS_ADMIN_PASSWORD": "long$password!",
+        "MOT_DECK_RUNNER_API_KEY": "my.runner!$key",
+        "MOT_DECK_AUX_API_KEY": "my aux:#key",
+        "MOT_DECK_ODYSSEUS_ADMIN_USER": "debi",
+        "MOT_DECK_ODYSSEUS_ADMIN_PASSWORD": "long$password!",
     }
     assert "my.runner" not in (tmp_path / "data" / ".env.local").read_text()
 
@@ -55,7 +55,7 @@ def test_partial_store_is_never_overlaid(tmp_path):
     data = tmp_path / "data"
     data.mkdir()
     store = data / ".env.local"
-    store.write_text("MOT_RUNNER_API_KEY_B64=YWJj\n")
+    store.write_text("MOT_DECK_RUNNER_API_KEY_B64=YWJj\n")
     store.chmod(0o600)
     with pytest.raises(ValueError, match="incomplete"):
         localsecrets.read(tmp_path)
@@ -77,9 +77,9 @@ components:
   hermes:
     installed: true
 """
-    (tmp_path / "harness.yaml").write_text(text)
+    (tmp_path / "motdeck.yaml").write_text(text)
     localsecrets.scrub_manifest(tmp_path)
-    after = (tmp_path / "harness.yaml").read_text()
+    after = (tmp_path / "motdeck.yaml").read_text()
     expected = text.replace("'a:# secret'", "").replace("aux-secret", "") \
         .replace("admin #", " #").replace('"p#word"', "")
     assert after == expected
@@ -97,7 +97,7 @@ def test_insecure_or_symlink_store_is_refused(tmp_path):
         localsecrets.read(tmp_path)
     store.unlink()
     outside = tmp_path / "outside"
-    outside.write_text("MOT_RUNNER_API_KEY=do-not-read\n")
+    outside.write_text("MOT_DECK_RUNNER_API_KEY=do-not-read\n")
     store.symlink_to(outside)
     with pytest.raises(OSError):
         localsecrets.read(tmp_path)
@@ -117,13 +117,13 @@ def test_failed_replace_preserves_existing_secret_file(tmp_path, monkeypatch):
 
 
 def test_repo_and_production_code_carry_no_weak_secret_literal():
-    manifest_text = (ROOT / "harness.yaml").read_text()
+    manifest_text = (ROOT / "motdeck.yaml").read_text()
     production = "\n".join(path.read_text(errors="replace") for base in
         (ROOT / "bridge", ROOT / "scripts") for path in base.rglob("*")
         if path.suffix in (".py", ".sh")
         and not any(part.endswith("tests") for part in path.parts)
         and path.name != "localsecrets.py")
-    for weak in ("harness-local", "harness-aux", "admin123"):
+    for weak in ("motdeck-local", "motdeck-aux", "admin123"):
         assert weak not in manifest_text
         assert weak not in production
 
@@ -134,7 +134,7 @@ def test_reader_never_reports_a_value_on_parse_error(tmp_path):
     data.mkdir()
     secret = "NeverPrintThisSecret"
     store = data / ".env.local"
-    store.write_text("MOT_RUNNER_API_KEY=" + secret + "!\n")
+    store.write_text("MOT_DECK_RUNNER_API_KEY=" + secret + "!\n")
     store.chmod(0o600)
     with pytest.raises(ValueError) as error:
         localsecrets.read(tmp_path)
@@ -149,7 +149,7 @@ def test_odysseus_installer_seeds_runner_through_the_secret_overlay():
     assert re.search(r'read_manifest\.py"\s+\\?\s*"\$ROOT" runner\.api_key str', arm)
     assert 'JAN_BASE_URL="$RUNNER_ENDPOINT" JAN_API_KEY="$RUNNER_KEY"' in arm
     assert 'runner.api_key is not provisioned; Odysseus was not seeded' in arm
-    assert 'JAN_API_KEY="harness-local"' not in arm
+    assert 'JAN_API_KEY="motdeck-local"' not in arm
 
 
 def test_runner_secret_never_appears_in_process_argv():

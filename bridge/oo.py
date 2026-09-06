@@ -108,7 +108,7 @@ ATTRIBUTION = {
     "licence": "AGPL-3.0",
     "licence_url": "https://www.gnu.org/licenses/agpl-3.0.html",
     "note": ("The rich editor is unmodified upstream ONLYOFFICE, vendored as its own "
-             "static bundle and served read-only. The harness does not modify it."),
+             "static bundle and served read-only. MOT Deck does not modify it."),
     "sources": [
         {"what": "editor bundle (the vendored build)",
          "url": "https://github.com/cryptpad/onlyoffice-editor"},

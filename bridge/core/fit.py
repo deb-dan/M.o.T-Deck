@@ -459,7 +459,7 @@ def mlx_estimate(path: str, settings: dict) -> "dict | None":
 APPLE_FRACTION = 0.85
 BAND_FITS = 0.80                # Ollama's admission rule: don't start a load whose
                                 # prediction exceeds 80% of what is free.
-OVERCOMMIT_ENV = "HARNESS_ALLOW_METAL_OVERCOMMIT"
+OVERCOMMIT_ENV = "MOT_DECK_ALLOW_METAL_OVERCOMMIT"
 
 
 def budget(freeing_bytes: int = 0) -> dict:

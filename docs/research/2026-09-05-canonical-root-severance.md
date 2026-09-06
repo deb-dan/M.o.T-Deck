@@ -3,7 +3,7 @@
 Decision-complete build brief for the project promotion Debi authorized on 2026-09-05.
 The canonical source tree is now:
 
-`/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/harness`
+`/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck`
 
 The older Claude project tree is an archive. It remains on disk, but no executable,
 generated dependency tree, normal build, ship, or running process may depend on it.
@@ -37,8 +37,8 @@ an existing generated config as input merely because it exists.
 
 Keep `scripts/build_app.sh`'s build-kind behavior: it also derives the root from its own
 checkout and writes `fatBuild` according to `--fat`. Correct its stale prose that says
-normal lifecycle recipes depend on the `Harness.app` filename; bundle identity is
-`local.harness.app`, and the installed filename may be `Harness.app` or `M.O.T.app`.
+normal lifecycle recipes depend on the `MOT Deck.app` filename; bundle identity is
+`local.motdeck.app`, and the installed filename may be `MOT Deck.app` or `M.O.T.app`.
 
 Permanent fixture contracts must prove:
 

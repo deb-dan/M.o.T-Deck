@@ -1,7 +1,7 @@
 """bridge.core — the bottom of the app layer: no routes, no router imports.
 
 Config and paths (appctx, procs), the process/port primitives, the component health
-verdict, model identity, usage analytics, the harness.yaml writers, Hermes config
+verdict, model identity, usage analytics, motdeck.yaml writers, Hermes config
 generation, the shared HTTP clients, the office logger.
 
 ⚠️ THE ONE RULE: nothing in here may import bridge.routers.*, and nothing may import

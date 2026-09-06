@@ -713,7 +713,7 @@ check("one [music] render line per job reaches the bridge log",
 
 SH = (ROOT / "scripts" / "install_music.sh").read_text()
 check("the installer takes both engines", "minimax) do_minimax" in SH and "acestep) do_acestep" in SH)
-check("pins are read from harness.yaml, never hardcoded in the script",
+check("pins are read from motdeck.yaml, never hardcoded in the script",
       "_yb music_minimax_pin" in SH and "_yb acestep_pin" in SH)
 check("the installer writes the panel-viewable install log",
       "data/logs/music-install.log" in SH)
@@ -733,7 +733,7 @@ check("the GGUFs are re-linked from the pinned HF snapshot, not copied",
 check("a user-owned model file is never overwritten by the managed snapshot link",
       "refusing to replace non-symlink model file" in SH)
 
-YML = (ROOT / "harness.yaml").read_text()
+YML = (ROOT / "motdeck.yaml").read_text()
 check("build.music_minimax_pin exists and is the measured revision",
       "music_minimax_pin" in YML and REV in YML)
 check("build.acestep_pin exists and is the measured commit",
@@ -1077,10 +1077,10 @@ check("the per-page studio deck is one attribute on #view-music",
       'data-mview="studio"' in PANEL and "function toggleMusicView(" in PANEL
       and "v.dataset.mview = 'studio'" in PANEL)
 check("the deck choice is persisted and classic is the default",
-      "harness-music-view" in PANEL and "let musicView = 'classic'" in PANEL)
+      "motdeck-music-view" in PANEL and "let musicView = 'classic'" in PANEL)
 check("the deck toggle is independent of the theme and the global chrome axes",
-      "harness-theme" not in PANEL.split("function toggleMusicView")[1][:500]
-      and "harness-chrome" not in PANEL.split("function toggleMusicView")[1][:500])
+      "motdeck-theme" not in PANEL.split("function toggleMusicView")[1][:500]
+      and "motdeck-chrome" not in PANEL.split("function toggleMusicView")[1][:500])
 check("the hero is EMPTIED in classic view, so classic carries no trace of the deck",
       "if (!musicStudio()){ box.hidden = true; box.innerHTML = ''; return; }" in PANEL)
 check("the gallery cards exist and prefill on click",

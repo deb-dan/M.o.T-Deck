@@ -16,7 +16,7 @@ editorial stays the default, light/dark stay independent.
 The compact block (27 rules, `html[data-chrome="compact"]`) was three failed attempts at
 what Studio actually is. Keeping both would be two half-themes on one button.
 - The ▣ topbar chip now toggles **Studio**: `data-chrome="studio"`,
-  `localStorage['harness-chrome'] = 'studio' | 'editorial'`. Pre-paint script updated to
+  `localStorage['motdeck-chrome'] = 'studio' | 'editorial'`. Pre-paint script updated to
   read `'studio'` (a stored legacy `'compact'` value is treated as `'editorial'` — silent
   migration, no modal).
 - Delete the compact block wholesale. Rewrite `test_compact_chrome.js` →

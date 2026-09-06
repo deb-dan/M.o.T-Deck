@@ -56,8 +56,8 @@ DISK_HEADROOM = 2 * 1024 ** 3   # "leaves ~X" is measured against this reserve
 STARTER_CAP_BYTES = 14_000_000_000   # Debi's locked S1 budget, DECIMAL GB (the unit
                                      # HuggingFace, `df -h` and model cards all use)
 
-# <output>/harness/ is ours; anything else there came from the ComfyUI tab, untouched.
-OUT_PREFIX = "harness"
+# <output>/motdeck/ is ours; anything else there came from the ComfyUI tab, untouched.
+OUT_PREFIX = "motdeck"
 
 # ⚠️ THE STOCK-NODE FENCE, STATIC HALF: every class the CURATED builders may emit.
 # Adding one is deliberate, and it must ship with ComfyUI rather than with a custom pack.
@@ -481,7 +481,7 @@ def _measure_load() -> None:
 def _measure_save() -> None:
     try:
         state_dir().mkdir(parents=True, exist_ok=True)
-        tmp = str(_measure_path()) + ".harness-tmp"
+        tmp = str(_measure_path()) + ".motdeck-tmp"
         with open(tmp, "w") as f:
             json.dump(MEASURED, f, indent=2)
         os.replace(tmp, _measure_path())
@@ -522,7 +522,7 @@ def sizes_load() -> None:
 def sizes_save() -> None:
     try:
         state_dir().mkdir(parents=True, exist_ok=True)
-        tmp = str(_sizes_path()) + ".harness-tmp"
+        tmp = str(_sizes_path()) + ".motdeck-tmp"
         with open(tmp, "w") as f:
             json.dump(SIZES, f, indent=2, sort_keys=True)
         os.replace(tmp, _sizes_path())
@@ -1320,7 +1320,7 @@ SAVE_PREFIX = {"SaveImage": "image", "SaveVideo": "video", "SaveAnimatedWEBP": "
 
 
 def retarget_outputs(api: dict) -> int:
-    """Every Save* node writes under <output>/harness/, like the curated builders do.
+    """Every Save* node writes under <output>/motdeck/, like the curated builders do.
 
     Without this a discovered workflow's result lands loose in ComfyUI's output root,
     where our gallery deliberately does not look — the run would succeed and the page

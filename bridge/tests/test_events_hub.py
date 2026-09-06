@@ -1,6 +1,6 @@
 """THE EVENT HUB'S OWN GATE — bridge/core/events.py, the SSE hybrid (2026-08-28).
 
-The hub's whole claim is that adding push CANNOT make the harness worse. Four ways
+The hub's whole claim is that adding push CANNOT make MOT Deck worse. Four ways
 that claim can quietly stop being true, and each is a section below:
 
   1. FAN-OUT AND LIFECYCLE. Subscribe, broadcast to N, unsubscribe, and — the part

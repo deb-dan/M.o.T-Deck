@@ -41,8 +41,8 @@ HEAD-requested from HuggingFace today. Where a claim is inherited from prior res
 ### 1.1 Where it actually lives — a trap for the builder
 
 The **repo checkout has no ComfyUI**: `vendor/comfyui` and `data/comfyui*` do not exist under
-`/Users/debik/Claude Proj Rootz/New Harness/harness`. The running instance belongs to the
-**shipped app**: `~/Library/Application Support/Harness/{vendor/comfyui, data/comfyui,
+the then-active checkout (now the retained read-only Claude archive). The running instance belongs to the
+**shipped app**: `~/Library/Application Support/MOT Deck/{vendor/comfyui, data/comfyui,
 data/comfyui-venv}`, launched by that deployment's `scripts/start_component.sh` (`comfyui` case,
 lines ~684–756). Any S1 code must resolve the ComfyUI base dir from the same ROOT the supervisor
 uses — never from the repo path.
@@ -58,7 +58,7 @@ data/comfyui-venv/bin/python main.py --listen 127.0.0.1 --port 8188
 
 `start_component.sh` documents the three startup traps (pre-created `custom_nodes/ user/ models/
 input/ output/`; `--database-url` NOT covered by `--base-directory`; listener-scoped port clear).
-Port comes from `harness.yaml` (`components.comfyui.port: 8188`, default 8188). **Loopback only,
+Port comes from `motdeck.yaml` (`components.comfyui.port: 8188`, default 8188). **Loopback only,
 NO auth** — the startup banner says so explicitly. Any process on this Mac can submit jobs; our
 bridge proxy must not widen that.
 
@@ -66,10 +66,10 @@ bridge proxy must not widen that.
 
 | Thing | Value |
 |---|---|
-| ComfyUI | **0.34.1** (harness.yaml pin `v0.34.1`, bumped from v0.33.3 on 2026-08-28) |
+| ComfyUI | **0.34.1** (motdeck.yaml pin `v0.34.1`, bumped from v0.33.3 on 2026-08-28) |
 | Frontend | comfyui-frontend-package **1.49.6** (pip, no npm build) |
 | Workflow templates | comfyui-workflow-templates **0.11.48** (+ split pkgs: `_json` 0.1.57, `_core` 0.3.322, media pkgs) |
-| Python / torch | 3.12.11 / **2.15.0.dev20260820** (deliberately-floating MPS nightly — see harness.yaml:221–231; a torch refresh is its own pass with a real generation A/B) |
+| Python / torch | 3.12.11 / **2.15.0.dev20260820** (deliberately-floating MPS nightly — see motdeck.yaml:221–231; a torch refresh is its own pass with a real generation A/B) |
 | Device | `mps`, `vram_total` = full 64 GB unified (68 719 476 736 B) |
 
 ### 1.3 State: empty on purpose

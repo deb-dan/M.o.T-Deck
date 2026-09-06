@@ -6,7 +6,7 @@ not released, pinned or shipped.
 
 ## Proven premise
 
-`guards/harness-path-guard` controls declared file-tool operations. Hermes's foreground
+`guards/motdeck-path-guard` controls declared file-tool operations. Hermes's foreground
 local terminal calls host Bash from `LocalEnvironment._run_bash`, while background pipe
 and PTY terminal calls spawn separately in `ProcessRegistry.spawn_local` and
 `_spawn_local_pty`. Current upstream `execute_code` does not spawn per call: it acquires
@@ -141,7 +141,7 @@ native CI platforms; they are not evidence from this Mac run.
 The supported `scripts/run_tests.sh` invocation completed with the totals above. A second
 direct sequential pytest diagnostic reached 100% but did not complete teardown after
 roughly eight minutes and was terminated by exact PID. That teardown behavior is also
-unresolved upstream harness evidence; it is not hidden as a successful run.
+unresolved upstream motdeck evidence; it is not hidden as a successful run.
 
 This was intended as a direct-filesystem-write boundary rather than full host isolation.
 Host reads, ordinary IP networking, process creation, required IPC and reachable mutation

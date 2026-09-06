@@ -90,9 +90,9 @@ check('the tooltip leads with the bridge help', t.indexOf(F.help) === 0);
 check('...then states the range', t.indexOf('Range 1024 to 262144.') > 0);
 check('...then the reset convention with the right default word',
       t.indexOf('Leave empty for the engine default (registry / 65536).') > 0);
-check('the sampling side says "harness default" instead',
-      P.fieldTip({ help: 'h', min: 0, max: 2, default: 0.7 }, 'harness')
-        .indexOf('harness default (0.7)') > 0);
+check('the sampling side says "motdeck default" instead',
+      P.fieldTip({ help: 'h', min: 0, max: 2, default: 0.7 }, 'motdeck')
+        .indexOf('motdeck default (0.7)') > 0);
 check('a field with no range still gets help + reset',
       P.fieldTip({ help: 'h', default: 'auto' }, 'engine') === 'h Leave empty for the engine default (auto).');
 check('a field with no default at all does not print "(undefined)"',

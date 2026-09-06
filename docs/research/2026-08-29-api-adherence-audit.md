@@ -138,17 +138,17 @@ consent architecture (excellent) and never into the content channel.
 
 ### B. Lane routes — strong plumbing, one bare error, no schemas
 
-**C5/C7 — ✓.** The harness's own lane routers inject no content-bearing system
+**C5/C7 — ✓.** MOT Deck's own lane routers inject no content-bearing system
 prompts; the direct lane sends history + user turn only (chat.py:66-90). Hermes's
 prompt bloat (every toolset schema + the whole skill index) is vendor behavior, and
-the harness's answer is a *lever*, not a prompt: the toolset trimmer
+MOT Deck's answer is a *lever*, not a prompt: the toolset trimmer
 (hermestools.py:13-17) — which is also **C2-compliant**: `POST /api/hermes/toolsets`
 takes a preset or a whole desired-enabled list, writes only diffs, "re-applying a
 preset costs zero writes" (hermestools.py:830-841), and reports truth-after
 (`stuck` rows diagnosed to their cause, `agent.disabled_toolsets`, 903-907).
 
 **G2 session/context — ✓.** U18 closed: the direct lane wires what the runner IS
-serving, not harness.yaml's intent, with the whole incident written at the seam
+serving, not motdeck.yaml's intent, with the whole incident written at the seam
 (chat.py:26-53). History replay flattens agent-lane image parts so megabytes of base64
 never re-enter every later prompt (chat.py:71-78) — also the lane's best **G9** fact.
 
@@ -179,13 +179,13 @@ observable-behavior compliance the checklist's zero-trust row asks for.
 ### C. LOffice AI plugin seed + ComfyUI — small surface, honest
 
 **ooai — ✓ across its row.** The seed refuses to fabricate a working-looking surface:
-model id comes from the runner probe, never harness.yaml intent ("Putting the intended
+model id comes from the runner probe, never motdeck.yaml intent ("Putting the intended
 id on the wire is how you get a 404 … surfaced as an opaque failure inside a ribbon
 dropdown", ooai.py:241-246); a down runner yields `storage: None` + a gate sentence
 instead of a dead dropdown (seed, 308-320; status/gate, 358-380). `max_input_tokens`
 is HALVED and bucket-floored so a long Summarize chunks instead of overflowing
 (285-307) — a conditional owned below the consuming app, textbook C1. Capabilities are
-limited to what a local text model can honestly do (113-119). What the harness does
+limited to what a local text model can honestly do (113-119). What MOT Deck does
 NOT control: the plugin's own prompt construction (upstream AGPL bytes, served
 unmodified) — document text goes to the model with whatever framing upstream chose.
 Low residual risk (the document is the user's own) but worth stating.
@@ -245,7 +245,7 @@ provenance is mandatory on every success, naming the LIE-TO-USER class it preven
 
 **G7 typing — ✗.** No pydantic/OpenAPI schemas on either route; `usage` is fabricated
 as zeros in the response envelope — a compatible-looking field carrying false counts
-for any consumer doing token accounting; `type` is the constant `"harness_vision"`
+for any consumer doing token accounting; `type` is the constant `"motdeck_vision"`
 (334) so it discriminates nothing.
 
 **G4 — ±.** The sentences are excellent, the *codes* carry zero signal: every failure
@@ -322,7 +322,7 @@ are unauthenticated, consistent with the loopback-only deployment story.
    at the exact wrong namespace the module spent 10 lines warning about.
 
 Prefill bloat on the Hermes lane (full toolset schemas + skill index) is real token
-cost but vendor-owned; the harness's lever (hermestools.py) is the right shape of
+cost but vendor-owned; MOT Deck's lever (hermestools.py) is the right shape of
 answer and is not counted as a violation.
 
 ## 4. Fix slice ladder

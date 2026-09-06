@@ -19,8 +19,8 @@
  *      weight or the sentence is decoration.
  *
  *   3. NOTHING IS HALF-PAINTED, AND NOTHING OF THE USER'S IS LOST. The attribute is
- *      stamped only after the sheet loads; the axis never writes harness-theme or
- *      harness-chrome; ◐ maps to studio's variants instead of going dead; the packs
+ *      stamped only after the sheet loads; the axis never writes motdeck-theme or
+ *      motdeck-chrome; ◐ maps to studio's variants instead of going dead; the packs
  *      are greyed rather than silently ignored; the one seam is total and idempotent.
  *
  *   4. THE DESIGN IS MEASURED, NOT ASSERTED. Contrast is computed from the hex for
@@ -143,16 +143,16 @@ ok(RULES.length > 180, 'the walker parsed the whole stylesheet (' + RULES.length
 console.log('2. Editorial does not pay for the second design');
 {
   const pre = html.split('</style>')[1].split('</head>')[0];
-  ok(pre.includes("localStorage.getItem('harness-design')"),
+  ok(pre.includes("localStorage.getItem('motdeck-design')"),
      'the pre-paint pass reads the new key');
   // the ORDER matters: theme, chrome, then design — design is last because it is the
   // only one that can be async.
-  ok(pre.indexOf('harness-theme') < pre.indexOf('harness-chrome')
-     && pre.indexOf('harness-chrome') < pre.indexOf('harness-design'),
+  ok(pre.indexOf('motdeck-theme') < pre.indexOf('motdeck-chrome')
+     && pre.indexOf('motdeck-chrome') < pre.indexOf('motdeck-design'),
      '…after theme and chrome, in the same single pass');
   // THE PROPERTY THAT MATTERS: the link is created INSIDE the key test, so an
   // Editorial boot issues no request at all.
-  const blk = pre.slice(pre.indexOf("localStorage.getItem('harness-design')"));
+  const blk = pre.slice(pre.indexOf("localStorage.getItem('motdeck-design')"));
   const guard = blk.slice(0, blk.indexOf('createElement'));
   ok(/_dg === 'studio'/.test(guard) && /_dg === 'studio-light'/.test(guard),
      '…and the <link> is created ONLY inside the key test (Editorial issues 0 requests)');
@@ -417,7 +417,7 @@ console.log('2. Editorial does not pay for the second design');
                returns Switch for it) and the runner card's only advice was "pick
                another model", which cannot name the model already serving — so the
                drift persisted until somebody ejected a working model and reloaded it,
-               or hand-edited harness.yaml. Debi hit that wall. What landed: `drift`
+               or hand-edited motdeck.yaml. Debi hit that wall. What landed: `drift`
                hoisted out of the fileGone branch (it is pin ≠ served, not "the file is
                deleted" — the narrow version fired only on the incident that produced
                it), a drift sentence for the healthy-model case that previously said
@@ -445,7 +445,7 @@ console.log('2. Editorial does not pay for the second design');
                named-key mint/revoke surface, and a live request log — plus the one-time
                mint reveal, the armed two-step revoke, the pending-restart affordance and
                the poll lifecycle. Before this slice the ONLY key in the product was a
-               line in harness.yaml that had to be copied by hand into every app's
+               line in motdeck.yaml that had to be copied by hand into every app's
                provider form, revocable only by editing that file and restarting.
                THE CSS HALF is nine rules under one heading — `.say`, `.api-code`,
                `.api-line`, `.api-reveal`, `.api-tbl` (+2 cell rules) and `.api-wrap` —
@@ -558,7 +558,7 @@ console.log('2. Editorial does not pay for the second design');
      'NOT ONE of the design\'s own rules appears in index.html\'s inline sheet — the '
      + Buffer.byteLength(sd, 'utf8') + '-byte design is still a lazy-loaded asset');
   // and the growth is confined to the named seams
-  for (const seam of ['harness-design', 'id="design-chip"', 'function designApply(',
+  for (const seam of ['motdeck-design', 'id="design-chip"', 'function designApply(',
                       'function setDesign(', 'function designSelect(',
                       'function designBoot(', 'toggleDesign']) {
     ok(html.includes(seam), 'seam present: ' + seam);
@@ -621,20 +621,20 @@ const grab = name => {
   // ONE new key, and the two existing keys are never written by this axis.
   const keys = new Set((html.match(/localStorage\.setItem\('([^']+)'/g) || [])
     .map(s => s.replace(/.*\('/, '').replace(/'$/, '')));
-  ok(keys.has('harness-design'), 'the design is persisted in harness-design');
-  ok(!/harness-design-variant|harness-dvariant|harness-studio/.test(html),
+  ok(keys.has('motdeck-design'), 'the design is persisted in motdeck-design');
+  ok(!/motdeck-design-variant|motdeck-dvariant|motdeck-studio/.test(html),
      '…and no SECOND key was invented for the variant (it rides the same value)');
   // the crucial one: setDesign / toggleTheme-under-studio must not write the theme key
   const sdSrc = html.slice(html.indexOf('async function setDesign('));
   const setDesignBody = sdSrc.slice(0, sdSrc.indexOf('\nfunction toggleDesign'));
-  ok(!/harness-theme|harness-chrome/.test(setDesignBody),
-     'setDesign() never writes harness-theme or harness-chrome — leaving studio '
+  ok(!/motdeck-theme|motdeck-chrome/.test(setDesignBody),
+     'setDesign() never writes motdeck-theme or motdeck-chrome — leaving studio '
      + 'restores the user\'s theme and chrome because they were never touched');
   const tt = grab('toggleTheme');
   ok(/storedDesign\(\)/.test(tt) && /flipDesignVariant/.test(tt),
      '◐ maps to studio\'s variants while studio is active (it is never dead)');
   ok(tt.indexOf('flipDesignVariant') < tt.indexOf('nextThemeId'),
-     '…and it does so BEFORE reaching the pack cycle, so ◐ cannot write harness-theme '
+     '…and it does so BEFORE reaching the pack cycle, so ◐ cannot write motdeck-theme '
      + 'from inside studio');
 }
 {

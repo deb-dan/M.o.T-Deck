@@ -17,7 +17,7 @@ LM Studio claims carry URLs. Uncertainty is flagged inline with ⚠️.
 
 **(1) We currently send ZERO sampling parameters, anywhere.** The direct lane's request body is
 exactly `{model, messages, stream, cache_prompt, stream_options}` — `bridge/app.py:3574-3576`. No
-temperature, no top_p, no max_tokens. Every generation in the harness therefore runs on
+temperature, no top_p, no max_tokens. Every generation in MOT Deck therefore runs on
 *whatever the engine's own defaults are*, and those defaults differ wildly per engine (§1.4).
 
 **(2) There IS one sampling decision already made — and it is a buried constant.** `scripts/start_component.sh:225-227`
@@ -51,12 +51,12 @@ Add ONE optional key per registry entry in `data/models.json`:
 }
 ```
 
-Why the registry and not `harness.yaml`:
+Why the registry and not `motdeck.yaml`:
 - it is already the per-model home for user decisions (`voice`, `ref_audio`, `ref_text`, `hidden` —
   `scripts/seed_registry.py:515`), and `_registry_update()` (`bridge/app.py:3011-3042`) is an
   existing atomic writer with the right semantics (a `None` patch value **removes** the key, so
   "reset to default" = absence, not a stored null — exactly the grammar the voice picker already uses).
-- `harness.yaml` is written by a **line-scan scalar** writer (`_set_yaml_scalar`, `bridge/app.py:1792-1798`)
+- `motdeck.yaml` is written by a **line-scan scalar** writer (`_set_yaml_scalar`, `bridge/app.py:1792-1798`)
   that deliberately cannot express nested maps, and `ship.sh`'s manifest merge is additive at the top
   level only. A per-model settings tree does not belong there. (Same reasoning that put the voice
   folder list in `data/voice_folders.json`.)
@@ -123,7 +123,7 @@ per-model sampling.
 **Consequences, stated plainly:**
 
 - **Per-model sampling is a DIRECT-LANE feature.** Anything else is a partial fan-out. The UI must
-  say so — the precedent is the toolset lever's "controls the harness chat lane" honesty.
+  say so — the precedent is the toolset lever's "controls MOT Deck chat lane" honesty.
 - **Because LAUNCH-class settings live in argv, they apply to ALL THREE lanes** (every lane hits the
   same `:6767` process). So context/KV-quant/flash-attn genuinely are universal; only *sampling* is
   lane-scoped. That asymmetry is a gift: the two groups the UI wants to draw anyway ("Load" and
@@ -180,7 +180,7 @@ Today's *effective* values, and what to ship as our visible defaults:
 
 ⚠️ **These are researcher-proposed numbers, not measured.** Only `1.1/256` has evidence behind it
 (the 2026-08-06 loop incident). Everything else is convention. A "Sampling" group whose defaults
-were never A/B'd should say *"harness defaults"*, not *"recommended"*.
+were never A/B'd should say *"motdeck defaults"*, not *"recommended"*.
 
 ## 0.6 Presets
 
@@ -188,7 +188,7 @@ Three layers, in precedence order — this is LM Studio's shape too (§2.3) and 
 
 1. **Engine default** — what the binary does with no flags. Never stored; shown as the greyed
    placeholder in each field.
-2. **Harness default per engine** — the §0.5 table. A module-level constant in `bridge/app.py`
+2. **MOT Deck default per engine** — the §0.5 table. A module-level constant in `bridge/app.py`
    (contract-testable), NOT a file the user edits in v1.
 3. **Per-model override** — `entry["settings"]`, written by the Models detail pane. Absence = fall
    through. Per-field **reset** = `_registry_update(mid, {"settings": …})` with that key removed.
@@ -219,7 +219,7 @@ llamacpp · 18.7 GB · 95,536 ctx · local
     repeat_last_n    [ 256  ]  default 256
     max_tokens       [ 4096 ]  default 4096
     ⓘ Agent and Hermes lanes build their own requests — see the note.
-    [ Reset all to harness defaults ]
+    [ Reset all to motdeck defaults ]
 
 ▸ Load  ·  needs a model reload to take effect
     context           [ 95536 ]  model max 262144
@@ -271,7 +271,7 @@ Source: `data/llama-server.help.txt`, regenerated on every runner start by
 **Context / memory**
 | Flag | Default | Line | Note |
 |---|---|---|---|
-| `-c, --ctx-size N` | 0 = from model | :25 | we pass registry `ctx` → `harness.yaml ctx_size` → 65536 (`start_component.sh:89-91`) |
+| `-c, --ctx-size N` | 0 = from model | :25 | we pass registry `ctx` → `motdeck.yaml ctx_size` → 65536 (`start_component.sh:89-91`) |
 | `-n, --predict N` | **-1 = infinity** | :27 | never set by us; contrast MLX's 512 |
 | `-b, --batch-size` / `-ub, --ubatch-size` | 2048 / 512 | :29,:31 | |
 | `-ctk/-ctv, --cache-type-k/v` | f16 | :75,:79 | `f32 f16 bf16 q8_0 q4_0 q4_1 iq4_nl q5_0 q5_1`. The big VRAM lever |
@@ -690,7 +690,7 @@ must read the same table (or, better, samplers move to request-class and the div
    settings endpoint keys off the registry **id**; only the wire field translates.
 4. **mlx-lm has no `--api-key` and no ctx flag; mlx-vlm HAS `--api-key` and a KV-quant suite.**
    The recorded blanket rule "MLX has no api-key / no ctx" is only true of mlx-lm.
-5. **`ctx` has a migration history**: registry `ctx` → `harness.yaml ctx_size` → 65536
+5. **`ctx` has a migration history**: registry `ctx` → `motdeck.yaml ctx_size` → 65536
    (`start_component.sh:89-91`), and the 95536 on the 35B came from Jan's `router.preset.ini`,
    carried forward for `local` entries only (`seed_registry.py:551-586`). Hermes also enforces a
    64 K floor. A ctx editor must respect that floor or the Hermes lane breaks.
@@ -706,12 +706,12 @@ must read the same table (or, better, samplers move to request-class and the div
    in a direction the ledger cannot see. If we surface KV quant we should say the ledger doesn't
    model it (LM Studio's `--estimate-only` is the mature version of this).
 9. **Contract tests**: `--repeat-penalty`, `--spec-type`, `-a/--alias` are already pin-asserted in
-   `harness.yaml`'s runner comments. Any newly-depended-on flag (`-ctk`, `-fa`, `--reasoning-format`)
+   `motdeck.yaml`'s runner comments. Any newly-depended-on flag (`-ctk`, `-fa`, `--reasoning-format`)
    should join that list, and the MLX validation ranges are worth pinning against
    `mlx_lm/server.py:1229-1251` so a pin bump that tightens them trips loudly.
 10. ⚠️ **New watch-item already recorded and now relevant**: b10427 reads
     `/etc/llama.cpp/config.ini` and `~/.config/llama.cpp/config.ini` **if they exist**, applied
-    before env and CLI (`harness.yaml` runner comment). Neither exists on Debi's Mac, but
+    before env and CLI (`motdeck.yaml` runner comment). Neither exists on Debi's Mac, but
     llama-server's effective settings are no longer determined by our argv alone — so an
     "effective config" readout (LM Studio's `echo_load_config`) is more valuable than it looks.
 

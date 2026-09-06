@@ -1,4 +1,4 @@
-# Harness — single source of truth for pins, ports, endpoints.
+# MOT Deck — single source of truth for pins, ports, endpoints.
 # Every change to a pin should be a git commit (that's your rollback history).
 
 # ⛔ THERE IS NO `version:` KEY HERE ANY MORE — AND PUTTING ONE BACK IS A BUG (U56,
@@ -8,7 +8,7 @@
 # 0.1.0 — which makes ANY tag newer for ever. THE RELEASE VERSION IS THE TOP-LEVEL
 # `VERSION` FILE: QA bumps it in the same commit as the slice, ship.sh copies it into
 # the snapshot, build_app.sh seeds it into the fat app, and
-# bridge/core/procs.py::harness_version is its ONE reader. A second copy of a fact is a
+# bridge/core/procs.py::motdeck_version is its ONE reader. A second copy of a fact is a
 # second answer. Fenced by bridge/contract_tests/test_version_truth_contract.py.
 
 components:
@@ -108,7 +108,7 @@ components:
                               #     that the session platform is not what selects the key.
                               #  3. COSMETIC — the `project` fold literal became _gui_surface_toolsets(platform)
                               #     (server.py:4246/4410). `project` is still unconditional; `desktop_ui` is added for
-                              #     desktop-sourced sessions only, and ours send source="harness", so the Check card's
+                              #     desktop-sourced sessions only, and ours send source="motdeck", so the Check card's
                               #     count is still complete. Both halves now pinned.
                               # ⚠️ The one to remember at the NEXT bump: HERMES_DESKTOP=1 (set by start_component.sh
                               # for the cron ticker) is exactly what makes a source-less session resolve to "desktop".
@@ -246,7 +246,7 @@ components:
     depends_on: []            # standalone — its own diffusion models, not our runner
     # ⚠️ LICENSE: GPL-3.0. Composed at ARM'S LENGTH ONLY — a separate process we talk to over
     # HTTP, never edited, never lifted from. Same posture as SearXNG's AGPL.
-    # ⚠️ Its models and their RAM are OUTSIDE the harness ledger (memory.budget_gb): diffusion
+    # ⚠️ Its models and their RAM are OUTSIDE MOT Deck ledger (memory.budget_gb): diffusion
     # weights live in its own process, exactly like the voice components' do.
     # ⚠️ --base-directory is MANDATORY at start (see start_component.sh): the default writes
     # models/ output/ input/ user/ into the repo dir, i.e. into vendor/. Same class of trap as
@@ -323,7 +323,7 @@ components:
     # ⚠️ We deliberately never export HERMES_HOME and never invoke `unsloth start` — that is
     # the CLI's agent-wiring path and it must not touch ~/.hermes.
     # ⚠️ It can download its own (forked, floating-tag) llama.cpp into data/unsloth-home.
-    # Contained, but those weights are invisible to the harness RAM ledger.
+    # Contained, but those weights are invisible to MOT Deck RAM ledger.
 
   # ── OPTIONAL second CODING lane (docs/research/2026-08-21-opencode-omnigent-recon.md) ──
   # aider stays the PTY lane (it needs no tool-calling and is the only structurally
@@ -386,7 +386,7 @@ components:
                               # and never overwrites an existing value). Running the
                               # installer against the REPO flips this line to true — which
                               # is correct behaviour AND a red gate
-                              # (test_seam.py::test_harness_yaml_parses). Flip it back
+                              # (test_seam.py::test_motdeck_yaml_parses). Flip it back
                               # before committing; that is not a bug in either half.
     enabled: false
     port: 3080                # upstream's OWN default (dsh-host-webserver: `port:
@@ -519,7 +519,7 @@ aux:
   api_key:                   # generated into data/.env.local on first bootstrap
   model:                      # empty = not configured; set from the Models pane
 
-# Harness-native VOICE capability (FABLE-VOICE-CAPABILITY-SPEC, Phase B).
+# MOT Deck-native VOICE capability (FABLE-VOICE-CAPABILITY-SPEC, Phase B).
 # NOT the optional voicestudio/voicebox components above — this is the all-MIT
 # agents-can-speak path built on binaries we already ship: llama-tts (rides
 # runner.llamacpp_pin) and mlx-audio (in data/mlx-venv). One-shot subprocesses:
@@ -590,7 +590,7 @@ build:
   # where they are — install_mlx.sh asks for all four explicitly, so this bump
   # cannot drag mlx-audio to 0.5.0 (the deliberately-deferred risky one).
   mlx_vlm_pin: "0.6.17"
-  # mlx-audio powers the MLX half of the harness-native voice capability (the
+  # mlx-audio powers the MLX half of MOT Deck-native voice capability (the
   # `voice:` block above). It is ALREADY pulled in transitively as an mlx-vlm dep,
   # so pinning it here just makes the version deliberate: the provisioned venv had
   # 0.4.4 while the Phase-0 recon read 0.4.7 sources — install_mlx.sh now asks for
@@ -612,7 +612,7 @@ build:
   # script out of the SAME data/mlx-venv — no second venv, no torch. Pin per the
   # Fable spec amendment §6.
   mlx_whisper_pin: "0.4.3"
-  # ── build-time toolchain the harness provisions for ITSELF (never brew, never sudo) ──
+  # ── build-time toolchain MOT Deck provisions for ITSELF (never brew, never sudo) ──
   # bun: compiles the Vite SPAs of the two OPTIONAL voice components. Read by
   # scripts/ensure_bun.sh, which lands it at data/bun/bin/bun (~35MB download) ONLY if
   # the user has no bun of their own. Build-time only — nothing at runtime needs it, and

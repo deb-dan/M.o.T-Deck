@@ -108,7 +108,7 @@ def claim_or_exit(root: Path, *, _exit=None, _wait_seconds: float = 2.0) -> str:
         owner = _read_owner(root)
         if owner and owner[0] != me and ownership_matches(root, owner[0]):
             incumbent = owner[0]
-            msg = (f"[bridge] singleton: pid {incumbent} already owns this harness "
+            msg = (f"[bridge] singleton: pid {incumbent} already owns this MOT Deck root "
                    f"(exact launch record). This bridge pid {me} is standing down; "
                    "the incumbent is never signalled.")
             print(msg, flush=True)

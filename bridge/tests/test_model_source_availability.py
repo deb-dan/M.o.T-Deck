@@ -307,7 +307,7 @@ def test_19_atomic_write_failure_preserves_original_bytes(tmp_path, monkeypatch)
 
 def test_20_audio_and_live_yaml_are_outside_transaction(tmp_path):
     audio = {"id": "voice", "kind": "audio", "format": "tts-gguf", "path": str(tmp_path / "missing")}
-    yaml = tmp_path / "harness.yaml"; yaml.write_text("runner:\n  model: keep\n")
+    yaml = tmp_path / "motdeck.yaml"; yaml.write_text("runner:\n  model: keep\n")
     assert SR.prune_absent([audio])[0] == [audio]
     assert yaml.read_text() == "runner:\n  model: keep\n"
 

@@ -24,7 +24,7 @@ usual CLAUDE.md blockquote. Next session: append this to all three CLAUDE.md cop
 > (all ∩ connected) — a config provider IS expected to appear tagged "config", so her
 > screenshot was a real fault. Model picks are client-storage, survive restarts.
 > Their pages CAN be iframed (no frame-ancestors/XFO, verified live) — the
-> harness-strip fallback is feasible but cross-origin-blind; parked.
+> motdeck-strip fallback is feasible but cross-origin-blind; parked.
 > **(2) LOFFICE ERGONOMICS (stamp 21h, browser-verified 27/27):** draggable dividers
 > (rail 160-420, AI 260-560, persisted-on-release, dblclick reset, pointer capture,
 > mirrored-axis bug pinned), both panes collapse to 34px labelled reopeners
@@ -41,7 +41,7 @@ usual CLAUDE.md blockquote. Next session: append this to all three CLAUDE.md cop
 > preliminary: acceptable for personal use, same conveyance rules) + several hundred
 > MB assets. Also: Univer's import/export ceiling is PROPRIETARY (validates our
 > tier-1 but caps tier-2 permanently); CryptPad itself = encrypted blobs, files
-> invisible to the harness → reject-as-component, harvest its asset pipeline; Grist =
+> invisible to MOT Deck → reject-as-component, harvest its asset pipeline; Grist =
 > Airtable not a spreadsheet (xlsx import discards formulas); Document Builder
 > WATERMARKS without license; Collabora structurally mac-impossible; EtherCalc now
 > Bun/CF-workers (worse); Quadratic went closed 2026-03. **FABLE RULING: the
@@ -65,10 +65,10 @@ usual CLAUDE.md blockquote. Next session: append this to all three CLAUDE.md cop
 > = **MOT Deck**, Mission Control → **MOT Main** (sidebar/tab/hero/⌘K/tooltips/error
 > strings), wordmark MOT + "mixture of tools / local · control", window title +
 > Quit menu + first-run alerts, OpenCode provider name → "MOT Deck (local)",
-> office/aider titles, docs H1s + naming notes (HARNESS-INTERNALS/architecture get a
-> top note, not a rewrite). INTERNALS UNCHANGED by ruling (harness.yaml, HARNESS_*,
-> localStorage keys, paths, bundle id, /Applications/Harness.app) — full internal
-> rename = queued ops slice. 2 test pins updated by inspection; "the harness" as a
+> office/aider titles, docs H1s + naming notes (MOT-DECK-INTERNALS/architecture get a
+> top note, not a rewrite). INTERNALS UNCHANGED by ruling (motdeck.yaml, MOT_DECK_*,
+> localStorage keys, paths, bundle id, /Applications/MOT Deck.app) — full internal
+> rename = queued ops slice. 2 test pins updated by inspection; "MOT Deck" as a
 > common noun deliberately left (~25 sites); app.py:1075 session name "Mission
 > Control" KEPT (renaming would orphan the chat session); CFBundleName → MOT Deck
 > takes effect only on a full build_app.sh. ✋ GitHub repo rename = Debi's click.
@@ -78,12 +78,12 @@ usual CLAUDE.md blockquote. Next session: append this to all three CLAUDE.md cop
 > SHEET chip on-by-default per file (persisted pref deliberately dropped — it pinned
 > the bug; old test assertion was pinning the bug too, rewritten). File ⌄ menu (New/
 > Open ⌘O/Import/Rename/Save ⌘S/Download/Close/⌂ MOT Main), POST /api/office/rename
-> (containment discipline). Theme coherence: page reads panel's harness-theme +
-> harness-chrome from localStorage (same origin), 9 rules, palette rules = the ONE
+> (containment discipline). Theme coherence: page reads panel's motdeck-theme +
+> motdeck-chrome from localStorage (same origin), 9 rules, palette rules = the ONE
 > deliberate non-:where() exception (a :where() prefix would lose to :root). Fixed a
 > LATENT DATA-LOSS bug: double-click on a dirty row armed AND confirmed the discard
 > in one gesture (DISCARD_MIN_MS=400). Fable added the Swift branch: loffice+aider
-> webviews get the "harness" script-message handler (first-party bridge-served pages
+> webviews get the "motdeck" script-message handler (first-party bridge-served pages
 > — third-party components still never). ⚠️ ONE-TIME REPAIR: a NUL byte got into
 > office.html (3 string literals, neutralised behind // comments, page syntactically
 > valid; Grep refuses the file until stripped):
@@ -135,7 +135,7 @@ usual CLAUDE.md blockquote. Next session: append this to all three CLAUDE.md cop
 > the DEFAULT BROWSER. Aider/LOffice are `view:null` lanes so nothing else caught it.
 > FIX: new `inNativeApp()` (webkit present, deliberately weaker than `nativeShell()`)
 > + `shellTabs()`/`shellKnowsTab()` reading a NEW shell→page capability record
-> `window.harnessShell = {api:2, tabs:[...every registry id...]}` injected at
+> `window.motdeckShell = {api:2, tabs:[...every registry id...]}` injected at
 > documentStart on the panel + loffice + aider only. Inside the app a lane can NEVER
 > reach `window.open` — it prints `this build of the app has no such tab — run
 > ./scripts/ship.sh`. **A one-way postMessage was previously silent on failure; it

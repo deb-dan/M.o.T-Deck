@@ -54,7 +54,7 @@ def _help():
 def test_pin_exists_and_is_exact():
     """Always runs: an unpinned or ranged STT dependency would let a re-install
     silently change the argv surface underneath us."""
-    c = yaml.safe_load((ROOT / "harness.yaml").read_text())
+    c = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
     pin = str(((c.get("build") or {}).get("mlx_whisper_pin") or "")).strip()
     assert pin, "build.mlx_whisper_pin is missing — scripts/install_mlx.sh needs it"
     assert all(part.isdigit() for part in pin.split(".")), (
@@ -68,7 +68,7 @@ def test_install_mlx_asks_for_the_pin():
     assert "mlx-whisper==${MLX_WHISPER_PIN}" in src, (
         "install_mlx.sh no longer installs mlx-whisper at the pinned version")
     assert "_yb mlx_whisper_pin" in src, (
-        "install_mlx.sh must read the pin from harness.yaml, not hardcode it")
+        "install_mlx.sh must read the pin from motdeck.yaml, not hardcode it")
 
 
 def test_console_script_present_when_mlx_venv_exists():

@@ -15,12 +15,12 @@ warnings, quoted text in grounding, computed receipt checks. Nothing below depen
 those.
 
 **Screenshots** live in this session's scratchpad and are session-local:
-`/private/tmp/claude-501/-Users-debik-Claude-Proj-Rootz-Base-Harness/afbc3ab5-272b-4bf3-9759-79d9f18db706/scratchpad/`
+`/private/tmp/claude-501/-Users-debik-Claude-Proj-Rootz-Base-MOT Deck/afbc3ab5-272b-4bf3-9759-79d9f18db706/scratchpad/`
 — `qa-rich.png` (editor up, whole layout), `qa-tpl.png` (start screen, dead menu bar),
 `qa-ghost2.png`, `qa-rename.png`, `qa-create2.png`.
 
 Counts: **7 LIES-TO-USER · 5 BROKEN-FLOW · 7 CONFUSING · 3 COSMETIC**, plus 6 claims
-checked and found TRUE, and 7 things this harness could not test.
+checked and found TRUE, and 7 things this motdeck could not test.
 
 ---
 
@@ -121,7 +121,7 @@ editor can do should stop citing a round-trip limit that no longer applies to th
 
 ### L4 — "the agent edited this file — reloaded (pre-edit copy kept as X.pre-agent.xlsx)" is printed for *any* external change, including ones that made no such copy
 **Severity: LIES-TO-USER.** Code-verified; the banner itself was not reachable in this
-harness (see UNTESTABLE U1).
+motdeck (see UNTESTABLE U1).
 
 `extPlan()` fires on nothing but a newer `mtime`. Both of its sentences assert an agent
 and a `.pre-agent.xlsx` safety copy:

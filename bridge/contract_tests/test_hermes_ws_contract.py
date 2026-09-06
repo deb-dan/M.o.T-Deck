@@ -7,7 +7,7 @@ event names, so every Hermes pin-bump MUST pass this purely-static check —
 it greps the vendored source for each name the adapter depends on and fails
 loudly if a future tag renames or removes one.
 
-Run: pytest bridge/contract_tests/ (from harness root). No network, no build.
+Run: pytest bridge/contract_tests/ (from motdeck root). No network, no build.
 """
 import re
 from pathlib import Path
@@ -337,7 +337,7 @@ def test_file_card_signal_contract():
 
 
 def test_path_guard_hook_contract():
-    """PATH-GUARD FENCE (guards/harness-path-guard + bridge audit tier).
+    """PATH-GUARD FENCE (guards/motdeck-path-guard + bridge audit tier).
 
     Our plugin enforces write-path policy through upstream's ``pre_tool_call``
     hook: an ``{"action": "approve"}`` directive escalates the call into the SAME
@@ -471,10 +471,10 @@ def test_the_new_modify_directive_can_rewrite_args_the_guard_already_judged():
     pre_tool_call plugin can then replace `file_path` with a different one that
     nothing re-checked. That is a fence bypass by construction.
 
-    WHY IT IS NOT A LIVE HOLE IN THIS HARNESS, TODAY, AND WHAT WOULD MAKE IT ONE:
+    WHY IT IS NOT A LIVE HOLE IN MOT DECK, TODAY, AND WHAT WOULD MAKE IT ONE:
       · no plugin BUNDLED with Hermes returns a `modify` directive (asserted below);
       · user plugins are opt-in through `plugins.enabled`, and the only name
-        scripts/start_component.sh ever adds there is `harness-path-guard`, which
+        scripts/start_component.sh ever adds there is `motdeck-path-guard`, which
         returns block/approve and never modify.
     A SECOND enabled pre_tool_call plugin is therefore the precondition, and it is
     a deliberate act. If this test ever fails because a bundled plugin gained a
@@ -487,7 +487,7 @@ def test_the_new_modify_directive_can_rewrite_args_the_guard_already_judged():
     if 'result.get("action") == "modify"' not in plugins:
         return          # upstream dropped the directive — the hazard is gone
     assert "modified_args" in plugins, "modify exists but carries no args channel"
-    guard = ROOT / "guards" / "harness-path-guard" / "__init__.py"
+    guard = ROOT / "guards" / "motdeck-path-guard" / "__init__.py"
     if guard.exists():
         assert '"modify"' not in guard.read_text(errors="replace"), (
             "our own path-guard now emits modify directives — it must then also "

@@ -48,7 +48,7 @@ PANEL = (ROOT / "bridge" / "panel" / "index.html").read_text(errors="replace")
 START = (ROOT / "scripts" / "start_component.sh").read_text(errors="replace")
 
 _spec = importlib.util.spec_from_file_location(
-    "harness_seed_registry", str(ROOT / "scripts" / "seed_registry.py"))
+    "motdeck_seed_registry", str(ROOT / "scripts" / "seed_registry.py"))
 SR = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(SR)
 
@@ -295,7 +295,7 @@ def test_rescan_end_to_end_uses_manager_membership_not_leftover_files(tmp_path):
 
     set_catalog([("Parable-4B", "Parable-4B.gguf"),
                  ("Muse-Glimmer-30B", DEAD[0] + ".gguf")])
-    (root / "harness.yaml").write_text("runner:\n  model: Parable-4B\n  port: 6767\n")
+    (root / "motdeck.yaml").write_text("runner:\n  model: Parable-4B\n  port: 6767\n")
     # A source 'download' row whose weights are long gone — the class merge() preserves
     # untouched by design and therefore can never prune on its own.
     (root / "data" / "models.json").write_text(json.dumps({"models": [
@@ -307,10 +307,10 @@ def test_rescan_end_to_end_uses_manager_membership_not_leftover_files(tmp_path):
         r = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "seed_registry.py"), "--json"],
             cwd=str(root), capture_output=True, text=True, timeout=120,
-            env=dict(os.environ, HARNESS_LMSTUDIO_DIR=str(lms),
-                     HARNESS_LMS_BIN=str(fake_lms), FAKE_LMS_CATALOG=str(catalog),
-                     HARNESS_JAN_MODELS_DIR=str(tmp_path / "no-jan"),
-                     HARNESS_PROTECT_MODELS=protect))
+            env=dict(os.environ, MOT_DECK_LMSTUDIO_DIR=str(lms),
+                     MOT_DECK_LMS_BIN=str(fake_lms), FAKE_LMS_CATALOG=str(catalog),
+                     MOT_DECK_JAN_MODELS_DIR=str(tmp_path / "no-jan"),
+                     MOT_DECK_PROTECT_MODELS=protect))
         assert r.returncode == 0, r.stderr
         reg = json.loads((root / "data" / "models.json").read_text())["models"]
         return json.loads(r.stdout), {m["id"] for m in reg}
@@ -351,10 +351,10 @@ def test_the_rescan_never_deletes_a_model_file(tmp_path):
 
 
 def test_the_protect_set_reads_the_pin_and_the_env(tmp_path, monkeypatch):
-    (tmp_path / "harness.yaml").write_text(
+    (tmp_path / "motdeck.yaml").write_text(
         "components:\n  hermes:\n    model: not-the-runner\n"
         "runner:\n  model: the-pin  # a trailing comment\n  port: 6767\n")
-    monkeypatch.setenv("HARNESS_PROTECT_MODELS", "live-one\nanother,third")
+    monkeypatch.setenv("MOT_DECK_PROTECT_MODELS", "live-one\nanother,third")
     got = MR.protected_ids(str(tmp_path))
     assert got == {"the-pin", "live-one", "another", "third"}, (
         "the pin is read without pyyaml (the seeders have no dependency), comments are "

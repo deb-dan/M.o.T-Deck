@@ -148,7 +148,7 @@ request hit **`http://127.0.0.1:6767/v1/chat/completions`** and came back
 desktop, no telemetry prompt, no keychain prompt), config honored, correct URL composed.
 **Build-slice note:** our runner at :6767 evidently validates the bearer key — seed the runner's
 real key into the goose env/config (or confirm the runner's permissive mode) rather than assuming
-"any key works", which the old recon assumed. This is a harness-side detail, not a goose problem.
+"any key works", which the old recon assumed. This is a MOT Deck-side detail, not a goose problem.
 
 Alternative config route (if we ever want goose to list multiple runner models): a **declarative
 custom provider** JSON in `~/.config/goose/custom_providers/<name>.json` with
@@ -205,7 +205,7 @@ Installer: download → sha-verify **before** extract → `data/goose/` → **ca
 - `goose serve`'s ~103 endpoints were not enumerated (out of scope for the PTY lane).
 - `term` subcommand and the plugin/gateway systems: unexamined.
 - Asset sha from one download on one network; API `digest` field unavailable (rate limit).
-- The 401 from :6767 proves the seam but also that key handling needs a harness-side decision.
+- The 401 from :6767 proves the seam but also that key handling needs a MOT Deck-side decision.
 - v2.0 RCs were not evaluated; this sheet is a 1.48.0 pin.
 
 ## Reproduce this recon

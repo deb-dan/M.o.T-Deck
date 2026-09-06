@@ -103,7 +103,7 @@ check("…and is syntactically clean under bash -n", r.returncode == 0, r.stderr
 
 SRC = SCRIPT.read_text()
 check("it is NOT a component — no port, no manifest key, no venv, no registry row",
-      "flip_installed" not in SRC and "harness.yaml" not in SRC.split("# ⚖️")[0]
+      "flip_installed" not in SRC and "motdeck.yaml" not in SRC.split("# ⚖️")[0]
       and "uv venv" not in SRC)
 
 # The pin must still be the one the probe RECORDED — a silent pin drift is exactly what
@@ -165,7 +165,7 @@ check("a mismatch is a hard failure, never a warning",
 work = tempfile.mkdtemp(prefix="oo-lane-")
 try:
     zips = os.path.join(work, "zips")
-    # OO_DEST is the BUNDLE directory; oo.py's helpers take the harness ROOT and look
+    # OO_DEST is the BUNDLE directory; oo.py's helpers take MOT Deck ROOT and look
     # for <root>/data/onlyoffice underneath it. Laying the fixture out that way is the
     # point: it proves the two halves agree about where the bundle lives.
     fake_root = os.path.join(work, "root")
@@ -563,7 +563,7 @@ except Exception as _e:                                          # noqa: BLE001
 # silently; no window.confirm), and the new ones pin the embed itself.
 PAGE = (ROOT / "bridge" / "panel" / "office.html").read_text()
 eq("the build stamp was bumped for this slice",
-   (PAGE.split('name="harness-build" content="')[1].split('"')[0]), "loffice-2026-08-29b")
+   (PAGE.split('name="motdeck-build" content="')[1].split('"')[0]), "loffice-2026-08-29b")
 check("…and the no-script fallback banner carries the SAME stamp, so a stale cached "
       "document cannot claim to be this build",
       "loffice-2026-08-29b</code>" in PAGE)

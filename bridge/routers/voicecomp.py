@@ -134,7 +134,7 @@ async def voice_toggle(req: Request) -> JSONResponse:
     like the Browse toggle.
 
     Idempotent: enabling an already-registered server is a no-op on both hosts (a
-    stale URL — e.g. the port changed in harness.yaml — is re-registered); disabling
+    stale URL — e.g. the port changed in motdeck.yaml — is re-registered); disabling
     an absent one likewise. Turning ON is REFUSED when the component isn't installed
     or isn't listening, because registering a dead URL only buys connection errors in
     every subsequent turn. Turning OFF is always allowed (it is the cleanup path)."""
@@ -151,7 +151,7 @@ async def voice_toggle(req: Request) -> JSONResponse:
     spec = voice_mcp_spec(name, comp.get("port"))
     if spec is None:
         return JSONResponse({"ok": False,
-                             "error": f"components.{name}.port is missing or invalid in harness.yaml"},
+                             "error": f"components.{name}.port is missing or invalid in motdeck.yaml"},
                             status_code=400)
     if on:
         if not comp.get("installed"):

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install AIDER — the harness's coding agent, run in a PTY tab.
+# Install AIDER — MOT Deck's coding agent, run in a PTY tab.
 #
 #   ./scripts/install_aider.sh
 #
@@ -34,7 +34,7 @@ say() { echo "[aider] $*"; }
 die() { echo "[aider] ERROR: $*" >&2; exit 1; }
 
 # ── pin reader (same awk shape as install_music.sh: comments live ABOVE keys) ──
-_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' harness.yaml; }
+_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' motdeck.yaml; }
 
 # ── explicit-path resolution (the Finder-minimal-PATH standing rule) ──────────
 resolve_py() {
@@ -101,7 +101,7 @@ clone_pinned() {
   command -v git >/dev/null 2>&1 || die "git not found — xcode-select --install"
   local sha
   sha="$(_yb aider_pin)"
-  [[ -n "$sha" ]] || die "build.aider_pin missing from harness.yaml"
+  [[ -n "$sha" ]] || die "build.aider_pin missing from motdeck.yaml"
   say "pin: Aider-AI/aider @ ${sha:0:12}"
 
   if [[ ! -d "$SRC/.git" ]]; then

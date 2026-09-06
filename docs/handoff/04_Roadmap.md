@@ -29,7 +29,7 @@ surface) · then **M5 remote access** (Tailscale + Hermes's messaging gateway).
 ---
 
 
-*Part of the Harness handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture referenced throughout: [02_Architecture.md](02_Architecture.md).*
+*Part of the MOT Deck handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Architecture referenced throughout: [02_Architecture.md](02_Architecture.md).*
 
 Ordering principle (personal-first): **every milestone ends with something you personally use that week.** No milestone exists to serve a hypothetical future user. Shipping-related work is deferred indefinitely; the only future-proofing is the four hygiene rules in [03_Licensing.md](03_Licensing.md).
 
@@ -37,7 +37,7 @@ Ordering principle (personal-first): **every milestone ends with something you p
 
 ## M0 — Finish the handshake (you are HERE, mid-M0)
 
-Goal: the existing harness runs Hermes and Odysseus against a real model endpoint, end to end. **Do not pivot to M1 before this runs** — M1's runner interface should be extracted from a working system, not designed in the abstract.
+Goal: the existing motdeck runs Hermes and Odysseus against a real model endpoint, end to end. **Do not pivot to M1 before this runs** — M1's runner interface should be extracted from a working system, not designed in the abstract.
 
 Tasks (the four known remainders, with the new research folded in):
 1. **Fix Hermes start-error reporting** in the Bridge/Mission Control so failures surface in the status card instead of dying silently.
@@ -45,7 +45,7 @@ Tasks (the four known remainders, with the new research folded in):
 3. **Install Odysseus from the panel.** Native Python route only — no Docker (locked decision, §Decisions). (Python 3.11+): venv → `pip install -r requirements.txt` → `python setup.py` → `python -m uvicorn app:app --host 127.0.0.1 --port 7860`. Bridge writes its `.env` (`LLM_HOST`, `SEARXNG_INSTANCE`, `APP_PORT`); finish provider setup in Odysseus's in-app Settings UI.
 4. **First handshake:** Hermes completes a trivial multi-step task through the endpoint; Odysseus answers a chat query; both visible as green cards. Optional stretch: one DeepResearch query if SearXNG is already reachable.
 
-Exit criterion: you did all of the above **without opening a terminal** (except where the harness legitimately shells out for you).
+Exit criterion: you did all of the above **without opening a terminal** (except where MOT Deck legitimately shells out for you).
 
 ## M1 — The runner slot + one-switch provisioning
 
@@ -79,8 +79,8 @@ Goal: the async agent becomes a genuine coworker surfaced through your shell.
 
 1. **Activity feed integration:** Hermes task starts/steps/completions flow into Mission Control's feed.
 2. **Task dispatch from ⌘K** ("assign to Hermes…"), with status card showing current task and last result.
-3. **Hermes consumes harness capabilities as tools:** DeepResearch (via Odysseus's API) and the runner endpoint; possibly the shared SearXNG directly.
-4. **Adopt the SKILL.md convention harness-wide** (Decisions §3): one canonical skills directory; Hermes reads it natively; LM Studio's community skills plugin (`~/.lmstudio/skills`) gets a symlink; Hermes being MIT means you can lift its loader conventions into your own code freely.
+3. **Hermes consumes motdeck capabilities as tools:** DeepResearch (via Odysseus's API) and the runner endpoint; possibly the shared SearXNG directly.
+4. **Adopt the SKILL.md convention MOT Deck-wide** (Decisions §3): one canonical skills directory; Hermes reads it natively; LM Studio's community skills plugin (`~/.lmstudio/skills`) gets a symlink; Hermes being MIT means you can lift its loader conventions into your own code freely.
 
 Exit criterion: you assign Hermes a task at night from ⌘K; in the morning the activity feed tells you what it did, and a skill it wrote is available everywhere.
 
@@ -110,8 +110,8 @@ If a spike fails, adjust the milestone before building (e.g., MLX bad in Jan →
 
 1. **Default models — policy LOCKED, exact picks open.** **Tool calling is mandatory for the primary model.** Hermes cannot work without it (its whole loop is tool calls) and MCP tools break too — so any model without reliable tool calling is **disqualified as primary**, however good its prose. Standardize two named roles in Bridge config (`primary`, `fast`), never hardcoded IDs: (a) `primary` — a ~30B-class tool-calling model run at 64K+ context (leading candidates: Qwen3-32B ~128K native, or the Qwen3.5/3.6 MoE equivalent; 64GB RAM leaves ample KV headroom — see [05_Reference_and_Learnings.md](05_Reference_and_Learnings.md)); (b) `fast` — a small tool-capable model for Hermes's high-frequency loops and background summarization. Still to do: benchmark and name the exact model IDs.
 2. **Shared SearXNG: LOCKED yes — and native.** One Bridge-managed from-source instance on :8080 (no Docker; recipe in [02_Architecture.md](02_Architecture.md) §SearXNG); Odysseus (`SEARXNG_INSTANCE`) and the MCP search server both point at it.
-3. **Single skills directory: yes (recommendation, still open).** `~/harness/skills` (or inside your harness root) as canon; symlink into `~/.lmstudio/skills`; configure/symlink Hermes to the same. One skill corpus, three consumers. Keep it in git.
-4. **Canonical runner endpoint: LOCKED — headless Jan :6767** (`jan serve --detach`, Bridge-managed, survives desktop-app quits). Desktop Jan (:1337) stays a manual convenience for settings/chat, never the harness endpoint.
+3. **Single skills directory: yes (recommendation, still open).** `~/motdeck/skills` (or inside your motdeck root) as canon; symlink into `~/.lmstudio/skills`; configure/symlink Hermes to the same. One skill corpus, three consumers. Keep it in git.
+4. **Canonical runner endpoint: LOCKED — headless Jan :6767** (`jan serve --detach`, Bridge-managed, survives desktop-app quits). Desktop Jan (:1337) stays a manual convenience for settings/chat, never MOT Deck endpoint.
 5. **Docker: LOCKED — none, anywhere.** Debi doesn't want Docker on the machine. Odysseus runs native Python; SearXNG runs native from source. The earlier "container acceptable for SearXNG" fallback is withdrawn; the emergency fallback is a public SearXNG instance, temporarily.
 6. **Where daily chat lives:** defer. Jan's UI is fine through M1; revisit at M2 when the Odysseus tab exists; a native Mission Control chat pane is a possible M3+ luxury, not a commitment.
 

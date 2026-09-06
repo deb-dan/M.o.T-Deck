@@ -32,7 +32,7 @@ START = open(os.path.join(ROOT, "scripts", "start_component.sh"),
              encoding="utf-8", errors="replace").read()
 
 BASE = "http://127.0.0.1:6767/v1"
-KEY = "harness-local"
+KEY = "motdeck-local"
 WIRE = "gemma-4-31B-it-uncensored-biproj-q4_k_m"
 
 # ── S29: the enumeration rule now includes "the file is still on disk" ───────
@@ -57,7 +57,7 @@ REGISTRY = {"models": [
 ]}
 
 
-# ── harness ──────────────────────────────────────────────────────────────────
+# ── motdeck ──────────────────────────────────────────────────────────────────
 def _root_with_registry(tmp_path, registry=REGISTRY):
     root = tmp_path / "root"
     (root / "data").mkdir(parents=True, exist_ok=True)
@@ -68,7 +68,7 @@ def _root_with_registry(tmp_path, registry=REGISTRY):
 
 def _seed(cfg_path, root, model=WIRE, base=BASE, key=KEY, ctx="65536"):
     env = dict(os.environ, HERMES_CFG=str(cfg_path), BASE_URL=base, KEY=key,
-               MODEL=model, CTXLEN=ctx, HARNESS_ROOT=str(root))
+               MODEL=model, CTXLEN=ctx, MOT_DECK_ROOT=str(root))
     p = subprocess.run([sys.executable, SEED], capture_output=True, text=True, env=env)
     assert p.returncode == 0, p.stderr
     return p.stdout

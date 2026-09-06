@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Diagnose the harness: prereqs, pins, ports, component health.
+# Diagnose MOT Deck: prereqs, pins, ports, component health.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 

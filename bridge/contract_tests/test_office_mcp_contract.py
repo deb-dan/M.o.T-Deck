@@ -309,7 +309,7 @@ def test_apply_is_reachable_from_the_panel_and_from_no_tool():
 
 def test_the_toolset_needs_no_manifest_entry_and_no_port():
     """The 'not a component' discipline, same as the Office lane itself."""
-    c = yaml.safe_load((ROOT / "harness.yaml").read_text())
+    c = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
     assert "loffice" not in c["components"] and "office" not in c["components"], (
         "the office toolset must never become a manifest component — it is mounted on "
         "the existing bridge app")

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Stop bridge and any component processes the harness started.
+# Stop bridge and any component processes MOT Deck started.
 #
 # ⛔ PROCESS-KILL RULE (CLAUDE.md; U19 echo sweep 2026-08-29). Everything stopped here
 # is stopped because we can PROVE it is ours: a child PID plus birth fingerprint M.O.T
 # recorded at launch. A matching path, CWD, name, pidfile, or port is not authority.
 # Nothing is ever matched by product name — Debi runs standalone copies of
 # the apps we embed, and `pkill -f "uvicorn bridge.app:app"` (what used to be the last
-# line of this file) would also have stopped another harness root's bridge, or an
+# line of this file) would also have stopped another motdeck root's bridge, or an
 # unrelated project's, without ever saying so.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT_ABS="$(pwd)"
 ONLY="${1:-}"
 [[ -z "$ONLY" || "$ONLY" =~ ^[A-Za-z0-9_-]+$ ]] || {
-  echo "[harness] invalid component name: $ONLY" >&2
+  echo "[motdeck] invalid component name: $ONLY" >&2
   exit 2
 }
 FAILED=0
@@ -45,8 +45,8 @@ for statefile in data/*.owner data/*.pid; do
   pid="${claim%%$'\t'*}"; birth="${claim#*$'\t'}"
   if [[ "$claim" != *$'\t'* ]]; then
     detail="$(_ownership_cli signal "$ROOT_ABS" "$comp" 0 --birth "" 2>&1 || true)"
-    echo "[harness] data/${comp}.{owner,pid} has no complete M.O.T launch record;"
-    echo "[harness]   signalled nothing. ${detail:-Unsafe bookkeeping was left untouched.}"
+    echo "[motdeck] data/${comp}.{owner,pid} has no complete M.O.T launch record;"
+    echo "[motdeck]   signalled nothing. ${detail:-Unsafe bookkeeping was left untouched.}"
     FAILED=1
     continue
   fi
@@ -60,16 +60,16 @@ for statefile in data/*.owner data/*.pid; do
         sleep 0.1
       done
       if _ownership_cli matches "$ROOT_ABS" "$comp" "$pid" >/dev/null 2>&1; then
-        echo "[harness] $comp pid $pid survived SIGTERM; its exact claim is retained and it was not replaced."
+        echo "[motdeck] $comp pid $pid survived SIGTERM; its exact claim is retained and it was not replaced."
         FAILED=1
       else
         _ownership_cli retire "$ROOT_ABS" "$comp" "$pid" --birth "$birth" >/dev/null 2>&1 || true
-        echo "[harness] stopped $comp (pid $pid)"
+        echo "[motdeck] stopped $comp (pid $pid)"
       fi
     else
       # Pids are recycled: a stale pidfile must never become a stranger's death warrant.
-      echo "[harness] data/${comp}.owner names pid $pid ($cmd) without a matching live M.O.T launch record;"
-      echo "[harness]   leaving it alone. ${detail:-The ownership check was unavailable.}"
+      echo "[motdeck] data/${comp}.owner names pid $pid ($cmd) without a matching live M.O.T launch record;"
+      echo "[motdeck]   leaving it alone. ${detail:-The ownership check was unavailable.}"
       FAILED=1
     fi
   fi
@@ -82,18 +82,18 @@ done
 # A listener sweep is diagnostic only. Losing the launch record does not grant this
 # script permission to reconstruct ownership from a path or port.
 if [[ -z "$ONLY" || "$ONLY" == "bridge" ]]; then
-  BR_PORT=$(awk '/^bridge:/{f=1} f && /^  port:/{print $2; exit}' harness.yaml 2>/dev/null || true)
+  BR_PORT=$(awk '/^bridge:/{f=1} f && /^  port:/{print $2; exit}' motdeck.yaml 2>/dev/null || true)
   [[ "$BR_PORT" =~ ^[0-9]+$ ]] || BR_PORT=8700
   for pid in $(lsof -ti tcp:"$BR_PORT" -sTCP:LISTEN 2>/dev/null); do
     cmd="$(_proc_cmd "$pid")"
     [[ -z "$cmd" ]] && continue           # vanished between the probe and the check
-    echo "[harness] :$BR_PORT is still held by pid $pid ($cmd) without a matching launch record; left alone."
+    echo "[motdeck] :$BR_PORT is still held by pid $pid ($cmd) without a matching launch record; left alone."
     FAILED=1
   done
 fi
 if [[ "$FAILED" -eq 0 ]]; then
-  echo "[harness] stopped${ONLY:+ $ONLY}."
+  echo "[motdeck] stopped${ONLY:+ $ONLY}."
 else
-  echo "[harness] one or more requested processes were left running." >&2
+  echo "[motdeck] one or more requested processes were left running." >&2
 fi
 exit "$FAILED"

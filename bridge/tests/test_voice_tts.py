@@ -1,4 +1,4 @@
-"""Unit tests for the harness-native voice capability (bridge/voice.py, Phase B).
+"""Unit tests for MOT Deck-native voice capability (bridge/voice.py, Phase B).
 
 bridge/voice.py imports nothing heavier than the stdlib, so it is imported directly.
 bridge/app.py is NOT imported (it builds httpx clients at import time) — the two
@@ -53,8 +53,8 @@ def check(name, cond):
         FAILS.append(name)
 
 
-LB = "/opt/harness/data/llamacpp/build/bin/llama-tts"
-MP = "/opt/harness/data/mlx-venv/bin/python"
+LB = "/opt/motdeck/data/llamacpp/build/bin/llama-tts"
+MP = "/opt/motdeck/data/mlx-venv/bin/python"
 
 GGUF = {"id": "qwen3-tts-q4", "kind": "audio", "format": "tts-gguf",
         "path": "/M/qwen3-tts/backbone-Q4_K_M.gguf",
@@ -155,7 +155,7 @@ check("the too-long message names the cap",
       str(voice.VOICE_MAX_CHARS) in voice.validate_tts_request("x" * 5000, GGUF))
 
 # ── render_ok — the exit-0-on-failure invariant ──────────────────────────────
-_TD = tempfile.mkdtemp(prefix="harness-voice-test-")
+_TD = tempfile.mkdtemp(prefix="motdeck-voice-test-")
 missing = os.path.join(_TD, "nope.wav")
 empty = os.path.join(_TD, "empty.wav")
 real = os.path.join(_TD, "real.wav")
@@ -296,17 +296,17 @@ check("the render is handed the ledger spawn guard",
 check("app.py imports voice defensively (a stale snapshot must still boot)",
       "_voice, _VOICE_ERR = None" in asrc)
 
-# ── harness.yaml voice block ─────────────────────────────────────────────────
+# ── motdeck.yaml voice block ─────────────────────────────────────────────────
 import yaml  # noqa: E402
-hy = yaml.safe_load((ROOT / "harness.yaml").read_text())
-check("harness.yaml has a top-level voice block", isinstance(hy.get("voice"), dict))
+hy = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
+check("motdeck.yaml has a top-level voice block", isinstance(hy.get("voice"), dict))
 check("voice block declares both slots",
       set(hy["voice"]) == {"tts_model", "stt_model"})
 check("both voice slots start empty (= capability off)",
       not hy["voice"]["tts_model"] and not hy["voice"]["stt_model"])
 check("build.mlx_audio_pin is present and pinned",
       str((hy.get("build") or {}).get("mlx_audio_pin") or "").strip() != "")
-check("install_mlx.sh reads the pin from harness.yaml",
+check("install_mlx.sh reads the pin from motdeck.yaml",
       "mlx_audio_pin" in (ROOT / "scripts" / "install_mlx.sh").read_text())
 check("ship.sh copies every bridge/*.py (voice.py must reach the snapshot)",
       'for _m in "$ROOT"/bridge/*.py' in (ROOT / "scripts" / "ship.sh").read_text())
@@ -319,16 +319,16 @@ for _node in ast.parse(asrc).body:
     if isinstance(_node, ast.FunctionDef) and _node.name == "_set_yaml_scalar":
         exec(compile(ast.Module(body=[_node], type_ignores=[]), "<app>", "exec"), _ns)
 set_scalar = _ns["_set_yaml_scalar"]
-_YD = Path(tempfile.mkdtemp(prefix="harness-yaml-test-"))
+_YD = Path(tempfile.mkdtemp(prefix="motdeck-yaml-test-"))
 _ns["ROOT"] = _YD
-ORIG = (ROOT / "harness.yaml").read_text()
+ORIG = (ROOT / "motdeck.yaml").read_text()
 
 
 def write_and_load(*calls, base=ORIG):
-    (_YD / "harness.yaml").write_text(base)
+    (_YD / "motdeck.yaml").write_text(base)
     for blk, key, val in calls:
         set_scalar(blk, key, val)
-    txt = (_YD / "harness.yaml").read_text()
+    txt = (_YD / "motdeck.yaml").read_text()
     return txt, yaml.safe_load(txt)
 
 

@@ -111,10 +111,10 @@ hermes maps to `["--yolo"]` (`:350`). `UNSLOTH_STUDIO_URL` defaults to `http://1
 
 ### 1e. What this means for us
 
-Our harness patches `~/.hermes/config.yaml` in place and re-patches on every `start_component.sh hermes`.
+Our motdeck patches `~/.hermes/config.yaml` in place and re-patches on every `start_component.sh hermes`.
 Unsloth's approach would let us launch a Hermes bound to our runner **without owning the user's Hermes
-config at all** — set `HERMES_HOME` to a harness-owned dir, generate `config.yaml` there. Costs: the
-harness Hermes would then have its OWN sessions/state separate from a user's standalone Hermes (arguably
+config at all** — set `HERMES_HOME` to a MOT Deck-owned dir, generate `config.yaml` there. Costs: the
+motdeck Hermes would then have its OWN sessions/state separate from a user's standalone Hermes (arguably
 correct, and `--persist`-style stability is one flag away), and our path-guard plugin seeding
 (`~/.hermes/plugins/`) would need to follow the relocated home. This is a real design item, not a
 one-liner.
@@ -284,21 +284,21 @@ so the two are unrelated; the earlier naming note stands. It self-describes as *
 unified workspace where you delegate entire projects"* and is a **platform superproject** pinning
 submodules `frontend`, `backend/core_api`, `backend/core_agent`, `backend/data-vault` (README.md
 "Build from source"). It is an Electron desktop app + web console, `docker-compose.yml` with `api`/`web`/
-`cowork-data` services, `make setup|dev|build|dist-mac`. **It is the same product class as the harness**,
+`cowork-data` services, `make setup|dev|build|dist-mac`. **It is the same product class as MOT Deck**,
 but cloud-leaning and freemium (a hosted `console.mindshub.ai`, a "Pro adds all frontier models" pricing
 tier, a Model Router across Claude/GPT/Gemini) — the opposite of our local-first axis. Two things are
 notable: (a) it **runs Hermes as one of two swappable open agent harnesses** ("Anton (default) and Hermes,
 swappable from a dropdown") — independent evidence that Hermes-as-a-pluggable-brain is a recognised
 pattern, not just ours; (b) its credential story is a **scoped vault where "agents never see raw keys"**,
 which is a cleaner shape than our `.env`. **Verdict: IGNORE as a dependency** (Docker-first, cloud console,
-duplicates the harness itself), **recon-only for the vault idea.**
+duplicates MOT Deck itself), **recon-only for the vault idea.**
 
 ---
 
 ## Ranked verdict
 
 ### ADOPT
-1. **HOME-relocation for agent wiring** (`HERMES_HOME` + a generated `config.yaml` in a harness-owned dir)
+1. **HOME-relocation for agent wiring** (`HERMES_HOME` + a generated `config.yaml` in a MOT Deck-owned dir)
    instead of patching `~/.hermes/config.yaml`. Highest-value single idea in this recon; retires a whole
    class of "we own the user's config" problems. Needs a Fable design pass for path-guard plugin seeding
    and session-store location.
@@ -319,13 +319,13 @@ duplicates the harness itself), **recon-only for the vault idea.**
 7. **Contrast slider remixing only 3 tokens via `color-mix`**, and the 2.5:1 auto-correction floor for
    user-chosen accents — both directly relevant to the deep-theme spec.
 8. **PATH-probe agent detection** (`shutil.which`, ordered by a declared tuple, OSError → "not installed").
-   Trivial, but it is the honest way to build a harness "detected agents" surface if we ever want one.
+   Trivial, but it is the honest way to build a motdeck "detected agents" surface if we ever want one.
 
 ### IGNORE
-9. **Studio as a harness component.** AGPL is survivable, but it brings a *floating-tag forked llama.cpp*,
+9. **Studio as a motdeck component.** AGPL is survivable, but it brings a *floating-tag forked llama.cpp*,
    a second Node runtime, a multi-GB pinned-torch venv, mandatory bearer auth on loopback, a
    `--disable-tools` global that outranks per-request tool asks, and models resident outside our RAM
-   ledger. It duplicates chat + models + serving — the three things the harness already owns. Our
+   ledger. It duplicates chat + models + serving — the three things MOT Deck already owns. Our
    doctrine-pure `Models → Tune` slice over the already-installed `mlx_lm.lora`/`mlx_lm.fuse` reaches the
    same LoRA/QLoRA envelope with none of that.
 10. **Their llama.cpp acquisition path** (fork @ `latest` + in-app updater) — actively incompatible with

@@ -7,7 +7,7 @@ any differences? It seems the k2-fsa is the real one but I might be wrong."*
 ## Short answer
 
 **Debi is right: `k2-fsa/OmniVoice` IS the original.** Everything else — including
-what the harness runs and what VoiceStudio runs — is the *same weights* in a
+what MOT Deck runs and what VoiceStudio runs — is the *same weights* in a
 different container. There is exactly ONE OmniVoice model in this story.
 
 - **k2-fsa** = the Kaldi / next-gen-Kaldi ("k2-fsa") speech research org (Daniel
@@ -70,7 +70,7 @@ of two item types: `preset` = *"a validated `instruct` string"* (e.g.
 `"female, middle-aged, low pitch, british accent"`), and `voice` = a
 community-contributed **reference clip** hosted as a GitHub Release asset. The k2
 model ships **zero** named voices — it has no speaker table at all. This matches
-what the harness already found the hard way (voice identity comes only from
+what MOT Deck already found the hard way (voice identity comes only from
 `ref_audio`, or from `instruct`).
 
 ## Capability comparison: our MLX path vs the k2 original
@@ -85,7 +85,7 @@ Read from the installed venv (`mlx_audio/tts/models/omnivoice/`, pin 0.4.7).
 | 646 languages / `language` tag | ✅ | ✅ |
 | Non-verbal tags (`[laughter]`, `[sigh]`…), pinyin + CMU pronunciation control | ✅ | Text-level features, so they should pass through — **untested by us** |
 | `speed` factor | ✅ | ✗ — MLX exposes `duration_s` + an internal duration estimator instead |
-| Whisper auto-transcribe of the reference | ✅ | ✅ (this is the whisper-large-v3-turbo load the harness now avoids by storing `ref_text`) |
+| Whisper auto-transcribe of the reference | ✅ | ✅ (this is the whisper-large-v3-turbo load MOT Deck now avoids by storing `ref_text`) |
 | Batch / multi-GPU inference CLI | ✅ | batch API exists (`generate_batch`), no multi-GPU (irrelevant on a Mac) |
 | Training / fine-tuning | ✅ | ✗ (inference only) |
 | Runs on Apple GPU without PyTorch in the hot path | ✗ (MPS via torch) | ✅ — this is the whole reason we use MLX |
@@ -95,7 +95,7 @@ the only honest quality axes are dtype (bf16 vs fp32 vs 4/8-bit) and `num_steps`
 The **one real functional gap** is `speed`; the one real *cost* is that voice-cloning
 encode still needs torch on CPU.
 
-## ⚠️ LICENCE FINDING — the harness's own gate is being defeated
+## ⚠️ LICENCE FINDING — MOT Deck's own gate is being defeated
 
 The k2-fsa HF README says, verbatim:
 

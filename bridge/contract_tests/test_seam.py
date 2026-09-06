@@ -1,6 +1,6 @@
 """Contract tests — the gate every upstream update must pass (docs §6.1).
 
-Run: pytest bridge/contract_tests/ (from harness root, bridge venv active).
+Run: pytest bridge/contract_tests/ (from motdeck root, bridge venv active).
 M0: structural checks only. M1 adds live seam tests (MCP round-trip, smoke chat).
 """
 from pathlib import Path
@@ -19,8 +19,8 @@ _sys.path.insert(0, str(ROOT))                              # noqa: E402
 from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
 
 
-def test_harness_yaml_parses():
-    c = yaml.safe_load((ROOT / "harness.yaml").read_text())
+def test_motdeck_yaml_parses():
+    c = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
     # voicestudio + voicebox (2026-08-07) and comfyui + unsloth (2026-08-20) are
     # OPTIONAL — present in the manifest, installed:false by default, depended on by
     # nothing, and never cloned by bootstrap (install_component.sh shallow-clones them
@@ -40,7 +40,7 @@ def test_harness_yaml_parses():
     # Ports are single-sourced here and read by start_component.sh's awk; a collision
     # would make two components fight over one listener.
     ports = [comp["port"] for comp in c["components"].values() if comp.get("port")]
-    assert len(ports) == len(set(ports)), f"duplicate component port in harness.yaml: {ports}"
+    assert len(ports) == len(set(ports)), f"duplicate component port in motdeck.yaml: {ports}"
     # ⚠️ Unsloth must NOT sit on upstream's default 8888: Debi runs a STANDALONE Unsloth
     # app there, and start_component.sh clears its component's port (listener-scoped)
     # before every launch — on 8888 that kills her other app. The number is single-sourced
@@ -67,7 +67,7 @@ def test_harness_yaml_parses():
     route = app_py[app_py.index('@app.get("/opencode")'):]
     route = route[:route.index("\n\n\n")]
     assert '"opencode") or {}).get("port")' in route, (
-        "the landing redirect must read the port from harness.yaml, not repeat it")
+        "the landing redirect must read the port from motdeck.yaml, not repeat it")
     assert "127.0.0.1:8700/opencode" in (ROOT / "app" / "main.swift").read_text(), (
         "the OpenCode tab must open the bridge's landing redirect — :4096/ on its own "
         "IS the empty 'Add project' home screen Debi reported")
@@ -93,12 +93,12 @@ def test_harness_yaml_parses():
     # link to build, so there is no bridge redirect to route through, and this
     # assertion is what keeps the constant in main.swift honest.
     assert c["components"]["deepseek"]["port"] == 3080
-    assert 'HarnessTab(id: "deepseek", title: "DeepSeek"' in \
+    assert 'MOTDeckTab(id: "deepseek", title: "DeepSeek"' in \
         (ROOT / "app" / "main.swift").read_text(), (
         "the DeepSeek tab row is missing or renamed — the title must stay byte-identical "
         "to _NEEDS_TITLES['deepseek'] or its dependency banner names an internal id")
     assert "127.0.0.1:3080" in (ROOT / "app" / "main.swift").read_text(), (
-        "the DeepSeek tab must point at the port harness.yaml declares")
+        "the DeepSeek tab must point at the port motdeck.yaml declares")
 
 
 def test_optional_components_are_not_submodules():
@@ -250,7 +250,7 @@ def test_odysseus_mcp_register_form_contract():
         "with the component's streamable-HTTP /mcp url")
     assert '"url": srv.url' in src, (
         "GET /api/mcp/servers no longer reports each server's url — voice_toggle "
-        "compares it to detect a STALE registration (port changed in harness.yaml)")
+        "compares it to detect a STALE registration (port changed in motdeck.yaml)")
 
 
 def test_hermes_mcp_url_entry_contract():

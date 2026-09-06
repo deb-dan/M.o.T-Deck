@@ -6,7 +6,7 @@ the model is handed. Every fact it relies on is upstream-INTERNAL, so this purel
 static check greps the vendored source and fails loudly if a pin bump moves any
 of them. No network, no build, no running Hermes.
 
-Run: pytest bridge/contract_tests/ (from harness root).
+Run: pytest bridge/contract_tests/ (from motdeck root).
 """
 import re
 from pathlib import Path
@@ -146,7 +146,7 @@ def test_our_session_source_is_honoured_and_is_not_the_desktop_surface():
         "the desktop_ui toolset's tools as always-on extras"
     # every session this bridge opens carries it — no literal left behind
     app = _APP_SOURCE
-    assert '"source": "harness"' not in app, \
+    assert '"source": "motdeck"' not in app, \
         "a session.create/resume site went back to a literal source string"
     assert app.count('"source": HERMES_SESSION_SOURCE') >= 4, \
         "a session.create/resume site stopped sending our source — it would " \

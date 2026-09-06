@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MOT Deck</title>
+<script src="/assets/identity-migration.js"></script>
 <style>
   :root {
     --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
@@ -85,7 +86,7 @@
      that is not a custom property, or appears more than once.
 
      Four packs, persisted in the SAME key the panel has always used
-     (localStorage['harness-theme']), so office.html's syncSkin() keeps following
+     (localStorage['motdeck-theme']), so office.html's syncSkin() keeps following
      along untouched:
        dark   → Editorial     — NO attribute at all, byte-identical to the default
        light  → Warm Paper    — the shipped light palette above, now merely NAMED
@@ -195,7 +196,7 @@
      rule the studio slice adds outside its block: editorial is the DEFAULT, so the
      icons must be hidden with the attribute ABSENT. The studio block reverses it. */
   .st-only { display:none; }
-  /* HARNESS-DESIGN AXIS: the ✦ chip's FIRST-CLICK loading state. The studio design
+  /* MOTDECK-DESIGN AXIS: the ✦ chip's FIRST-CLICK loading state. The studio design
      is a separately fetched asset (Debi's amendment), so the one beat between the
      click and the paint is SHOWN rather than swallowed. This is the only studio-design
      rule that lives in Editorial's sheet, and it styles nothing but that one chip. */
@@ -2113,7 +2114,7 @@
   // than shared with THEME_PACKS below on purpose — this block runs before any of the
   // page's own script, and an unknown/corrupt value must fall through to Editorial
   // (no attribute) rather than stamping an attribute no stylesheet answers.
-  try { var _th = localStorage.getItem('harness-theme');
+  try { var _th = localStorage.getItem('motdeck-theme');
         if (_th === 'light' || _th === 'gold' || _th === 'cyber')
           document.documentElement.dataset.theme = _th; } catch (e) {}
   // STUDIO CHROME (2026-08-20, replaces the parked "compact" axis): a SECOND,
@@ -2121,13 +2122,13 @@
   // after first paint. Editorial = default. A stored legacy 'compact' value is NOT
   // read here, so it migrates silently to editorial (no modal, no data loss — the
   // next ▣ click rewrites the key as 'studio').
-  try { if (localStorage.getItem('harness-chrome') === 'studio') document.documentElement.dataset.chrome = 'studio'; } catch (e) {}
-  // HARNESS-DESIGN AXIS (2026-08-28) — the THIRD axis, and the only one whose CSS is
+  try { if (localStorage.getItem('motdeck-chrome') === 'studio') document.documentElement.dataset.chrome = 'studio'; } catch (e) {}
+  // MOTDECK-DESIGN AXIS (2026-08-28) — the THIRD axis, and the only one whose CSS is
   // NOT in this file. With the key absent this is one localStorage read and ZERO
   // requests. At boot the link is appended during head parsing (render-blocking like
   // any stylesheet) and the ATTRIBUTES ARE STAMPED ONLY IN ITS onload: an unstyled
   // beat in Editorial is acceptable, a half-painted studio is not.
-  try { var _dg = localStorage.getItem('harness-design');
+  try { var _dg = localStorage.getItem('motdeck-design');
         if (_dg === 'studio' || _dg === 'studio-light') {
           var _dl = document.createElement('link');
           _dl.rel = 'stylesheet'; _dl.id = 'studio-design-css';
@@ -2216,7 +2217,7 @@
     <span class="chip chip-icon" onclick="toggleTheme()" title="Theme: Editorial → Warm Paper → Luxury Gold → Cyber" aria-label="Next theme"><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-theme"/></svg></span><span class="ed-only">◐</span></span>
     <!-- studio chrome: its OWN chip beside ◐ (a separate axis, not a 4-state cycle) -->
     <span class="chip chip-icon" id="chrome-chip" onclick="toggleChrome()" title="Toggle Studio chrome (uniform buttons + icons)" aria-label="Toggle Studio chrome">▣</span>
-    <!-- HARNESS-DESIGN AXIS: its OWN button, a THIRD axis. One click flips the whole
+    <!-- MOTDECK-DESIGN AXIS: its OWN button, a THIRD axis. One click flips the whole
          app to the studio design; one click back is Editorial exactly as it was. -->
     <span class="chip chip-icon" id="design-chip" onclick="toggleDesign()" title="Studio design" aria-label="Studio design">✦</span>
     <span class="chip chip-icon" onclick="openPalette()" title="Command palette (⌘K)" aria-label="Command palette">⌘K</span>
@@ -2401,7 +2402,7 @@
           <div id="art-canvas-acts">
             <button class="art-btn" onclick="canvasCopy()" title="Copy the edited source">Copy</button>
             <button class="art-btn" onclick="canvasRevert()" title="Revert to the original artifact">Revert</button>
-            <button class="art-btn" onclick="canvasSave()" title="Save to ~/Downloads/harness-artifacts">Save to file</button>
+            <button class="art-btn" onclick="canvasSave()" title="Save to ~/Downloads/motdeck-artifacts">Save to file</button>
             <button class="art-btn" id="canvas-reveal" onclick="canvasReveal()" title="Show in Folder" hidden>Show in Folder</button>
             <span id="canvas-note"></span>
           </div>
@@ -2503,7 +2504,7 @@
           </div>
           <div class="cs-empty" style="margin-top:8px">Licences come from each model’s own
             metadata. Non-commercially licensed models are listed but cannot be downloaded
-            here. Tags lie about frameworks — click a result and the harness reads its
+            here. Tags lie about frameworks — click a result and MOT Deck reads its
             config.json before offering a Get.</div>
           <div id="as-results"></div>
         </div>
@@ -2683,7 +2684,7 @@
   <div id="loglist" style="display:none; max-height:380px; overflow-y:auto"></div>
   <div class="btns">
     <button id="log-copy" onclick="copyLog(this)" title="Copy the log text to the clipboard">Copy</button>
-    <button id="log-export" onclick="exportLog()" title="Save a copy to ~/Downloads/harness-logs">Export</button>
+    <button id="log-export" onclick="exportLog()" title="Save a copy to ~/Downloads/motdeck-logs">Export</button>
     <button id="log-clear" onclick="clearLog(this)" title="Empty this log file">Clear</button>
     <button onclick="logdlg.close()">Close</button>
   </div>
@@ -2746,7 +2747,7 @@ function feed(tag, msg) {
    degrading must not also mean getting slower.
 
    ⚠️ WHY 6s SURVIVES AS POLL_WATCH. A component that dies ON ITS OWN is not a
-   transition the harness causes, so there is nothing to push from (see _health_track
+   transition MOT Deck causes, so there is nothing to push from (see _health_track
    in bridge/core/health.py). An unconditional 30s heartbeat would make that crash
    journey 5× worse while the idle one got better — so only the everything-green idle
    case relaxes, which is where the wakeups actually are.
@@ -2982,17 +2983,17 @@ async function refresh(manual) {
     if (a.cache_hit_pct != null) aTiles += metric('Cache hit', `${a.cache_hit_pct}<small> %</small>`);
   } catch {}
   let vTile = '';
-  try {   // PART 4: local harness version + best-effort (usually private-repo → none) update notice
+  try {   // PART 4: local motdeck version + best-effort (usually private-repo → none) update notice
     const ver = await (await fetch('/api/version')).json();
-    if (ver && ver.harness) {
-      let vv = esc(ver.harness);
+    if (ver && ver.motdeck) {
+      let vv = esc(ver.motdeck);
       // U56: this tile now shows ROOT/VERSION — the number QA bumps every release —
-      // instead of harness.yaml's frozen 0.1.0 (it read 0.1.0 at release 1.5.72). An
+      // instead of motdeck.yaml's frozen 0.1.0 (it read 0.1.0 at release 1.5.72). An
       // install with NO VERSION file (fat seeds before v1.5.70) reads "unknown" AND
       // SAYS WHY rather than inventing a number: the bridge sends the sentence in
-      // `harness_note`, and the tile carries the short form with the full text on hover.
-      if (ver.harness_note) {
-        vv += `<small title="${escAttr(ver.harness_note)}"> · no VERSION file — run ship.sh</small>`;
+      // `motdeck_note`, and the tile carries the short form with the full text on hover.
+      if (ver.motdeck_note) {
+        vv += `<small title="${escAttr(ver.motdeck_note)}"> · no VERSION file — run ship.sh</small>`;
       }
       // <!-- FABLE: style pass --> update line only appears if a public release is ever found
       if (ver.update && ver.update.available && ver.update.url) {
@@ -3174,7 +3175,7 @@ const NAV_TOPBAR_UNPINNED = ['compose','voicebox','chat','models','caps','goose'
 const NAV_MODEL_V = 2;            // mirrors nav.py MODEL_V (1 = pre-reorder)
 const NAV_FIXED_TOP = 'mc';       // first + pinned on the strip (panelTab 0 in the shell)
 const NAV_FIXED_SIDE = 'chat';    // may never be unpinned from the sidebar
-const NAV_KEY = 'harness-nav';
+const NAV_KEY = 'motdeck-nav';
 
 function navEntry(id) { return NAV_ENTRIES.find(e => e.id === id) || null; }
 function navCanShow(id, bar) {
@@ -3383,11 +3384,11 @@ async function navSave() {
 const TAB_FOR_COMPONENT = {};
 NAV_ENTRIES.forEach(e => { if (e.kind === 'component' && e.tab) TAB_FOR_COMPONENT[e.id] = e.tab; });
 function nativeShell() {
-  return (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.harness) || null;
+  return (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.motdeck) || null;
 }
-// Are we inside Harness.app AT ALL? A WKWebView always has `window.webkit.messageHandlers`
+// Are we inside MOT Deck.app AT ALL? A WKWebView always has `window.webkit.messageHandlers`
 // (even with no handler registered on it); a browser tab has no `window.webkit`. This is
-// deliberately WEAKER than nativeShell(): it is true even when the "harness" handler is
+// deliberately WEAKER than nativeShell(): it is true even when the "motdeck" handler is
 // missing, which is exactly the state a shell built BEFORE that handler existed leaves us
 // in — and the state we must not answer by opening the default browser.
 function inNativeApp() {
@@ -3395,13 +3396,13 @@ function inNativeApp() {
 }
 /* What the SHELL says about itself. app/main.swift injects, at document start, into its
    own first-party pages only:
-       window.harnessShell = { api: <n>, tabs: [<every tabRegistry id>] }
+       window.motdeckShell = { api: <n>, tabs: [<every tabRegistry id>] }
    This exists to answer the one question a ONE-WAY script message cannot: does this
    build of the app know that tab at all? `tabs` is the shell's REGISTRY (everything that
    CAN be a tab), not the strip — a tab the user hid is still reachable. An older shell
    injects nothing, so the answer is `null` = "cannot be asked", never "no". */
 function shellTabs() {
-  const s = window.harnessShell;
+  const s = window.motdeckShell;
   return (s && typeof s === 'object' && Array.isArray(s.tabs)) ? s.tabs : null;
 }
 function shellKnowsTab(id) {
@@ -3412,7 +3413,7 @@ const SHELL_STALE_NOTE = 'this build of the app has no such tab — run ./script
 /* THE FALLBACK RULE, and it is as much about expectations as about UX: inside the app a
    lane row must NEVER open in the default browser. That is the 2026-08-21 regression —
    `swiftc` failed on a malformed comment, ship.sh therefore never rebuilt the shell, the
-   stale binary had no "harness" handler, switchTab returned false, and navOpen fell
+   stale binary had no "motdeck" handler, switchTab returned false, and navOpen fell
    through to window.open() → the page appeared in CHROME. The user asked for a tab and
    got another application, with nothing on screen saying why. A note is the honest
    answer, and it is written where the click happened as well as into the feed. */
@@ -3820,7 +3821,7 @@ async function startRunner() {
 // cannot start without a designated model, so it goes via startRunner() which sends
 // you to Models to pick one. Calling startWithPlan('runner') directly (as the cards
 // and the setup checklist used to) surfaced a raw
-// "ERROR: runner.model not set in harness.yaml" instead.
+// "ERROR: runner.model not set in motdeck.yaml" instead.
 function startAny(name){
   return name === 'runner' ? startRunner() : startWithPlan(name);
 }
@@ -4026,7 +4027,7 @@ async function clearLog(btn) {
    Agent default; storage failure must never stop the panel boot. */
 function storedChatMode(){
   let value = '';
-  try { value = localStorage.getItem('harness-chat-mode') || ''; } catch (_) {}
+  try { value = localStorage.getItem('motdeck-chat-mode') || ''; } catch (_) {}
   return ['agent', 'chat', 'hermes'].includes(value) ? value : 'agent';
 }
 
@@ -4040,11 +4041,11 @@ const chatPane = {
   // Hermes lane (Phase 1): its own gateway session id, independent of the Odysseus
   // rail — persisted so the conversation survives panel reloads (dashboard restarts
   // invalidate it; the bridge's stale-sid retry mints a fresh one transparently).
-  hermesSid: localStorage.getItem('harness-hermes-sid') || null,
+  hermesSid: localStorage.getItem('motdeck-hermes-sid') || null,
   // Phase 3: the rail lists STORED sessions (state.db rows); the live gateway sid
   // above is what prompt.submit addresses. Selection is keyed by the stored id
   // (survives dashboard restarts, unlike hermesSid).
-  hermesStoredSid: localStorage.getItem('harness-hermes-stored') || null,
+  hermesStoredSid: localStorage.getItem('motdeck-hermes-stored') || null,
   // A /api/hermes/stop POST is in flight for THIS pane's turn (re-entrancy guard).
   hermesStopping: false,
   sessions: [],                // Odysseus rail rows
@@ -4080,7 +4081,7 @@ function setupNeeded() {
 function maybeAutoSetup() {
   if (_setupAutoChecked || !lastStatus) return;
   _setupAutoChecked = true;
-  if (localStorage.getItem('harness-setup-done')) return;
+  if (localStorage.getItem('motdeck-setup-done')) return;
   if (setupNeeded()) openSetup(true);
 }
 function openSetup() {
@@ -4126,8 +4127,8 @@ function renderSetup() {
 function closeSetup() {
   const scrim = document.getElementById('setup-scrim');
   if (scrim) scrim.style.display = 'none';
-  if (!setupNeeded()) localStorage.setItem('harness-setup-done', '1');   // remember once healthy
-  if (!localStorage.getItem('harness-tour-done')) startTour();           // walkthrough follows
+  if (!setupNeeded()) localStorage.setItem('motdeck-setup-done', '1');   // remember once healthy
+  if (!localStorage.getItem('motdeck-tour-done')) startTour();           // walkthrough follows
 }
 
 const TOUR = [
@@ -4175,7 +4176,7 @@ function positionCoach(card, sel) {
 }
 function nextCoach() { _tourIdx++; if (_tourIdx >= TOUR.length) { endTour(); return; } showCoach(); }
 function endTour() {
-  localStorage.setItem('harness-tour-done', '1');
+  localStorage.setItem('motdeck-tour-done', '1');
   const c = document.getElementById('coach-card'); if (c) c.remove();
   const s = document.getElementById('coach-scrim'); if (s) s.style.display = 'none';
 }
@@ -4385,7 +4386,7 @@ async function initHelp() {
     }
   } catch (e) {
     helpState.err = 'the bridge did not answer — Help is served by it, so start the '
-                  + 'harness and try again.';
+                  + 'motdeck and try again.';
   }
   helpState.loading = false;
   renderHelp();
@@ -4515,7 +4516,7 @@ function apiArg(s) { return JSON.stringify(String(s == null ? '' : s)).replace(/
    this page can never disagree with the card about whether the runner is serving. */
 function apiEndpointHtml(keys, runner) {
   if (!keys || !keys.base_url)
-    return '<div class="cs-empty">No runner endpoint is configured in harness.yaml.</div>';
+    return '<div class="cs-empty">No runner endpoint is configured in motdeck.yaml.</div>';
   const url = keys.base_url;
   let h = '<div class="api-line"><code class="api-code">' + esc(url) + '</code>'
         + '<button class="chip" onclick="apiCopy(' + apiArg(url) + ', this)">Copy</button></div>';
@@ -4633,8 +4634,8 @@ function apiKeysHtml(keys, minted, arm, note) {
      It is a row with a name, a source and no button. */
   if (keys.builtin) {
     h += '<div class="cap-row"><div class="cap-txt">'
-       + '<div class="cap-name">Harness built-in</div>'
-       + '<div class="cap-desc">harness.yaml · used by MOT Deck itself</div>'
+       + '<div class="cap-name">MOT Deck built-in</div>'
+       + '<div class="cap-desc">motdeck.yaml · used by MOT Deck itself</div>'
        + '</div><div class="cap-ctl"><span class="cap-pill off">built-in</span></div></div>';
   }
   return h;
@@ -4892,7 +4893,7 @@ function applyThemeAttr(id) {
 function setTheme(v) {
   const id = themeId(v);
   applyThemeAttr(id);
-  try { localStorage.setItem('harness-theme', id); } catch (e) {}
+  try { localStorage.setItem('motdeck-theme', id); } catch (e) {}
   const p = THEME_PACKS.find(x => x.id === id);
   feed('theme', 'theme: ' + (p ? p.label : id));
   const sel = document.getElementById('theme-pack');
@@ -4900,13 +4901,13 @@ function setTheme(v) {
 }
 function storedTheme() {
   let v = null;
-  try { v = localStorage.getItem('harness-theme'); } catch (e) {}
+  try { v = localStorage.getItem('motdeck-theme'); } catch (e) {}
   return themeId(v);
 }
 // The ◐ chip keeps its meaning — one axis, one click — it just has four stops now.
 // THE STUDIO MAPPING (2026-08-28): while the studio DESIGN is active the four packs
 // cannot apply (studio owns its palette), so ◐ maps to studio's own light/dark
-// variants instead of going dead — and it deliberately does NOT write harness-theme,
+// variants instead of going dead — and it deliberately does NOT write motdeck-theme,
 // because that key holds the Editorial theme this user returns to.
 function toggleTheme() {
   const dsn = storedDesign();
@@ -4951,7 +4952,7 @@ function toggleChrome() {
   const on = document.documentElement.dataset.chrome !== 'studio';
   if (on) document.documentElement.dataset.chrome = 'studio';
   else document.documentElement.removeAttribute('data-chrome');
-  try { localStorage.setItem('harness-chrome', on ? 'studio' : 'editorial'); } catch (e) {}
+  try { localStorage.setItem('motdeck-chrome', on ? 'studio' : 'editorial'); } catch (e) {}
   feed('chrome', on ? 'studio chrome on' : 'editorial chrome on');
   // read-back AFTER the attribute write, so what it reports is what the browser has
   const p = chromeProbe();
@@ -4959,7 +4960,7 @@ function toggleChrome() {
   feed('chrome', p);
 }
 
-/* ---------- THE HARNESS-DESIGN AXIS (2026-08-28, FABLE-STUDIO-DESIGN-SPEC) ----------
+/* ---------- MOT DECK DESIGN AXIS (2026-08-28, FABLE-STUDIO-DESIGN-SPEC) ----------
    A THIRD axis: theme is a palette, chrome is a control shape, a DESIGN is layout +
    type + spacing + component shape together. Editorial is the identity (no attribute).
    The studio CSS is a SEPARATE ASSET, fetched on first activation, so Editorial's boot
@@ -4977,7 +4978,7 @@ const DESIGNS = [
 function designId(v) { return DESIGNS.some(d => d.id === v) ? v : 'editorial'; }
 function storedDesign() {
   let v = null;
-  try { v = localStorage.getItem('harness-design'); } catch (e) {}
+  try { v = localStorage.getItem('motdeck-design'); } catch (e) {}
   return designId(v);
 }
 // PURE (unit-tested): ✦ is a TWO-state toggle on the AXIS, not a cycle through variants.
@@ -5076,7 +5077,7 @@ async function setDesign(v) {
   }
   designApply(id);
   if (id !== 'editorial') _designLastStudio = id;
-  try { localStorage.setItem('harness-design', id); } catch (e) {}
+  try { localStorage.setItem('motdeck-design', id); } catch (e) {}
   const d = DESIGNS.find(x => x.id === id);
   feed('design', 'design: ' + (d ? d.label : id));
   return id;
@@ -5098,7 +5099,7 @@ function designBoot() {
     return;
   }
   setDesign(want).then(got => {
-    if (got === 'editorial') { try { localStorage.setItem('harness-design', 'editorial'); } catch (e) {} }
+    if (got === 'editorial') { try { localStorage.setItem('motdeck-design', 'editorial'); } catch (e) {} }
   });
 }
 
@@ -5307,7 +5308,7 @@ function peekKey(e) { if (e.key === 'Escape') { e.stopPropagation(); closePeek()
 /* SIDEBAR COLLAPSE, PROMOTED (2026-08-28). It used to be a Chat-view affordance
    (`body.chat-mode.rail-slim`), which meant the sidebar could not be collapsed on the
    screen the app OPENS on. It is global now — same chevron, same localStorage key
-   ('harness-chat-rail', kept as-is so an existing preference is not lost and no second
+   ('motdeck-chat-rail', kept as-is so an existing preference is not lost and no second
    key appears), plus ⌘\ (the shortcut LOffice already uses for its own file rail, and
    which was unclaimed in the panel).
 
@@ -5345,7 +5346,7 @@ function railIsSlim(pref, view) {
 }
 function applySideRail() {
   let raw = null;
-  try { raw = localStorage.getItem('harness-chat-rail'); } catch (e) {}
+  try { raw = localStorage.getItem('motdeck-chat-rail'); } catch (e) {}
   const st = railState(railPref(raw), curView);
   document.body.classList.toggle('rail-slim', st !== 'full');
   document.body.classList.toggle('rail-hidden', st === 'hidden');
@@ -5370,12 +5371,12 @@ function toggleSideRail() {
   const on = document.body.classList.contains('rail-hidden') ? 'hidden'
            : document.body.classList.contains('rail-slim') ? 'slim' : 'full';
   const next = railNext(on);
-  try { localStorage.setItem('harness-chat-rail', next); } catch (e) {}
+  try { localStorage.setItem('motdeck-chat-rail', next); } catch (e) {}
   applySideRail();
 }
 function applySessionsRail() {
   let collapsed = false;
-  try { collapsed = localStorage.getItem('harness-sessions-rail') === 'collapsed'; } catch (e) {}
+  try { collapsed = localStorage.getItem('motdeck-sessions-rail') === 'collapsed'; } catch (e) {}
   document.body.classList.toggle('sessions-collapsed', collapsed);
   // v1.5.24: the COLLAPSE chevron now only exists in the expanded state — the collapsed
   // state is #cs-reopen, a labelled full-height strip (see its CSS). So this control has
@@ -5390,8 +5391,8 @@ function applySessionsRail() {
 }
 function toggleSessionsRail() {
   let collapsed = false;
-  try { collapsed = localStorage.getItem('harness-sessions-rail') === 'collapsed'; } catch (e) {}
-  try { localStorage.setItem('harness-sessions-rail', collapsed ? 'open' : 'collapsed'); } catch (e) {}
+  try { collapsed = localStorage.getItem('motdeck-sessions-rail') === 'collapsed'; } catch (e) {}
+  try { localStorage.setItem('motdeck-sessions-rail', collapsed ? 'open' : 'collapsed'); } catch (e) {}
   applySessionsRail();
 }
 
@@ -5413,7 +5414,7 @@ function setArtifactSplit(frac){
 }
 function loadArtifactSplit(){
   let f = 0.5;
-  try { const v = localStorage.getItem('harness-artifact-split'); if (v != null) f = v; } catch (e) {}
+  try { const v = localStorage.getItem('motdeck-artifact-split'); if (v != null) f = v; } catch (e) {}
   setArtifactSplit(f);   // clamps + applies (default half)
 }
 let _artDrag = null;
@@ -5447,7 +5448,7 @@ function artDividerUp(e){
   }
   document.body.classList.remove('art-dragging');
   _artDrag = null;
-  try { localStorage.setItem('harness-artifact-split', String(_artFrac)); } catch (_) {}
+  try { localStorage.setItem('motdeck-artifact-split', String(_artFrac)); } catch (_) {}
 }
 
 let _sesW = 204;
@@ -5457,7 +5458,7 @@ function setSessionsWidth(w){
 }
 function loadSessionsWidth(){
   let w = 204;
-  try { const v = localStorage.getItem('harness-sessions-width'); if (v != null) w = v; } catch (e) {}
+  try { const v = localStorage.getItem('motdeck-sessions-width'); if (v != null) w = v; } catch (e) {}
   setSessionsWidth(w);   // clamps + applies
 }
 let _sesDrag = null;
@@ -5487,7 +5488,7 @@ function sesResizeUp(e){
   }
   document.body.classList.remove('art-dragging');
   _sesDrag = null;
-  try { localStorage.setItem('harness-sessions-width', String(_sesW)); } catch (_) {}
+  try { localStorage.setItem('motdeck-sessions-width', String(_sesW)); } catch (_) {}
 }
 
 /* PURE: the one sentence under the composer for a lane. ONE source — it is
@@ -5513,7 +5514,7 @@ async function setMode(m) {
   // path here that cancels upstream work.
   if (chatPane.busy && m !== prev) await detachTurnNow('lane switch');
   chatPane.mode = m;
-  try { localStorage.setItem('harness-chat-mode', m); } catch (_) {}
+  try { localStorage.setItem('motdeck-chat-mode', m); } catch (_) {}
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
   document.getElementById('mode-hermes').classList.toggle('on', m === 'hermes');
@@ -5702,7 +5703,7 @@ function renderCaps() {
 const CAPS_SECTIONS = ['general','tools','skills','models'];
 function capsSection() {
   let s = 'general';
-  try { s = localStorage.getItem('harness-caps-section') || 'general'; } catch (e) {}
+  try { s = localStorage.getItem('motdeck-caps-section') || 'general'; } catch (e) {}
   return CAPS_SECTIONS.includes(s) ? s : 'general';
 }
 function applyCapsSection() {
@@ -5714,7 +5715,7 @@ function applyCapsSection() {
 }
 function showCapsSection(sec) {
   if (!CAPS_SECTIONS.includes(sec)) sec = 'general';
-  try { localStorage.setItem('harness-caps-section', sec); } catch (e) {}
+  try { localStorage.setItem('motdeck-caps-section', sec); } catch (e) {}
   applyCapsSection();
 }
 
@@ -6272,7 +6273,7 @@ function renderMcpServers() {
    endpoint with BOTH Hermes and Odysseus (bridge /api/voice/toggle) — the same
    grammar as the Browse chip, rendered as a row in this section. Once registered the
    server ALSO appears in "Connected tools (MCP)" above (it is a real Odysseus MCP
-   server); this group is the harness-managed one-click for it. No new CSS. */
+   server); this group is MOT Deck-managed one-click for it. No new CSS. */
 function renderVoiceMcp() {
   const comps = (voiceSnap && voiceSnap.components) || null;
   if (!comps) return '';
@@ -6440,7 +6441,7 @@ function renderHermesTools() {
   // on the profile), so a change made here is invisible over there until that tab
   // is reloaded. This page re-reads Hermes on every refresh; that one does not.
   const wrap = inner => `<div class="caps-group" id="caps-hermes-tools">${head}
-    <div class="cap-desc" style="margin:-4px 0 10px">Which toolsets the Hermes lane hands the model. Every switch shows what HERMES reports for its <b>${esc(snap.platform || 'cli')}</b> platform — the one this chat runs on — re-read on every refresh, not what we last asked for. Fewer toolsets = a smaller system prompt = faster turns on a local model. Takes effect on the next chat — no restart.<br>Cross-checking Hermes's own <i>Skills → TOOLSETS</i> page? It loads its list once when it opens and never refreshes itself — so <b>the harness reloads that tab for you</b> within a few seconds of any change made here, whether you switch to it or it is already open <i>beside</i> this one in split view. The one case still on you is a Hermes dashboard open <i>outside</i> this app, in a browser: press ⌘R there. The <b>Check</b> button below is the live answer either way.</div>
+    <div class="cap-desc" style="margin:-4px 0 10px">Which toolsets the Hermes lane hands the model. Every switch shows what HERMES reports for its <b>${esc(snap.platform || 'cli')}</b> platform — the one this chat runs on — re-read on every refresh, not what we last asked for. Fewer toolsets = a smaller system prompt = faster turns on a local model. Takes effect on the next chat — no restart.<br>Cross-checking Hermes's own <i>Skills → TOOLSETS</i> page? It loads its list once when it opens and never refreshes itself — so <b>MOT Deck reloads that tab for you</b> within a few seconds of any change made here, whether you switch to it or it is already open <i>beside</i> this one in split view. The one case still on you is a Hermes dashboard open <i>outside</i> this app, in a browser: press ⌘R there. The <b>Check</b> button below is the live answer either way.</div>
     <div class="cap-card">${inner}</div></div>`;
   if (!snap.running) {
     const cfg = snap.config || {};
@@ -6767,7 +6768,7 @@ function renderHermesSkills(toolsRow) {
   const shown = hermesSkillsShown(snap, hermesSkillsFilter);
   const head = `<div class="cap-row"><div class="cap-txt">
       <div class="cap-name">Individual skills<span class="cap-count" id="hsk-shown">${shown.length} shown</span></div>
-      <div class="cap-desc">Each one off is a few lines less in every prompt. This writes Hermes’s <b>global</b> skills list (its dashboard has no per-platform switch), so a skill turned off here is off on <b>every</b> Hermes surface — not just this chat lane. Takes effect on the next chat.<br>Hermes’s own <i>Skills</i> page loads its list once when it opens and never refreshes itself — <b>the harness reloads that tab for you</b> within a few seconds of a change here, in split view too. Only a Hermes dashboard open <i>outside</i> this app needs a ⌘R from you.</div>
+      <div class="cap-desc">Each one off is a few lines less in every prompt. This writes Hermes’s <b>global</b> skills list (its dashboard has no per-platform switch), so a skill turned off here is off on <b>every</b> Hermes surface — not just this chat lane. Takes effect on the next chat.<br>Hermes’s own <i>Skills</i> page loads its list once when it opens and never refreshes itself — <b>MOT Deck reloads that tab for you</b> within a few seconds of a change here, in split view too. Only a Hermes dashboard open <i>outside</i> this app needs a ⌘R from you.</div>
       ${moot ? `<div class="cap-desc">${esc(moot)}</div>` : ''}
       <div style="margin-top:8px">
         <input class="cap-inp" id="hsk-q" type="text" placeholder="filter skills…"
@@ -7399,7 +7400,7 @@ async function initChat() {
   try {
     const list = await loadSessions();
     if (list === null) { stamp.textContent = 'ODYSSEUS OFFLINE — START IT FROM MOT DECK'; return; }
-    const want = localStorage.getItem('harness-chat-sid');
+    const want = localStorage.getItem('motdeck-chat-sid');
     const pick = (want && list.find(s => s.id === want)) || list[0];
     if (pick) await selectSession(pick.id);
     else await newSession();
@@ -7607,7 +7608,7 @@ function showAttachedImage(dataUrl, name){
 
 /* native-app drop path: the Swift shell (DropWebView) catches Finder drags that
    WKWebView never forwards to the DOM, reads the file, and calls this directly. */
-window.harnessNativeDrop = function(name, dataUrl){
+window.motdeckNativeDrop = function(name, dataUrl){
   const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
   if (!v.on){ attachNote(v.why); return; }
   const b64 = String(dataUrl || '').split(',')[1] || '';
@@ -7619,7 +7620,7 @@ window.harnessNativeDrop = function(name, dataUrl){
    attachment — it goes straight into the voice library through the SAME endpoint the
    🎙 recorder uses. Deliberately NOT auto-pinned: a drop is an import, not a choice
    about which voice a model should speak in. */
-window.harnessNativeAudioDrop = async function(name, dataUrl){
+window.motdeckNativeAudioDrop = async function(name, dataUrl){
   const raw = String(name || 'clip');
   const dot = raw.lastIndexOf('.');
   const ext = (dot > 0 ? raw.slice(dot + 1) : '').toLowerCase();
@@ -7892,7 +7893,7 @@ function renderModelPop(){
       if (m.file!=='incomplete'&&modelActiveId && modelActiveId !== m.id){
         const pn = document.createElement('button');
         pn.className = 'mp-act'; pn.textContent = 'Pin';
-        pn.title = 'harness.yaml still points at ' + modelActiveId
+        pn.title = 'motdeck.yaml still points at ' + modelActiveId
                  + ' — pin the model that is actually serving';
         pn.onclick = (e) => { e.stopPropagation(); closeModelPop(); pinServedModel(); };
         acts.appendChild(pn);
@@ -7948,7 +7949,7 @@ async function chatModelChange(id){
 
 /* ---------- PHASE C: composer AUDIO control (voice output) ------------------
    Chip + popover in the EXACT #model-pop grammar. The whole feature keys off one
-   piece of state — the configured default TTS model (harness.yaml voice.tts_model,
+   piece of state — the configured default TTS model (motdeck.yaml voice.tts_model,
    read through /api/voice/config). Empty = voice off: the chip says so and NO
    ▶ Speak action is rendered anywhere, so the chip is the single discovery path. */
 let voiceCfg = { tts_model: '', stt_model: '', available: [], resident: null };
@@ -8128,7 +8129,7 @@ function renderAudioPop(){
 
 function audioJumpToModels(){
   closeAudioPop();
-  try { localStorage.setItem('harness-models-section', 'audio'); } catch (e) {}
+  try { localStorage.setItem('motdeck-models-section', 'audio'); } catch (e) {}
   showView('models');
   if (typeof showModelsSection === 'function') showModelsSection('audio');
 }
@@ -8416,11 +8417,11 @@ async function audioWorkletSpike(){
       return say('worklet spike: FAIL — AudioContext.audioWorklet missing'); }
     const src = 'class P extends AudioWorkletProcessor{constructor(){super();this.n=0;}' +
       'process(i){this.n++;if(this.n%50===0)this.port.postMessage(this.n);return true;}}' +
-      'registerProcessor("harness-spike",P);';
+      'registerProcessor("motdeck-spike",P);';
     const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
     await ctx.audioWorklet.addModule(url);   // the Blob-URL load IS part of the test
     URL.revokeObjectURL(url);
-    const node = new AudioWorkletNode(ctx, 'harness-spike');
+    const node = new AudioWorkletNode(ctx, 'motdeck-spike');
     let frames = 0;
     node.port.onmessage = (e) => { frames = e.data; };
     ctx.createMediaStreamSource(stream).connect(node);   // do NOT connect to output (no feedback)
@@ -8999,12 +9000,12 @@ async function startAuto(mode){
       'if(this.i>=this.N){let s=0;for(let j=0;j<this.N;j++)s+=this.b[j]*this.b[j];' +
       'const cp=this.b.slice(0);this.port.postMessage({rms:Math.sqrt(s/this.N),buf:cp},[cp.buffer]);' +
       'this.i=0;}}return true;}}' +
-      'registerProcessor("harness-vad",V);';
+      'registerProcessor("motdeck-vad",V);';
     const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
     await ctx.audioWorklet.addModule(url);
     URL.revokeObjectURL(url);
     if (ctx.state === 'suspended') await ctx.resume();   // a suspended ctx pumps no frames
-    const node = new AudioWorkletNode(ctx, 'harness-vad',
+    const node = new AudioWorkletNode(ctx, 'motdeck-vad',
       { processorOptions: { block: VAD_BLOCK } });
     const frameMs = (VAD_BLOCK / ctx.sampleRate) * 1000;
     autoVad = { ctx: ctx, stream: stream, node: node, rate: ctx.sampleRate,
@@ -9032,7 +9033,7 @@ function autoFrame(msg){
   const a = autoVad;
   if (!a || a.stopping || !msg || !msg.buf) return;
   // ═ THE FEEDBACK-LOOP GATE (conversation mode's critical invariant) ═
-  // While the harness is thinking or SPEAKING, the segmenter is off entirely — the
+  // While MOT Deck is thinking or SPEAKING, the segmenter is off entirely — the
   // block is dropped before it is buffered or measured. Nothing the assistant says
   // can be segmented, transcribed, or taught to the noise floor. The mic stream
   // stays open (re-acquiring it every turn would re-prompt and flicker the OS
@@ -9134,7 +9135,7 @@ function stopAuto(reason){
 }
 
 /* ═══ CONVERSATION MODE — hands-free speak ⇄ reply ════════════════════════════
-   Debi's ask: speak, and the harness answers OUT LOUD, then listens again.
+   Debi's ask: speak, and MOT Deck answers OUT LOUD, then listens again.
 
        LISTENING ──utterance──▶ THINKING ──transcript──▶ WAITING (turn streams)
             ▲                                                │
@@ -9147,7 +9148,7 @@ function stopAuto(reason){
    WAITING (the reply is streaming) and SPEAKING (the reply is playing out loud) —
    and a 300ms grace runs after playback before the segmenter re-arms, because the
    tail of a clip and the speaker's own decay would otherwise open an utterance made
-   of the harness's own voice. That loop would be self-sustaining and unstoppable.
+   of MOT Deck's own voice. That loop would be self-sustaining and unstoppable.
 
    The state machine is PURE (convInit/convStep/convGated: a new object per step, no
    DOM, no audio, no fetch) so the whole transition table is table-testable —
@@ -9549,19 +9550,19 @@ async function selectHermesSession(storedId){
   // stop-then-proceed) — you cannot stream turn A into session B's pane.
   if (chatPane.busy) await stopTurnNow('session switch');
   chatPane.hermesStoredSid = storedId;
-  localStorage.setItem('harness-hermes-stored', storedId);
+  localStorage.setItem('motdeck-hermes-stored', storedId);
   renderSessions();
   document.getElementById('chat-msgs').innerHTML = '';
   try {
     const r = await (await fetch('/api/hermes/session/resume', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: storedId})})).json();
     if (r && r.id){
-      chatPane.hermesSid = r.id; localStorage.setItem('harness-hermes-sid', r.id);
+      chatPane.hermesSid = r.id; localStorage.setItem('motdeck-hermes-sid', r.id);
       if (r.stored_id && r.stored_id !== storedId){
         // Compression chains: resume follows the lineage to the live tip
         // (methods_session.py:351-369) — track the id it actually opened.
         chatPane.hermesStoredSid = r.stored_id;
-        localStorage.setItem('harness-hermes-stored', r.stored_id);
+        localStorage.setItem('motdeck-hermes-stored', r.stored_id);
       }
       for (const m of (r.history || []).slice(-30)){
         if (m.role === 'user') addMsg('user', m.content || '');
@@ -9574,12 +9575,12 @@ async function selectHermesSession(storedId){
         }
       }
       scrollChat(true);
-      if (r.active_turn && window.HarnessTurnStream
-          && typeof HarnessTurnStream.recoverHermes === 'function') {
-        await HarnessTurnStream.recoverHermes(r.active_turn, r.history || []);
-      } else if (r.inflight && window.HarnessTurnStream
-                 && typeof HarnessTurnStream.renderHermesSnapshot === 'function') {
-        HarnessTurnStream.renderHermesSnapshot(r, r.history || []);
+      if (r.active_turn && window.MOTDeckTurnStream
+          && typeof MOTDeckTurnStream.recoverHermes === 'function') {
+        await MOTDeckTurnStream.recoverHermes(r.active_turn, r.history || []);
+      } else if (r.inflight && window.MOTDeckTurnStream
+                 && typeof MOTDeckTurnStream.renderHermesSnapshot === 'function') {
+        MOTDeckTurnStream.renderHermesSnapshot(r, r.history || []);
       } else if (r.inflight) {
         const note = document.getElementById('chat-note');
         if (note) note.textContent = 'Hermes is still processing, but the recovery renderer did not load — reload M.O.T';
@@ -9633,7 +9634,7 @@ async function selectSession(sid){
   // was written for registry ids and turned an MLX path into nonsense.
   chatPane.model = (s && s.model) || '';
   stampFor((s && s.model) || '');   // never pass undefined — that means "re-stamp, keep session model"
-  localStorage.setItem('harness-chat-sid', sid);
+  localStorage.setItem('motdeck-chat-sid', sid);
   renderSessions();
   document.getElementById('chat-msgs').innerHTML = '';
   try {
@@ -9641,8 +9642,8 @@ async function selectSession(sid){
     // completes during that fetch, the metadata check below tells us not to paint
     // a second assistant bubble over the answer Odysseus has just persisted.
     const lane = chatPane.mode === 'chat' ? 'chat' : 'agent';
-    const turnStatePromise = window.HarnessTurnStream
-      ? HarnessTurnStream.reconcile(lane, sid) : Promise.resolve({active:null, interrupted:false});
+    const turnStatePromise = window.MOTDeckTurnStream
+      ? MOTDeckTurnStream.reconcile(lane, sid) : Promise.resolve({active:null, interrupted:false});
     const h = await (await fetch(`/api/ody/history/${sid}`)).json();
     if (chatPane.sid !== sid || chatPane.mode !== lane) return;
     renderOdyHistory(h);
@@ -9661,9 +9662,9 @@ async function selectSession(sid){
       // closes that race. It is local and read-only; no resume/rebind side effect.
       const settledHistory = await (await fetch(`/api/ody/history/${sid}`)).json();
       if (chatPane.sid === sid && chatPane.mode === lane) renderOdyHistory(settledHistory);
-    } else if (window.HarnessTurnStream && chatPane.sid === sid
+    } else if (window.MOTDeckTurnStream && chatPane.sid === sid
                && chatPane.mode === lane) {
-      const fresh = await HarnessTurnStream.metadata(active.id).catch(() => null);
+      const fresh = await MOTDeckTurnStream.metadata(active.id).catch(() => null);
       if (fresh && ['completed','failed','stopped','interrupted'].includes(fresh.state)) {
         // The producer crossed its terminal boundary while the first history request
         // was in flight. Refetch once; otherwise that perfectly legal ordering can
@@ -9671,7 +9672,7 @@ async function selectSession(sid){
         const finalHistory = await (await fetch(`/api/ody/history/${sid}`)).json();
         if (chatPane.sid === sid && chatPane.mode === lane) renderOdyHistory(finalHistory);
       } else if (fresh) {
-        await HarnessTurnStream.recover(fresh, lane, sid);
+        await MOTDeckTurnStream.recover(fresh, lane, sid);
       }
     }
   } catch {}
@@ -9704,10 +9705,10 @@ async function newSession(){
     // the rail after the first message. ⚠ PENDING FABLE QA.
     try {
       const r = await (await fetch('/api/hermes/session/new', {method:'POST'})).json();
-      if (r && r.id){ chatPane.hermesSid = r.id; localStorage.setItem('harness-hermes-sid', r.id); }
+      if (r && r.id){ chatPane.hermesSid = r.id; localStorage.setItem('motdeck-hermes-sid', r.id); }
       chatPane.hermesStoredSid = (r && r.stored_id) || null;
-      if (chatPane.hermesStoredSid) localStorage.setItem('harness-hermes-stored', chatPane.hermesStoredSid);
-      else localStorage.removeItem('harness-hermes-stored');
+      if (chatPane.hermesStoredSid) localStorage.setItem('motdeck-hermes-stored', chatPane.hermesStoredSid);
+      else localStorage.removeItem('motdeck-hermes-stored');
       document.getElementById('chat-msgs').innerHTML = '';
       document.getElementById('chat-input').focus();
       loadSessions();
@@ -9767,8 +9768,8 @@ async function doDelete(sid){
       body: JSON.stringify({live_id: isCurrent ? (chatPane.hermesSid || '') : ''})});
     if (isCurrent){
       chatPane.hermesStoredSid = null; chatPane.hermesSid = null;
-      localStorage.removeItem('harness-hermes-stored');
-      localStorage.removeItem('harness-hermes-sid');
+      localStorage.removeItem('motdeck-hermes-stored');
+      localStorage.removeItem('motdeck-hermes-sid');
       document.getElementById('chat-msgs').innerHTML = '';
       // No auto-create: Hermes mints a session lazily on the next Send.
     }
@@ -9973,7 +9974,7 @@ function quantOf(id){
 }
 
 // Provenance: source in {download, local} = APP-OWNED (files under data/models/, deletable);
-// lmstudio-import / jan-import = READ-ONLY imports the harness does not own.
+// lmstudio-import / jan-import = READ-ONLY imports MOT Deck does not own.
 function isAppOwned(src){ return src === 'download' || src === 'local'; }
 function srcLabel(src){
   return src === 'download' ? 'downloaded'
@@ -9999,7 +10000,7 @@ function modelHasTools(m){
 function srcBadge(src){
   if (!src) return '';
   const owned = isAppOwned(src);
-  const title = owned ? 'App-owned — the harness downloaded/stores these files (deletable)'
+  const title = owned ? 'App-owned — MOT Deck downloaded/stores these files (deletable)'
                       : 'Read-only import — the files are managed by another app';
   return '<span class="mpill ' + (owned ? 'owned' : 'imported') + '" title="' + title + '">'
        + esc(srcLabel(src)) + '</span>';
@@ -10439,7 +10440,7 @@ function renderList(r){
   const rows=(r.installed||[]).slice().sort((a,b)=>+(a.absent||a.file === 'gone'||a.file === 'incomplete'||a.source_membership==='unlisted')-+(b.absent||b.file === 'gone'||b.file === 'incomplete'||b.source_membership==='unlisted'));
   for (const m of rows){
     // "live" = the model the RUNNER actually reports serving (ISSUE C), not merely the
-    // harness.yaml intent — so the pill matches MC and post-eject reality.
+    // motdeck.yaml intent — so the pill matches MC and post-eject reality.
     const isLive = m.id === r.live_id;
     const isAux = aux.model && m.id === aux.model;
     const row = document.createElement('div'); row.className = 'mrow'; row.dataset.mid = m.id;
@@ -10486,7 +10487,7 @@ function renderAux(r){
 const MODELS_SECTIONS = ['chat','audio'];
 function modelsSection(){
   let s = 'chat';
-  try { s = localStorage.getItem('harness-models-section') || 'chat'; } catch (e) {}
+  try { s = localStorage.getItem('motdeck-models-section') || 'chat'; } catch (e) {}
   return MODELS_SECTIONS.includes(s) ? s : 'chat';
 }
 function applyModelsSection(){
@@ -10505,7 +10506,7 @@ function applyModelsSection(){
 }
 function showModelsSection(sec){
   if (!MODELS_SECTIONS.includes(sec)) sec = 'chat';
-  try { localStorage.setItem('harness-models-section', sec); } catch (e) {}
+  try { localStorage.setItem('motdeck-models-section', sec); } catch (e) {}
   applyModelsSection();
 }
 
@@ -10821,7 +10822,7 @@ function renderAudioDetail(){
     set.onclick = () => setVoiceDefault('', role);
   } else {
     set.textContent = role === 'stt' ? 'Set default STT' : 'Set default TTS';
-    set.title = 'Use this model whenever the harness ' + (role === 'stt' ? 'listens' : 'speaks');
+    set.title = 'Use this model whenever MOT Deck ' + (role === 'stt' ? 'listens' : 'speaks');
     set.onclick = () => setVoiceDefault(a.id, role);
   }
   acts.appendChild(set);
@@ -11461,7 +11462,7 @@ const VOICE_STARTERS = [
     file: 'Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf',
     mmproj: 'mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf',
     fmt: 'tts-gguf', size: '1.38 GB (0.96 + 0.42)',
-    desc: 'Runs on the llama.cpp binary the harness already ships — the lightest option, '
+    desc: 'Runs on the llama.cpp binary MOT Deck already ships — the lightest option, '
         + 'and the only one that needs no MLX. Downloads BOTH halves: llama-tts needs the '
         + 'backbone and its mmproj projector. Voice quality is well below OmniVoice, and '
         + 'llama.cpp has no voice parameter at all, so the voice is whatever the model does.',
@@ -11503,7 +11504,7 @@ function renderAudioGet(){
   if (!box) return;
   const have = new Set(((lastModels || {}).audio || []).map(a => a.id));
   box.innerHTML = '<span class="cs-title" style="display:block">Get voice models</span>'
-    + '<div class="cs-empty" style="margin-top:6px">Downloads land in the harness’s own '
+    + '<div class="cs-empty" style="margin-top:6px">Downloads land in MOT Deck’s own '
     + 'models folder and appear above when they finish. Progress is in Downloads below.</div>';
   const list = document.createElement('div'); list.className = 'hffiles';
   list.style.marginTop = '14px';
@@ -11698,7 +11699,7 @@ function markSelRows(){
 /* ---------- SAMPLING (per-model, DIRECT lane) ----------
    Renders `m.sampling` — which the BRIDGE computes (bridge/app.py sampling_view):
    the engine, and one row per field THAT engine can actually honour, carrying its
-   real wire name as the label, the harness default, and the per-model override.
+   real wire name as the label, MOT Deck default, and the per-model override.
    The panel invents no field list of its own, so it can never draw a control the
    engine ignores (the llama.cpp `repeat_penalty` vs MLX `repetition_penalty` split
    is exactly the case where a shared label would have lied).
@@ -11742,7 +11743,7 @@ function renderSampling(m){
     const ov = f.value !== null && f.value !== undefined;
     // v2.1: the tooltip is the BRIDGE's `help` string (one source for both surfaces)
     // with the range appended, so hover always explains the field AND its limits.
-    const tip = fieldTip(f, 'harness');
+    const tip = fieldTip(f, 'motdeck');
     return `<div class="cap-row"><div class="cap-txt" title="${escAttr(tip)}">
         <div class="cap-name">${esc(f.label)}</div>
         <div class="cap-desc">default ${esc(String(f.default))}${
@@ -11754,7 +11755,7 @@ function renderSampling(m){
           title="${escAttr(tip)}"
           onchange="samplingSet('${escAttr(f.key)}', this.value, this)">
         ${ov ? `<button class="cap-btn" style="margin-left:6px"
-             title="Reset to the harness default (${escAttr(String(f.default))})"
+             title="Reset to MOT Deck default (${escAttr(String(f.default))})"
              onclick="samplingSet('${escAttr(f.key)}', '', this)">↺</button>` : ''}
       </div></div>`;
   }).join('');
@@ -11766,8 +11767,8 @@ function renderSampling(m){
       <div class="cap-card">${rows}</div>
       <div style="margin-top:10px">
         <button class="cap-btn" onclick="samplingResetAll(this)"${sv.changed ? '' : ' disabled'}
-          title="Forget every override on this model — it goes back to the harness defaults shown above."
-          >Reset all to harness defaults</button>
+          title="Forget every override on this model — it goes back to MOT Deck defaults shown above."
+          >Reset all to motdeck defaults</button>
         <span class="cap-count">${esc(sv.engine)} request fields</span>
       </div>
       <div id="md-sampling-err" hidden
@@ -11837,7 +11838,7 @@ async function samplingPost(body, el){
   }
   feed('models', 'sampling · ' + esc(r.id) + ' → '
        + ((r.sampling && r.sampling.changed) ? (r.sampling.changed + ' overridden')
-                                            : 'harness defaults'));
+                                            : 'motdeck defaults'));
 }
 
 /* True while the user is typing in a sampling OR load box. Used ONLY by the refresh
@@ -12095,7 +12096,7 @@ function renderDetail(){
     if (isLive && !incomplete && r.live_id && r.active && r.live_id !== r.active && !loadingThis){
       const pinB = document.createElement('button');
       pinB.textContent = 'Pin this model';
-      pinB.title = 'harness.yaml still points at ' + (r.active || '?')
+      pinB.title = 'motdeck.yaml still points at ' + (r.active || '?')
                  + ' — pin the model that is actually serving. No reload, no restart.';
       pinB.disabled = !!switchingId || modelsBusy;
       pinB.onclick = async () => { pinB.disabled = true; await pinServedModel(); };
@@ -12108,7 +12109,7 @@ function renderDetail(){
       acts.appendChild(auxBtn);}
     // Delete — ONLY for app-owned models (download/local, files under data/models/).
     // Read-only imports show a greyed note instead (deleting would touch files the
-    // harness does not own). Two-step arm→confirm (WKWebView has no confirm()).
+    // motdeck does not own). Two-step arm→confirm (WKWebView has no confirm()).
     if (isAppOwned(m.source)){
       const del = document.createElement('button'); del.className = 'md-del';
       del.textContent = 'Delete'; del.title = "Remove this model's files from data/models/";
@@ -12118,7 +12119,7 @@ function renderDetail(){
     } else if (m.source){
       const note = document.createElement('span'); note.className = 'md-imnote';
       note.textContent = 'Managed by ' + (srcLabel(m.source) || 'another app') + ' — remove it there';
-      note.title = 'The harness only indexes this model; its files live outside data/models/, '
+      note.title = 'MOT Deck only indexes this model; its files live outside data/models/, '
                  + 'so it cannot be deleted here.';
       acts.appendChild(note);
       const h = hideBtn(m.id, m.name || m.id, m.source);
@@ -12376,7 +12377,7 @@ async function renderHfFiles(repo, box){
     return;
   }
   // GGUF: per-file Get (pick the exact quant).
-  box.innerHTML = '<div class="cs-empty">Note: use “Get” on the exact quant file you want — the download manager fetches it into the harness’s own models dir.</div>';
+  box.innerHTML = '<div class="cs-empty">Note: use “Get” on the exact quant file you want — the download manager fetches it into MOT Deck’s own models dir.</div>';
   for (const f of d.files){
     const line = document.createElement('div'); line.className = 'hffile';
     line.innerHTML = `${fitPillSize(f.size_bytes)} <span>${esc(f.filename)} · ${fmtGB(f.size_bytes)} to download</span> `
@@ -12406,7 +12407,7 @@ function hfDownload(repo, btn){
 }
 
 // Load AND Switch share ONE pipeline (Fable A): both call this → /api/models/switch →
-// the background _do_switch (busy-lock + exit-code checks + harness.yaml rollback +
+// the background _do_switch (busy-lock + exit-code checks + motdeck.yaml rollback +
 // switch-status poll). Load is just "switch when nothing is live" — identical machinery.
 async function switchModel(id, name, confirmed){
   if (modelsBusy) return;              // repeat clicks are no-ops while one is in flight
@@ -13588,12 +13589,12 @@ async function sendChat() {
   // turn-stream.js is an execution dependency, not progressive decoration.  The
   // old inline renderer could not disappear independently from this page; after
   // U31 extracted it, continuing without the asset could POST a real prompt and
-  // then throw at `HarnessTurnStream.consume`, leaving the user with an action
+  // then throw at `MOTDeckTurnStream.consume`, leaving the user with an action
   // that happened but no visible stream.  Refuse before clearing the composer,
   // staging bubbles, or touching the network.  Hermes uses the same renderer even
   // though its producer route differs, so this guard deliberately covers all
   // three lanes.
-  const streamApi = window.HarnessTurnStream;
+  const streamApi = window.MOTDeckTurnStream;
   const streamReady = streamApi && typeof streamApi.consume === 'function'
     && (chatPane.mode === 'hermes'
       ? (typeof streamApi.requestId === 'function'
@@ -13938,7 +13939,7 @@ const ART_CONSOLE_SHIM = '<scr' + 'ipt>(function(){' +
 // <base href="about:srcdoc"> — injected as the FIRST <head> element of every artifact
 // document. WHY: a srcdoc frame resolves RELATIVE URLs against the PARENT document's base
 // (the bridge origin), so an artifact's <a href="#"> / href="/" would navigate the frame
-// straight to the harness panel (http://127.0.0.1:8700/). Pointing the base at the dead
+// straight to MOT Deck panel (http://127.0.0.1:8700/). Pointing the base at the dead
 // pseudo-URL about:srcdoc makes every relative link resolve to nowhere reachable.
 // HTML rule: the FIRST <base> with an href wins → ours (injected first) is authoritative
 // even if the artifact declares its own base. CSP base-uri is therefore DROPPED from the
@@ -14384,7 +14385,7 @@ function setCanvasSplit(frac){
 }
 function loadCanvasSplit(){
   let f = 0.5;
-  try { const v = localStorage.getItem('harness-canvas-split'); if (v != null) f = v; } catch (e) {}
+  try { const v = localStorage.getItem('motdeck-canvas-split'); if (v != null) f = v; } catch (e) {}
   setCanvasSplit(f);   // clamps + applies (default half)
 }
 let _cvDrag = null;
@@ -14417,7 +14418,7 @@ function canvasDividerUp(e){
   }
   document.body.classList.remove('canvas-dragging');
   _cvDrag = null;
-  try { localStorage.setItem('harness-canvas-split', String(_canvasFrac)); } catch (_) {}
+  try { localStorage.setItem('motdeck-canvas-split', String(_canvasFrac)); } catch (_) {}
   if (_canvas.cm) try { _canvas.cm.refresh(); } catch (_) {}
 }
 
@@ -14672,7 +14673,7 @@ const ART_SAMPLES = {
   csv: { filename:'sample.csv', content:
     'name,region,revenue\n"Acme, Inc.",EU,1200\nBolt,US,340\n"Quote ""Q"" Co",APAC,905\nDelta,EU,77\n' },
   json: { filename:'sample.json', content:
-    '{"service":"harness","ports":{"bridge":8700,"runner":6767},"components":[{"name":"hermes","up":true},{"name":"odysseus","up":true}],"notes":null}' }
+    '{"service":"motdeck","ports":{"bridge":8700,"runner":6767},"components":[{"name":"hermes","up":true},{"name":"odysseus","up":true}],"notes":null}' }
 };
 function openArtifactSample(kind){
   const s = ART_SAMPLES[kind]; if (!s) return;
@@ -14720,7 +14721,7 @@ function applyMusicView(){
 
 function toggleMusicView(){
   musicView = musicStudio() ? 'classic' : 'studio';
-  try { localStorage.setItem('harness-music-view', musicView); } catch (e) {}
+  try { localStorage.setItem('motdeck-music-view', musicView); } catch (e) {}
   applyMusicView();
   renderMusic();
   renderMusicLibrary();
@@ -14729,7 +14730,7 @@ function toggleMusicView(){
 
 function loadMusicView(){
   try {
-    if (localStorage.getItem('harness-music-view') === 'studio') musicView = 'studio';
+    if (localStorage.getItem('motdeck-music-view') === 'studio') musicView = 'studio';
   } catch (e) {}
   applyMusicView();
 }
@@ -15127,7 +15128,7 @@ function musicEditOutDir(){
   if (!el) return;
   const dir = (musicSnap || {}).dir || '';
   el.innerHTML = `<input class="cap-inp" id="mus-dir" style="width:60%"
-      value="${escAttr(dir)}" placeholder="~/Music/Harness">
+      value="${escAttr(dir)}" placeholder="~/Music/MOT Deck">
     <button class="cap-btn go" onclick="musicSetOutDir()">Set</button>
     <button class="cap-btn" onclick="renderMusicOutDir()">cancel</button>
     <div class="cap-desc">Empty = back to the default. Tracks already in the old

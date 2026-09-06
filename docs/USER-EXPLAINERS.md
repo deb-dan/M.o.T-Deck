@@ -457,7 +457,7 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 ## DeepSeek — the workspace it asks for first
 
 - **The first thing it shows is a notice, and the second is a question.** DeepSeek
-  Harness opens with an **Internal Testing Notice** — that is DeepSeek's own message
+  MOT Deck opens with an **Internal Testing Notice** — that is DeepSeek's own message
   about its own software being a preview, not a warning about MOT Deck. Click
   **Continue** and it does not come back.
 - **Then it will not take a message until you give it a folder to work in.** Its
@@ -531,9 +531,9 @@ live there, in the order you need them.
   button beside it, and the runner comes back in a few seconds. Nothing else on the
   machine is touched by that restart, and open chats pick up again on their next
   message.
-- **The key already in `harness.yaml` still works, and nothing changed for it.** It is
-  listed as *Harness built-in*: it is what MOT Deck itself uses, it is never shown here,
-  and it cannot be revoked from this page — edit `harness.yaml` if you want it changed.
+- **The key already in `motdeck.yaml` still works, and nothing changed for it.** It is
+  listed as *MOT Deck built-in*: it is what MOT Deck itself uses, it is never shown here,
+  and it cannot be revoked from this page — edit `motdeck.yaml` if you want it changed.
 - **Keys are stored on your machine only**, in `data/api_keys.json` and
   `data/api_keys.keys`, both readable only by you. Nothing here ever leaves the machine.
 - **Requests.** The chips at the top are the runner's own totals since it started —

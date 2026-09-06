@@ -53,7 +53,7 @@ sys.path.insert(0, str(ROOT))
 # HOME is pointed at a temp dir BEFORE the import, exactly as test_voice_mcp.py does.
 for _k in [k for k in os.environ if k.lower().endswith("_proxy")]:
     os.environ.pop(_k, None)
-_HHOME = tempfile.mkdtemp(prefix="harness-office-mcp-hermes-")
+_HHOME = tempfile.mkdtemp(prefix="motdeck-office-mcp-hermes-")
 os.environ["HERMES_HOME"] = _HHOME
 
 from bridge import office, office_mcp, office_ops              # noqa: E402
@@ -389,7 +389,7 @@ eq("an unreadable merge entry is DROPPED, not guessed at",
 # change — the same run_ops, the same merge refusal, the same caps — but the ROUTE did,
 # so testing the semantics through the route is strictly better: it proves the change a
 # model proposes is the change a person's Apply carries out.
-TMP = tempfile.mkdtemp(prefix="harness-office-mcp-")
+TMP = tempfile.mkdtemp(prefix="motdeck-office-mcp-")
 D = office.office_dir(TMP)
 SESS = "test-session"
 
@@ -1525,14 +1525,14 @@ check("the config-gen step really is in scripts/start_component.sh's hermes bran
       bool(m))
 check("…in the hermes branch specifically, so it runs on every Hermes start and "
       "therefore survives a pin bump",
-      bool(m) and SCRIPT.index("PYLOFFICE") > SCRIPT.index("harness-path-guard"))
+      bool(m) and SCRIPT.index("PYLOFFICE") > SCRIPT.index("motdeck-path-guard"))
 if m:
     GEN = m.group(1)
-    check("…and it reads the bridge port out of harness.yaml rather than hardcoding it",
+    check("…and it reads the bridge port out of motdeck.yaml rather than hardcoding it",
           "BR_PORT=$(_manifest_value bridge.port int)" in SCRIPT)
     check("…with the trust key, without which the write tools would have NO approval "
           "card", '"trust": "untrusted"' in GEN)
-    genpy = Path(tempfile.mkdtemp(prefix="harness-loffice-gen-")) / "gen.py"
+    genpy = Path(tempfile.mkdtemp(prefix="motdeck-loffice-gen-")) / "gen.py"
     genpy.write_text(GEN, encoding="utf-8")
 
     def run_gen(cfg_path, port="8700"):
@@ -1541,7 +1541,7 @@ if m:
                               text=True, env=env, timeout=60)
 
     import yaml                                                  # noqa: E402
-    cdir = Path(tempfile.mkdtemp(prefix="harness-loffice-cfg-"))
+    cdir = Path(tempfile.mkdtemp(prefix="motdeck-loffice-cfg-"))
     cfg = cdir / "config.yaml"
 
     out = run_gen(cfg)
@@ -1564,7 +1564,7 @@ if m:
     cfg.write_text(yaml.safe_dump({
         "model": {"default": "local"},
         "approvals": {"mode": "manual"},
-        "plugins": {"enabled": ["harness-path-guard"]},
+        "plugins": {"enabled": ["motdeck-path-guard"]},
         "mcp_servers": {
             "browsermcp": {"command": "npx", "args": ["@browsermcp/mcp"]},
             "voicestudio": {"url": "http://127.0.0.1:3900/mcp"},
@@ -1581,7 +1581,7 @@ if m:
        "the rest through unchanged",
        (data["model"], data["approvals"], data["plugins"]),
        ({"default": "local"}, {"mode": "manual"},
-        {"enabled": ["harness-path-guard"]}))
+        {"enabled": ["motdeck-path-guard"]}))
 
     cfg.write_text("mcp_servers: not-a-mapping\n", encoding="utf-8")
     run_gen(cfg)

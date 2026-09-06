@@ -160,14 +160,14 @@ ok(sels.some(x => x.split(',').some(p => /^html\[data-chrome="studio"\] button(:
 
 // ---------- pre-paint + toggle + persistence + legacy migration ----------
 const pre = html.split('</style>')[1].split('</head>')[0];
-ok(/localStorage\.getItem\('harness-chrome'\)\s*===\s*'studio'/.test(pre),
+ok(/localStorage\.getItem\('motdeck-chrome'\)\s*===\s*'studio'/.test(pre),
    'the saved chrome is applied PRE-PAINT, in the same head script as the theme');
-ok(pre.indexOf('harness-theme') < pre.indexOf('harness-chrome'),
+ok(pre.indexOf('motdeck-theme') < pre.indexOf('motdeck-chrome'),
    'theme and chrome are applied in one pre-paint pass (theme first, then chrome)');
 ok(/dataset\.chrome\s*=\s*'studio'/.test(pre), 'pre-paint sets dataset.chrome');
 // LEGACY MIGRATION (D1): a stored 'compact' must resolve to EDITORIAL, silently.
 {
-  const line = (pre.match(/^.*getItem\('harness-chrome'\).*$/m) || [''])[0];
+  const line = (pre.match(/^.*getItem\('motdeck-chrome'\).*$/m) || [''])[0];
   ok(line.includes("'studio'") && !line.includes("'compact'"),
      'the pre-paint script never matches the legacy value, so a stored \'compact\' '
      + 'falls through to editorial with no modal and no data loss');
@@ -178,7 +178,7 @@ const fn = html.slice(html.indexOf('function toggleChrome()'));
 const body = fn.slice(0, fn.indexOf('\n}') + 2);
 ok(/removeAttribute\('data-chrome'\)/.test(body),
    'turning it OFF removes the attribute entirely (editorial = no attribute)');
-ok(/localStorage\.setItem\('harness-chrome'/.test(body), 'the choice is persisted');
+ok(/localStorage\.setItem\('motdeck-chrome'/.test(body), 'the choice is persisted');
 ok(/'studio' : 'editorial'/.test(body),
    'the persisted values are studio | editorial (the legacy name is never rewritten)');
 ok(/feed\(/.test(body), 'the flip is logged to the activity feed');
@@ -188,7 +188,7 @@ ok(/feed\(/.test(body), 'the flip is logged to the activity feed');
 const tfn = html.slice(html.indexOf('function toggleTheme()'));
 const tbody = tfn.slice(0, tfn.indexOf('\n}') + 2);
 ok(!/chrome/i.test(tbody), 'toggleTheme() does not touch the chrome axis');
-ok(!/harness-theme|data-theme/.test(body), 'toggleChrome() does not touch the theme axis');
+ok(!/motdeck-theme|data-theme/.test(body), 'toggleChrome() does not touch the theme axis');
 
 // ---------- both entry points ----------
 ok(/id="chrome-chip"[^>]*onclick="toggleChrome\(\)"/.test(html)

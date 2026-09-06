@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -218,19 +219,21 @@ def test_shell_and_python_owner_records_share_the_same_birth_contract(tmp_path):
                               "start_component.sh"), shell)
     shutil.copy2(os.path.join(os.path.dirname(__file__), "..", "core", "ownership.py"),
                  core / "ownership.py")
+    env = dict(os.environ, MOT_DECK_MANIFEST_PYTHON=sys.executable)
     run = subprocess.run(["bash", str(shell), "--ownership-selftest", "shellprobe",
-                          "/bin/sleep", "30"], capture_output=True, text=True, timeout=10)
+                          "/bin/sleep", "30"], env=env, capture_output=True,
+                         text=True, timeout=10)
     assert run.returncode == 0, run.stderr
     pid = int(run.stdout.strip().splitlines()[-1])
     try:
         assert subprocess.run(["bash", str(shell), "--ownership-record-check",
-                               "shellprobe", str(pid)]).returncode == 0
+                               "shellprobe", str(pid)], env=env).returncode == 0
         owner = root / "data" / "shellprobe.owner"
         version, recorded, birth = owner.read_text().rstrip().split("\t", 2)
         assert version == "v1" and int(recorded) == pid and birth
         owner.write_text(f"v1\t{pid}\tThu Jan 1 00:00:00 1970\n")
         assert subprocess.run(["bash", str(shell), "--ownership-record-check",
-                               "shellprobe", str(pid)]).returncode != 0
+                               "shellprobe", str(pid)], env=env).returncode != 0
         os.kill(pid, 0), time.sleep(0.02)
     finally:
         try: os.kill(pid, 9)

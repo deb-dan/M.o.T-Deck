@@ -192,8 +192,8 @@ for (const junk of ['', '#zzz', null, undefined, '#12345']) {
 
 // ---------- view state ----------
 ok(/let musicView = 'classic'/.test(html), 'classic is the default view');
-ok(/localStorage\.setItem\('harness-music-view'/.test(html), 'the view is persisted');
-ok(/localStorage\.getItem\('harness-music-view'\)\s*===\s*'studio'/.test(html),
+ok(/localStorage\.setItem\('motdeck-music-view'/.test(html), 'the view is persisted');
+ok(/localStorage\.getItem\('motdeck-music-view'\)\s*===\s*'studio'/.test(html),
    'only the literal \'studio\' turns the deck on (anything else is classic)');
 ok(/loadMusicView\(\);/.test(html), 'the persisted view is restored at boot');
 {
@@ -201,7 +201,7 @@ ok(/loadMusicView\(\);/.test(html), 'the persisted view is restored at boot');
   ok(/renderMusic\(\)/.test(t) && /renderMusicLibrary\(\)/.test(t),
      'flipping the view re-renders BOTH halves of the page');
   ok(/feed\('music',/.test(t), 'the flip is logged to the activity feed with a real tag');
-  ok(!/data-theme|harness-chrome/.test(t),
+  ok(!/data-theme|motdeck-chrome/.test(t),
      'the deck toggle touches neither the theme nor the global chrome axis');
 }
 {

@@ -1,6 +1,6 @@
 """CORE — config, the script runner, and the process/port primitives.
 
-The bottom of the stack: harness.yaml access (`cfg`), the registry read
+The bottom of the stack: motdeck.yaml access (`cfg`), the registry read
 (`_registry_models`), scripts/ invocation (`_script`), liveness probes in both async and
 sync flavours, the dependency closure, and the port-kill machinery with its ownership
 guard. Nothing here knows a route exists, and nothing here may import bridge/routers.
@@ -24,14 +24,14 @@ from .localsecrets import overlay_config
 
 
 def cfg() -> dict:
-    data = yaml.safe_load((ROOT / "harness.yaml").read_text())
+    data = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
     if not isinstance(data, dict):
-        raise ValueError("harness.yaml root must be a mapping")
+        raise ValueError("motdeck.yaml root must be a mapping")
     return overlay_config(data, ROOT)
 
 
 # ── THE RELEASE VERSION: ONE FILE, AND IT IS `VERSION` (U56, 2026-09-02) ──────
-# There were two version numbers and the app displayed the dead one. `harness.yaml`
+# There were two version numbers and the app displayed the dead one. `motdeck.yaml`
 # carried `version: "0.1.0"` with a comment saying "bump on release"; nothing bumped it
 # in 72 releases, and it was the ONLY thing /api/version ever read. Meanwhile the
 # top-level `VERSION` file — which QA bumps in the same commit as every slice, which
@@ -43,7 +43,7 @@ def cfg() -> dict:
 # of one duplicated fact.
 #
 # THE FIX IS SINGLE-SOURCING, NOT SYNCING: `VERSION` is the release truth, the runtime
-# READS it, and `harness.yaml version:` is GONE from the repo manifest. A syncing step
+# READS it, and `motdeck.yaml version:` is GONE from the repo manifest. A syncing step
 # would only have moved the drift somewhere harder to see.
 #
 # ⚠️ AND IT IS ALLOWED TO BE ABSENT. Fat installs from before v1.5.70 have no VERSION in
@@ -56,7 +56,7 @@ VERSION_UNKNOWN_NOTE = (
 )
 
 
-def harness_version() -> str:
+def motdeck_version() -> str:
     """The release version from ROOT/VERSION, or "" when it is absent/unreadable.
 
     NEVER raises: the version tile and the update check both hang off it and neither may
@@ -198,7 +198,7 @@ def _running_sync(name: str, c: dict) -> bool:
 # port-kill from start_component.sh/stop SIGTERMed the BRIDGE (graceful "Shutting
 # down" right after POST start). Every port-kill must target ONLY the listener.
 
-# ⚠️ `_port_kill_cmd` AND `HARNESS_PORT_TAKEOVER` ARE GONE. No environment switch may
+# ⚠️ `_port_kill_cmd` AND `MOT_DECK_PORT_TAKEOVER` ARE GONE. No environment switch may
 # turn a configured port into authority over a process. A collision is resolved by the
 # user stopping the other application, never by M.O.T killing an unowned listener.
 
@@ -317,7 +317,7 @@ def _port_listener_pids(port: int) -> list:
 # `pkill -f` calls were still living in bridge/routers/ — including `_aux_kill` running
 # the EXACT `llama-server.*--port <port>` pattern U19 tore out of start_component.sh,
 # and `pkill -f "start_component.sh runner"`, which reaches the start script of ANY
-# harness root on the machine (the repo's included). A pattern is not an identity.
+# motdeck root on the machine (the repo's included). A pattern is not an identity.
 #
 # This is the shell's `_reap_pidfile` (scripts/start_component.sh) in Python, with the
 # same semantics on purpose — one discipline, two languages:
@@ -439,7 +439,7 @@ def _script_tracked(name: str, *args: str, track: str, timeout: int = 1800):
 
     Exists so a LONG-RUNNING script can be cancelled by identity instead of by name:
     /api/models/switch-cancel used to `pkill -f "start_component.sh runner"`, which
-    matches that script in EVERY harness root on the machine, the repo's included."""
+    matches that script in EVERY motdeck root on the machine, the repo's included."""
     p = ROOT / "scripts" / name
     argv = [str(p), *args]
     if p.is_file() and not os.access(p, os.X_OK):

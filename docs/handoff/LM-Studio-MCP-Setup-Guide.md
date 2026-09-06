@@ -1,10 +1,10 @@
 # LM Studio — Adding Tools with MCP Servers
 
-> **⟳ 2026-08-07 note:** kept as an LM Studio reference. LM Studio is **not** part of the harness —
+> **⟳ 2026-08-07 note:** kept as an LM Studio reference. LM Studio is **not** part of MOT Deck —
 > it survives only as a read-only source of already-downloaded models (`~/.lmstudio/models` is
 > scanned into `data/models.json`); its llama.cpp backends dir is a last-resort binary-discovery
-> fallback. The harness registers MCP servers into Odysseus and Hermes, not into LM Studio's
-> `mcp.json`. Current state → `CLAUDE.md`; mechanics → `docs/HARNESS-INTERNALS.md` §7.
+> fallback. MOT Deck registers MCP servers into Odysseus and Hermes, not into LM Studio's
+> `mcp.json`. Current state → `CLAUDE.md`; mechanics → `docs/MOT-DECK-INTERNALS.md` §7.
 
 
 ## The key concept
@@ -74,7 +74,7 @@ That's 17 servers exposing well over 20 individual tools. Start with the no-key 
 
 SearXNG is a self-hosted metasearch engine — results stay on your machine.
 
-> **Superseded (2026-07-19):** the harness decision is **no Docker anywhere**. Run SearXNG natively from source instead — recipe in [02_Architecture.md](02_Architecture.md) §SearXNG — and let the Bridge manage the one shared instance on :8080. The Docker one-liner below is kept only for historical reference.
+> **Superseded (2026-07-19):** MOT Deck decision is **no Docker anywhere**. Run SearXNG natively from source instead — recipe in [02_Architecture.md](02_Architecture.md) §SearXNG — and let the Bridge manage the one shared instance on :8080. The Docker one-liner below is kept only for historical reference.
 
 ```bash
 # historical / not used: docker run -d --name searxng -p 8080:8080 searxng/searxng

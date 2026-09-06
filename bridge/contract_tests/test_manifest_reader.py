@@ -11,7 +11,7 @@ READER = ROOT / "scripts" / "read_manifest.py"
 
 
 def _read(tmp_path, text, path="runner.value", kind="str"):
-    (tmp_path / "harness.yaml").write_text(text)
+    (tmp_path / "motdeck.yaml").write_text(text)
     return subprocess.run([sys.executable, str(READER), str(tmp_path), path, kind],
                           text=True, capture_output=True)
 
@@ -41,7 +41,7 @@ def test_types_are_exact_and_errors_never_echo_secret_values(tmp_path):
 def test_symlink_manifest_is_refused(tmp_path):
     real = tmp_path / "real.yaml"
     real.write_text("runner:\n  value: safe\n")
-    os.symlink(real, tmp_path / "harness.yaml")
+    os.symlink(real, tmp_path / "motdeck.yaml")
     p = subprocess.run([sys.executable, str(READER), str(tmp_path),
                         "runner.value", "str"], text=True, capture_output=True)
     assert p.returncode == 2 and p.stdout == ""

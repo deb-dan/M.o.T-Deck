@@ -17,7 +17,7 @@ from ..core.procs import _registry_models, _script, cfg
 #
 # A terminal program in a pseudo-terminal, for exactly as long as the Aider tab holds
 # its websocket open. No port of its own, no component card, no daemon — so nothing
-# here belongs in harness.yaml's `components`.
+# here belongs in motdeck.yaml's `components`.
 #
 # THE SECURITY LINE IS THE ORIGIN GATE (pty_aider.origin_allowed). WebSockets are NOT
 # subject to CORS: without it, any page in any browser on this Mac could open

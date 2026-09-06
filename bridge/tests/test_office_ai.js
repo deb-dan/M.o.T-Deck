@@ -21,7 +21,7 @@
  *   does not.
  *
  * GAP 2 — "no way to load model or use model there, which defeats the purpose."
- *   The slice-2 stub is a working chat over the harness's EXISTING direct lane. The
+ *   The slice-2 stub is a working chat over MOT Deck's EXISTING direct lane. The
  *   load-bearing invariants: it invents no endpoint, it sends no session (so it can
  *   never pollute or retitle a chat in Mission Control), the sheet it sends is capped
  *   and shown to the user verbatim, and NOTHING it does writes into the spreadsheet.
@@ -510,7 +510,7 @@ eq('an empty fence is dropped too', aiFences('```js\n\n```').length, 0);
 
 // ── the wire, and the two rules that matter most ─────────────────────────────
 const send = grab('aiSend');
-check('the panel posts to the harness\'s EXISTING direct chat lane',
+check('the panel posts to MOT Deck\'s EXISTING direct chat lane',
       /fetch\('\/api\/chat\/direct'/.test(send));
 check('…with the same {session, message} body the main panel sends',
       /JSON\.stringify\(\{ session: '', message: message \}\)/.test(send));
@@ -524,7 +524,7 @@ check('the page defines and calls NO office-specific chat endpoint',
       code.indexOf('/api/office/chat') < 0 && code.indexOf('/api/office/ask') < 0);
 const urls = Array.from(new Set(code.match(/'\/api\/[^']*'/g) || []));
 /* ⚠️⚠️ TWO CHAT URLS AS OF loffice-2026-08-27e, AND THE SECOND ONE IS THE POINT OF THE
-   SLICE. The Agent lane speaks the harness's EXISTING Hermes lane — the same endpoint,
+   SLICE. The Agent lane speaks MOT Deck's EXISTING Hermes lane — the same endpoint,
    body and SSE frames the main panel's Hermes mode uses — so it is a SHARED lane, not
    an office-specific one. The negative that actually matters is unchanged and is
    asserted above: there is no /api/office/chat and no /api/office/ask. */
@@ -545,7 +545,7 @@ check('every URL the page calls is one of the endpoints that already existed',
                        // does not talk to the editor, it hands the file over to it.
                        "'/api/oo/status'",
                        // SLICE S2 (loffice-2026-08-27e) — the Agent lane. FIVE URLs,
-                       // and not one of them is new to the harness: three are the
+                       // and not one of them is new to MOT Deck: three are the
                        // Hermes lane the main panel already drives, and two are the
                        // office surfaces slice S1 shipped for exactly this page.
                        "'/api/hermes/chat'", "'/api/hermes/approve'",
@@ -643,18 +643,18 @@ check('the landing beacon now says whether the panel is open and what model it f
       /bx\('landed'[\s\S]{0,220}ai=/.test(html) && /bx\('landed'[\s\S]{0,240}model=/.test(html));
 
 // state
-check('the open/closed choice is persisted', /localStorage\.setItem\('harness-office-ai'/.test(html));
+check('the open/closed choice is persisted', /localStorage\.setItem\('motdeck-office-ai'/.test(html));
 // ⚠️ CHANGED IN ROUND 3, and the old assertion was pinning the bug. The sheet-context
 // choice USED to be a persisted global, so one "ask without the sheet" survived every
 // later document and every later session — which is half of why a question about CLEAN
 // came back about Python. It is now per-document and in memory (see PART 3).
 check('…while the sheet-context choice is deliberately NOT persisted any more',
-      code.indexOf('harness-office-ai-ctx') < 0);
+      code.indexOf('motdeck-office-ai-ctx') < 0);
 check('the panel is OPEN by default — a capability nobody can see is the bug being '
-      + 'fixed here', /localStorage\.getItem\('harness-office-ai'\) !== '0'/.test(grab('boot')));
+      + 'fixed here', /localStorage\.getItem\('motdeck-office-ai'\) !== '0'/.test(grab('boot')));
 check('a localStorage that throws (private mode) does not stop the boot',
       /catch \(e\) \{ \/\* private mode/.test(grab('boot')));
-check('Enter asks and Shift+Enter is a newline, as everywhere else in the harness',
+check('Enter asks and Shift+Enter is a newline, as everywhere else in MOT Deck',
       /ev\.key === 'Enter' && !ev\.shiftKey/.test(html));
 /* ⚠️⚠️ REWRITTEN AT loffice-2026-08-27e, AND THE REWRITE IS THE ARGUMENT. The interval
    used to belong to the AI PANEL: aiSetOpen armed it and clearInterval'd it, and its one
@@ -752,7 +752,7 @@ check('the preamble builds a STRING and does nothing else — the model may now 
 check('the chip starts ON in the markup', /id="ai-ctx" class="chip on"/.test(html));
 check('…and EVERY workbook opened turns it back on', /aiCtxOn = true/.test(grab('showWorkbook')));
 check('…so turning it off is a decision about the question you are asking now, and '
-      + 'cannot outlive the document', code.indexOf('harness-office-ai-ctx') < 0);
+      + 'cannot outlive the document', code.indexOf('motdeck-office-ai-ctx') < 0);
 check('the off state names the workbook it applies to, in the boot trace',
       /bx\('ai-ctx'/.test(code));
 check('…and the chip still says plainly when the sheet is not going',
@@ -789,7 +789,7 @@ check('it invents no dialog primitive — window.prompt and window.confirm are b
 const home = grab('goHome');
 check('⌂ MOT Deck asks the SHELL to switch tabs, through the same postMessage contract '
       + 'the panel sidebar already uses',
-      /messageHandlers[\s\S]{0,80}harness/.test(home) && /cmd: 'switchTab'/.test(home));
+      /messageHandlers[\s\S]{0,80}motdeck/.test(home) && /cmd: 'switchTab'/.test(home));
 check('…sending the stable id AS WELL AS the title, so a renamed tab still resolves',
       /id: 'mc'/.test(home) && /title: 'MOT Deck'/.test(home));
 check('…defensively, because the shell does not register that handler on this webview '
@@ -844,11 +844,11 @@ check('the rail says which workbook is OPEN, not merely which row is selected',
 
 // ── theme coherence ──────────────────────────────────────────────────────────
 // "non chrome thing again": the tab ignored the ◐ theme and the ▣ chrome the rest of
-// the harness obeys, so flipping the app to light left one dark rectangle behind.
+// MOT Deck obeys, so flipping the app to light left one dark rectangle behind.
 check('the page READS the panel\'s own two keys and invents no setting of its own',
-      /localStorage\.getItem\('harness-theme'\)/.test(html)
-      && /localStorage\.getItem\('harness-chrome'\)/.test(html)
-      && !/setItem\('harness-theme'/.test(html) && !/setItem\('harness-chrome'/.test(html));
+      /localStorage\.getItem\('motdeck-theme'\)/.test(html)
+      && /localStorage\.getItem\('motdeck-chrome'\)/.test(html)
+      && !/setItem\('motdeck-theme'/.test(html) && !/setItem\('motdeck-chrome'/.test(html));
 check('…before first paint, in the head, exactly as the panel does it — applying it '
       + 'later would paint dark and then flip, every load',
       html.indexOf('syncSkin') > 0 && html.indexOf('syncSkin') < html.indexOf('<style>'));
@@ -898,7 +898,7 @@ check('neither axis themes the SHEET — a .xlsx\'s fills and font colours were 
 // failing. Bumped to `k` for the AI-actions slice, and the same one-line literal in
 // test_office_grid.js was bumped with it (that file reads the stamp for everything
 // EXCEPT this one pin).
-const stamp = (html.match(/name="harness-build" content="([^"]+)"/) || [])[1];
+const stamp = (html.match(/name="motdeck-build" content="([^"]+)"/) || [])[1];
 check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-29b');
 // ⚠️ THE TWO PLACES THAT MATTER, NAMED. This used to count occurrences and require
 // exactly two, which only held while no comment in the page mentioned the build it was
@@ -908,7 +908,7 @@ check('the build stamp was bumped for this change', stamp === 'loffice-2026-08-2
 // does not, so it asserts those two by shape instead of by census.
 check('…and the static fallback banner carries the SAME one, so "is the bridge serving '
       + 'what I shipped?" is answerable by eye with no console',
-      html.includes('<meta name="harness-build" content="' + stamp + '">')
+      html.includes('<meta name="motdeck-build" content="' + stamp + '">')
       && html.includes('Build <code>' + stamp + '</code>'));
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -1946,7 +1946,7 @@ check('the block header no longer claims the panel is advisory only, because it 
 
    WHAT THIS PART PINS is the PAGE side, and it is four claims:
      1. the lane toggle greys with the REASON in its title, one reason per cause;
-     2. the Agent lane reuses the harness's existing Hermes lane and its cards, and
+     2. the Agent lane reuses MOT Deck's existing Hermes lane and its cards, and
         leaves the Quick lane byte-for-byte alone;
      3. the heartbeat is accurate the INSTANT the dirty flag flips, and rides no timer
         of its own;
@@ -2117,7 +2117,7 @@ eval(grab('agentGate'));
 }
 
 // ── 2. THE AGENT LANE ON THE WIRE ───────────────────────────────────────────
-// It invents nothing: the harness's existing Hermes lane, the same frames, the same
+// It invents nothing: MOT Deck's existing Hermes lane, the same frames, the same
 // approve call. The negative that no /api/office/chat exists is asserted in PART 2 and
 // covers this lane too.
 const asend = grab('agentSend');
@@ -2129,7 +2129,7 @@ check('the Quick lane still posts to /api/chat/direct with an EMPTY session',
       /fetch\('\/api\/chat\/direct'/.test(send) && /session: ''/.test(send));
 check('…and the Quick lane never touches the Hermes lane',
       !/api\/hermes/.test(stripComments(send)));
-check('the Agent lane posts to the harness\'s EXISTING Hermes lane',
+check('the Agent lane posts to MOT Deck\'s EXISTING Hermes lane',
       /fetch\('\/api\/hermes\/chat'/.test(asend));
 check('…with the SAME body the main panel sends, session_id / message / stored_sid',
       /session_id: agentSid \|\| ''/.test(asend) && /message: message/.test(asend)
@@ -2819,7 +2819,7 @@ eval(grab('extPlan'));
    So the assertions below are not "does the card render". They are the four rules that
    make that transcript impossible:
      1. ONE card per staged changeset, listing every op and every cell's before → after.
-     2. A harness-authored status line under EVERY staging turn — narration never stands
+     2. A MOT Deck-authored status line under EVERY staging turn — narration never stands
         alone.
      3. A success badge that can ONLY come from a receipt (cells_written + a re-read
         verify + a receipt hash), never from model text and never from an HTTP 200.
@@ -2926,7 +2926,7 @@ eval(grab('extPlan'));
         + 'says so" are two visible facts',
         /re-read from the file after saving/.test(src) && /j\.verify/.test(src));
 
-  // ── 2. THE STATUS LINE: harness-authored, on every staging turn ──
+  // ── 2. THE STATUS LINE: MOT Deck-authored, on every staging turn ──
   eq('the status line is the spec\'s sentence, character for character',
      (code.match(/CS_STAGED_LINE = '([^']+)'/) || [])[1],
      '⏳ staged — nothing is written until you press Apply');
@@ -3861,7 +3861,7 @@ OO_STYLE_KEYS.forEach(k => {
        worse than a check that says what it did. `readCells` names these four getters as
        "grepped, not assumed"; this is the grep. */
     const bundle = path.join(process.env.HOME || '', 'Library', 'Application Support',
-                             'Harness', 'data', 'onlyoffice', 'dist', 'v9', 'sdkjs',
+                             'MOT Deck', 'data', 'onlyoffice', 'dist', 'v9', 'sdkjs',
                              'cell', 'sdk-all.js');
     if (fs.existsSync(bundle)) {
       const sdk = fs.readFileSync(bundle, 'utf8');

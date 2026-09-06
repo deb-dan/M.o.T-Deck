@@ -10,7 +10,7 @@ convenience:
                         users". If this flag is renamed and we keep passing the old
                         spelling, argparse errors out — loudly, which is fine — but if
                         it is silently DROPPED from the parser, aider starts phoning
-                        home from inside the harness. This test is the tripwire.
+                        home from inside MOT Deck. This test is the tripwire.
   --disable-playwright  without it aider can print "Install playwright?" and BLOCK ON
                         STDIN inside our PTY tab.
 
@@ -56,7 +56,7 @@ skip_if_absent = pytest.mark.skipif(HELP is None,
 
 def _assert_edit_format_parser(python, edit_format):
     """Invoke Aider's actual parser without starting a session or using ``--help``."""
-    sentinel = "__harness_invalid_format__"
+    sentinel = "__motdeck_invalid_format__"
     program = (
         "import sys; from aider.args import get_parser; "
         "parsed=get_parser([], None).parse_args(['--edit-format', sys.argv[1]]); "
@@ -143,6 +143,6 @@ def test_our_argv_is_a_subset_of_the_real_parser():
 def test_pin_is_a_commit_sha():
     """A tag would be wrong here (the newest is ~1 year old) and a branch name would be
     a moving target — the pin must be a full 40-char sha. Runs everywhere."""
-    yml = (ROOT / "harness.yaml").read_text()
+    yml = (ROOT / "motdeck.yaml").read_text()
     m = re.search(r'^  aider_pin:\s*"([0-9a-f]{40})"\s*$', yml, re.M)
     assert m, "build.aider_pin must be a full 40-character commit sha"

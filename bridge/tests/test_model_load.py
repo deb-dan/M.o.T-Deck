@@ -6,7 +6,7 @@ What is pinned here, and why each one is load-bearing:
    request bodies and send NO sampling at all, so the only way a user's choice can
    reach them is the engine LAUNCH LINE. The rule that keeps that safe is
    **explicit-only**: nothing saved ⇒ nothing emitted ⇒ the launch line is
-   byte-identical to pre-v2. The harness's own 0.7 default is deliberately NOT
+   byte-identical to pre-v2. MOT Deck's own 0.7 default is deliberately NOT
    pushed onto lanes that never had it.
 2. No double-emit. `--repeat-penalty 1.1 --repeat-last-n 256` was a hardcoded pair;
    it is now the FALLBACK of the same single emission site. Emitting it twice (once
@@ -583,7 +583,7 @@ ok("panel single-sources tooltips from the bridge's help string",
    "function fieldTip" in panel and "o.help" in panel)
 ok("...and both groups use it", panel.count("fieldTip(f,") >= 2)
 ok("panel no longer builds its own tooltip prose",
-   "'. Leave empty for the harness default.'" not in panel)
+   "'. Leave empty for MOT Deck default.'" not in panel)
 ok("panel has a range slider class", "cap-range" in panel)
 ok("...used only where the BRIDGE says the field has one", "f.slider" in panel)
 ok("slider ⇄ box sync exists in both directions",

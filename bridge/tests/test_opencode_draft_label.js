@@ -21,7 +21,7 @@
  * url (their `newDraft` does both), so only the GESTURE separates them. AUTO = the one
  * draft whose id was NOT in the documentStart snapshot, becomes THIS document's own
  * `draftId`, and does so before any pointerdown/mousedown/keydown. The answer is
- * persisted under OUR key `harness.opencode.autoDrafts` so labels survive reloads and a
+ * persisted under OUR key `motdeck.opencode.autoDrafts` so labels survive reloads and a
  * + draft is never marked later; the set is pruned to what their store still calls a
  * draft, so promotion and closing drop out on their own.
  *
@@ -39,7 +39,7 @@
  *      own key may be written, and the tabs blob is byte-identical afterwards;
  *   5. promotion + pruning: a draft that becomes a session leaves our persisted set;
  *   6. the wiring: the script reaches ONLY the opencode webview, at documentStart, and
- *      that webview gets neither the "harness" message handler nor the shell self-desc.
+ *      that webview gets neither the "motdeck" message handler nor the shell self-desc.
  *
  * LIVE PROOF (2026-08-29, not repeatable in CI so recorded here): the same extracted
  * text was injected with CDP into a SCRATCH headless-Chrome profile against the running
@@ -53,7 +53,7 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..', '..');
 const swift = fs.readFileSync(path.join(ROOT, 'app', 'main.swift'), 'utf8');
-const yaml = fs.readFileSync(path.join(ROOT, 'harness.yaml'), 'utf8');
+const yaml = fs.readFileSync(path.join(ROOT, 'motdeck.yaml'), 'utf8');
 
 let fails = 0, checks = 0;
 function ok(cond, msg) {
@@ -79,14 +79,14 @@ let RAW = swift.slice(A + 13, B).replace(/\\\\/g, '\\');
 ok(RAW.indexOf('runner auto session') > 0, "…and the label is Debi's words");
 
 const PIN = (yaml.match(/opencode_pin:\s*"([^"]+)"/) || [])[1];
-ok(!!PIN, 'harness.yaml declares build.opencode_pin');
+ok(!!PIN, 'motdeck.yaml declares build.opencode_pin');
 // The Swift interpolation `\(pin)` IS the version fence, so it must be resolved to a
 // real value here — leaving it literal would make every fence pass for the wrong
 // reason (nothing would ever match, so nothing would ever be relabelled).
 ok(RAW.indexOf('\\(pin)') > 0, 'the pin is interpolated into the script by the shell');
 const SRC = RAW.split('\\(pin)').join(PIN);
 
-const MINE = 'harness.opencode.autoDrafts';
+const MINE = 'motdeck.opencode.autoDrafts';
 ok(SRC.indexOf(MINE) > 0 && !/setItem\(\s*k[^A-Za-z]/.test(SRC),
    'the persisted set lives under OUR OWN key, never an opencode.* one');
 
@@ -347,7 +347,7 @@ const oldDraft = { type: 'draft', server: 'http://127.0.0.1:4096',
   const oc = swift.slice(swift.indexOf('else if t.id == "opencode"'), swift.indexOf('else if t.id == "loffice"'));
   ok(oc.indexOf('openCodeDraftScript()') > 0, 'the opencode webview gets the script');
   ok(oc.indexOf('userContentController.add(self') < 0,
-     '…and NOT the "harness" message handler (it is a third-party page)');
+     '…and NOT the "motdeck" message handler (it is a third-party page)');
   ok(oc.indexOf('shellScript') < 0, '…and not the shell self-description either');
   ok(swift.indexOf('forMainFrameOnly: true') > 0, '…injected into the main frame only');
   ok(/injectionTime: \.atDocumentStart[\s\S]{0,80}forMainFrameOnly/.test(
@@ -359,7 +359,7 @@ const oldDraft = { type: 'draft', server: 'http://127.0.0.1:4096',
   // ship.sh's additive pyyaml merge writes the snapshot's copy UNQUOTED
   // (`opencode_pin: 1.18.23`). A quote-only pin regex reads the repo on a dev Mac and
   // finds NOTHING on a fat/portable install, where the snapshot is the only
-  // harness.yaml — the feature would silently not exist there.
+  // motdeck.yaml — the feature would silently not exist there.
   ok(/opencode_pin:\\s\*"\?\[0-9\]/.test(swift),
      'the pin regex accepts the SNAPSHOT\'s unquoted form as well as the repo\'s quoted one');
 

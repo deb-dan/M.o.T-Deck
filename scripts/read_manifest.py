@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read one typed value from harness.yaml with real YAML semantics.
+"""Read one typed value from motdeck.yaml with real YAML semantics.
 
 The shell launcher uses this instead of ad-hoc awk.  Null is empty, while the quoted
 string ``"null"`` remains the four characters ``null``; comments, spaces, colons and
@@ -32,7 +32,7 @@ def _read_regular(path: Path) -> str:
 
 
 def value(root: Path, dotted: str, kind: str):
-    data = yaml.safe_load(_read_regular(root / "harness.yaml"))
+    data = yaml.safe_load(_read_regular(root / "motdeck.yaml"))
     if not isinstance(data, dict):
         raise ValueError("manifest root must be a mapping")
     # The launcher's typed YAML boundary is also the one secret-overlay boundary;
@@ -71,7 +71,7 @@ def main() -> int:
     try:
         result = value(args.root, args.path, args.kind)
     except Exception as exc:  # noqa: BLE001 -- CLI boundary; never print the value
-        print(f"ERROR: invalid harness.yaml value at {args.path}: {exc}", file=sys.stderr)
+        print(f"ERROR: invalid motdeck.yaml value at {args.path}: {exc}", file=sys.stderr)
         return 2
     if result is not None:
         sys.stdout.write(str(result))

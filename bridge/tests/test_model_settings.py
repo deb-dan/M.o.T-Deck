@@ -13,7 +13,7 @@ What is pinned here, and why each one is load-bearing:
    names would be silently ignored there — so the wire names are asserted in both
    directions (present under the right name, ABSENT under the wrong one).
 3. Junk totality: a hand-edited registry (or a future scan) must never be able to
-   break a turn. Every surprise type/range falls back to the harness default.
+   break a turn. Every surprise type/range falls back to MOT Deck default.
 4. USER_KEYS: `settings` must survive a RESCAN. This is the recorded defect class
    (a rescan reads FILES, so a user decision that lives nowhere on disk is erased)
    — it un-pinned voices once already.

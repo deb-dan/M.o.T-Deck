@@ -4,7 +4,7 @@
 
 The interface ladder in this doc has been climbed. The governance rule below is **still binding**
 (all look-and-feel is Fable 5's; builders implement decision-free specs). Living references:
-`CLAUDE.md`, `docs/HARNESS-INTERNALS.md`, `docs/USER-GUIDE.md`; per-feature specs in
+`CLAUDE.md`, `docs/MOT-DECK-INTERNALS.md`, `docs/USER-GUIDE.md`; per-feature specs in
 `docs/handoff/FABLE-*.md`.
 
 Shipped since (all in the dark editorial system; a light theme exists as an option, dark stays the
@@ -26,7 +26,7 @@ permanent default):
 ---
 
 
-*Part of the Harness doc set. Index: [00_START_HERE.md](00_START_HERE.md). Written 2026-07-20 from Debi's direction. **This changes no locked decisions or milestones** — it sharpens the interface layer's direction and adds one governance rule.*
+*Part of the MOT Deck doc set. Index: [00_START_HERE.md](00_START_HERE.md). Written 2026-07-20 from Debi's direction. **This changes no locked decisions or milestones** — it sharpens the interface layer's direction and adds one governance rule.*
 
 ---
 
@@ -35,7 +35,7 @@ permanent default):
 - Odysseus: **functions good, UI not liked** — "the arrangement is a bit weird"; fonts/layout need work.
 - **Jan and Cherry Studio interfaces are liked.** Use them as the taste reference.
 - Components must stay updateable (no forking their UIs) — but the interfaces should get better: fonts, arrangement, "the luxury stuff."
-- Preferred end shape: **one main harness interface that feeds into Odysseus / Jan / Hermes**, possibly driving Hermes through Odysseus.
+- Preferred end shape: **one main motdeck interface that feeds into Odysseus / Jan / Hermes**, possibly driving Hermes through Odysseus.
 
 ## Governance rule (doctrine amendment, binding)
 

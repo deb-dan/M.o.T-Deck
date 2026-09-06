@@ -33,7 +33,7 @@ fi
 # pytest is declared in bridge/requirements.txt, so the bridge venv has it after any
 # bootstrap/provision. The snapshot's venv is tried too (a repo checkout on a machine
 # whose venv lives only in the fat snapshot still gets a gate), then a system python3.
-SNAP_PY="${HOME}/Library/Application Support/Harness/data/bridge-venv/bin/python"
+SNAP_PY="${HOME}/Library/Application Support/MOT Deck/data/bridge-venv/bin/python"
 PY=""
 for _c in "${ROOT}/data/bridge-venv/bin/python" "$SNAP_PY" python3; do
   if "$_c" -c "import pytest" >/dev/null 2>&1; then PY="$_c"; break; fi
@@ -59,7 +59,7 @@ echo "[verify] repository: ${REPO_SUITE}"
 # JavaScript suites are standalone Node programs. Prefer the runtime bundled for
 # DeepSeek on an installed/fat tree, then the snapshot's, then PATH. A missing Node
 # is CANNOT RUN rather than a silent partial pass (U49's original failure mode).
-SNAP_NODE="${HOME}/Library/Application Support/Harness/data/node/bin/node"
+SNAP_NODE="${HOME}/Library/Application Support/MOT Deck/data/node/bin/node"
 NODE=""
 for _n in "${ROOT}/data/node/bin/node" "$SNAP_NODE" node; do
   if "$_n" --version >/dev/null 2>&1; then NODE="$_n"; break; fi
@@ -73,8 +73,8 @@ if [[ -z "$NODE" ]]; then
 fi
 echo "[verify] node  : ${NODE} ($("$NODE" --version))"
 _manifest_digest() {
-  if [[ -f "$ROOT/harness.yaml" ]]; then
-    shasum -a 256 "$ROOT/harness.yaml" | awk '{print $1}'
+  if [[ -f "$ROOT/motdeck.yaml" ]]; then
+    shasum -a 256 "$ROOT/motdeck.yaml" | awk '{print $1}'
   else
     printf 'absent'
   fi
@@ -92,7 +92,7 @@ if ( cd "$ROOT" &&
 fi
 MANIFEST_AFTER="$(_manifest_digest)"
 if [[ "$MANIFEST_AFTER" != "$MANIFEST_BEFORE" ]]; then
-  echo "[verify] FAIL - the contract suite modified the tracked harness.yaml."
+  echo "[verify] FAIL - the contract suite modified the tracked motdeck.yaml."
   echo "[verify]   Tests must redirect every state writer to a fixture; the changed"
   echo "[verify]   manifest has been left visible for forensic review, not concealed."
   exit 1

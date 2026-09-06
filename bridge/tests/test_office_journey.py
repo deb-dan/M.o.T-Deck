@@ -72,7 +72,7 @@ def eq(name, got, want):
 
 
 class Bench:
-    """A throwaway harness root with a data/office in it, and nothing else."""
+    """A throwaway motdeck root with a data/office in it, and nothing else."""
 
     def __init__(self):
         self.root = tempfile.mkdtemp(prefix="journey-")

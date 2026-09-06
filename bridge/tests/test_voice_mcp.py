@@ -20,7 +20,7 @@ from pathlib import Path
 for _k in [k for k in os.environ if k.lower().endswith("_proxy")]:
     os.environ.pop(_k, None)
 
-_TMP = tempfile.mkdtemp(prefix="harness-hermes-home-")
+_TMP = tempfile.mkdtemp(prefix="motdeck-hermes-home-")
 os.environ["HERMES_HOME"] = _TMP          # read at call time by _hermes_config_path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -72,7 +72,7 @@ check("registration name matches the component name",
       vs["name"] == "voicestudio" and vs["odysseus_form"]["name"] == "voicestudio")
 check("spec is pure — same input, equal output",
       voice_mcp_spec("voicestudio", 3900) == vs)
-check("port is honoured (a harness.yaml port change moves the url)",
+check("port is honoured (a motdeck.yaml port change moves the url)",
       voice_mcp_spec("voicebox", 4242)["url"] == "http://127.0.0.1:4242/mcp")
 check("tools list is non-empty for both", bool(vs["tools"]) and bool(vb["tools"]))
 
@@ -118,7 +118,7 @@ check("adding voicebox leaves voicestudio + browsermcp + model:* intact",
       and set(cfg_dict()["mcp_servers"]) == {"voicestudio", "browsermcp", "voicebox"}
       and cfg_dict()["model"]["default"] == "some-model")
 
-# a stale url (port changed in harness.yaml) must be overwritten, not duplicated
+# a stale url (port changed in motdeck.yaml) must be overwritten, not duplicated
 check("changed url overwrites in place",
       _hermes_write_mcp("voicebox", {"url": "http://127.0.0.1:4242/mcp"}) is True
       and cfg_dict()["mcp_servers"]["voicebox"] == {"url": "http://127.0.0.1:4242/mcp"}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build data/models.json — the harness's own model registry (llamacpp adapter).
+"""Build data/models.json — MOT Deck's own model registry (llamacpp adapter).
 
-Scans (a) the harness-owned models dir data/models/ (source "local" — where the
+Scans (a) MOT Deck-owned models dir data/models/ (source "local" — where the
 cleanup slice migrates Jan's models into, and where the download manager writes),
 (b) Jan's model folder (imports GGUF models the user still has there), and
 (c) LM Studio's library, then merges into data/models.json, preserving any
@@ -38,7 +38,7 @@ def _load_modeltools():
     try:
         p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          os.pardir, "bridge", "modeltools.py")
-        spec = importlib.util.spec_from_file_location("harness_modeltools", p)
+        spec = importlib.util.spec_from_file_location("motdeck_modeltools", p)
         if spec is None or spec.loader is None:
             return None
         mod = importlib.util.module_from_spec(spec)
@@ -58,7 +58,7 @@ def _load_modelreg():
     try:
         p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          os.pardir, "bridge", "core", "modelreg.py")
-        spec = importlib.util.spec_from_file_location("harness_modelreg", p)
+        spec = importlib.util.spec_from_file_location("motdeck_modelreg", p)
         if spec is None or spec.loader is None:
             return None
         mod = importlib.util.module_from_spec(spec)
@@ -75,7 +75,7 @@ def _load_model_sources():
     """Load external-manager membership adapters without making scripts a package."""
     try:
         p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_sources.py")
-        spec = importlib.util.spec_from_file_location("harness_model_sources", p)
+        spec = importlib.util.spec_from_file_location("motdeck_model_sources", p)
         if spec is None or spec.loader is None:
             return None
         mod = importlib.util.module_from_spec(spec)
@@ -102,12 +102,12 @@ def _ready_chat(entry):
 # independently supplies artifact structure and byte metadata for CLI-listed rows.
 # The env overrides let suites exercise both signals against a temp tree rather than
 # mistaking whatever happens to be on the tester's machine for evidence.
-JAN_MODELS_DIR = os.environ.get("HARNESS_JAN_MODELS_DIR") or os.path.expanduser(
+JAN_MODELS_DIR = os.environ.get("MOT_DECK_JAN_MODELS_DIR") or os.path.expanduser(
     "~/Library/Application Support/Jan/data/llamacpp/models")
-JAN_PRESET_INI = os.environ.get("HARNESS_JAN_PRESET_INI") or os.path.expanduser(
+JAN_PRESET_INI = os.environ.get("MOT_DECK_JAN_PRESET_INI") or os.path.expanduser(
     "~/Library/Application Support/Jan/data/llamacpp/router.preset.ini")
 LMSTUDIO_MODELS_DIR = os.environ.get(
-    "HARNESS_LMSTUDIO_DIR") or os.path.expanduser("~/.lmstudio/models")
+    "MOT_DECK_LMSTUDIO_DIR") or os.path.expanduser("~/.lmstudio/models")
 LOCAL_MODELS_DIR = os.path.join("data", "models")
 REGISTRY_PATH = os.path.join("data", "models.json")
 
@@ -177,7 +177,7 @@ def scan_jan(jan_dir, preset_path=JAN_PRESET_INI):
 
 def scan_local(local_dir):
     """Return source "local" registry entries for every subfolder of local_dir
-    (the harness-owned data/models/) that contains a model.gguf (+ optional
+    (MOT Deck-owned data/models/) that contains a model.gguf (+ optional
     mmproj.gguf) — the shape the migrate_jan_models.sh cleanup produces. ctx is
     None here (no preset); the merge step carries a previously-known ctx forward.
     Download-manager models keep their real gguf filenames (not model.gguf) so
@@ -448,7 +448,7 @@ def _audio_entry(model_id, fmt, folder, filenames, source):
 
 
 def scan_audio_local(local_dir):
-    """Audio models sitting in the harness's OWN models dir (data/models/). source
+    """Audio models sitting in MOT Deck's OWN models dir (data/models/). source
     "local" so they are app-owned: deletable from the Audio tab, and re-scanned (a
     folder the user removes drops out of the registry on the next Rescan)."""
     entries = []
@@ -739,7 +739,7 @@ RESCANNED_SOURCES = ("jan-import", "lmstudio-import", "local", "audio-hf-cache")
 # `ref_text` / `hidden` are the same bug in the same place.)
 # `settings` (per-model sampling overrides, 2026-08-20) is the same class: a rescan
 # reads FILES, so without it one RESCAN click silently resets every tuned model back
-# to the harness defaults. Carried WHOLESALE (see _keep_user) — the nested dict is
+# to MOT Deck defaults. Carried WHOLESALE (see _keep_user) — the nested dict is
 # preserved atomically, which is right while nothing on disk can teach a sampling key.
 # `load` (per-model LOAD overrides — ctx / gpu_layers / flash_attn / kv_quant,
 # 2026-08-20 v2) is the same class as `settings` and carried the same way.
@@ -1182,9 +1182,9 @@ def main(argv=None):
         explicit = args.json_mode or bool(token)
         if explicit:
             merged = apply_artifact_evidence(merged)
-        # RESCAN IS THE PRUNE (see prune_absent). Protected = harness.yaml's pin plus
+        # RESCAN IS THE PRUNE (see prune_absent). Protected = motdeck.yaml's pin plus
         # whatever the caller knows is LIVE (the bridge's rescan route exports
-        # HARNESS_PROTECT_MODELS); those are flagged, never removed, so the runner card's
+        # MOT_DECK_PROTECT_MODELS); those are flagged, never removed, so the runner card's
         # honest "pinned model missing" keeps the row it is talking about.
         removed, flagged, ambiguous = [], [], []
         planned, removed, flagged, ambiguous = prune_absent(

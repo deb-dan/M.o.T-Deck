@@ -151,15 +151,15 @@ console.log('registry');
   }
   // every `tab` the panel names must be a title the shell actually has, or the
   // switchTab bridge silently does nothing.
-  const swiftTitles = (swift.match(/HarnessTab\(id: "[^"]+", title: "([^"]+)"/g) || [])
+  const swiftTitles = (swift.match(/MOTDeckTab\(id: "[^"]+", title: "([^"]+)"/g) || [])
     .map(s => s.replace(/.*title: "/, '').replace('"', ''));
   M.NAV_ENTRIES.filter(e => e.tab).forEach(e => {
     ok(swiftTitles.indexOf(e.tab) >= 0, 'the shell has a tab titled "' + e.tab + '"');
   });
   // …and every id the panel names must be an id the shell has, since the id is what the
   // switchTab bridge now resolves first.
-  const swiftIds = (swift.match(/HarnessTab\(id: "([^"]+)"/g) || [])
-    .map(s => s.replace('HarnessTab(id: "', '').replace('"', ''));
+  const swiftIds = (swift.match(/MOTDeckTab\(id: "([^"]+)"/g) || [])
+    .map(s => s.replace('MOTDeckTab(id: "', '').replace('"', ''));
   M.NAV_ENTRIES.filter(e => e.tab).forEach(e => {
     ok(swiftIds.indexOf(e.id) >= 0, 'the shell knows the id "' + e.id + '"');
   });
@@ -606,7 +606,7 @@ console.log('the reorder migration');
 // ── 6. persistence + the two-tier sync ─────────────────────────────────────
 console.log('persistence');
 {
-  ok(/const NAV_KEY = 'harness-nav';/.test(html), 'the localStorage key is v1-named');
+  ok(/const NAV_KEY = 'motdeck-nav';/.test(html), 'the localStorage key is v1-named');
   ok(/JSON\.stringify\(\{ v:NAV_MODEL_V, sidebar:navModel\.sidebar, topbar:navModel\.topbar, mru:navModel\.mru \|\| \[\] \}\)/.test(html),
      'the instant copy is versioned AND carries the window (an instant copy without it '
      + 'would redraw the first frame with two tabs missing, then jump)');
@@ -878,10 +878,10 @@ console.log('routing');
   ok(guard >= 0 && wopen >= 0 && guard < wopen,
      '…and that guard sits BEFORE the window.open fallback (this is the whole bug)');
   // Pinned as its WHOLE body: it must ask only whether we are in a WKWebView, never
-  // whether the "harness" handler is there. A shell built before that handler existed is
+  // whether the "motdeck" handler is there. A shell built before that handler existed is
   // exactly the case this has to be true for.
   ok(/function inNativeApp\(\) \{\s*\n\s*return !!\(window\.webkit && window\.webkit\.messageHandlers\);\s*\n\}/.test(html),
-     'inNativeApp is deliberately weaker than nativeShell — true even with no harness handler');
+     'inNativeApp is deliberately weaker than nativeShell — true even with no motdeck handler');
   ok(/function shellKnowsTab\(id\)[\s\S]{0,200}return t \? t\.indexOf\(id\) >= 0 : null;/.test(html),
      'an unknowable shell answers null, never false (a missing global is not "no tabs")');
   // the deliberate asymmetry, recorded: mc/chat/models/caps are views and do NOT jump

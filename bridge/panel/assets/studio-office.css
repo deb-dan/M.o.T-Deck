@@ -6,7 +6,7 @@
    never a stylesheet, because a rule written for the panel's DOM would reach
    into a page it was never measured on.
 
-   WHAT THIS FILE IS. The third axis (`harness-design`) applied to the surfaces
+   WHAT THIS FILE IS. The third axis (`motdeck-design`) applied to the surfaces
    LOffice OWNS: the dark top strip, the file rail, the start screen, the AI
    panel, the message strips, the ⋯ menu and the boot banner. Editorial stays
    the default and is not touched — this file is FETCHED ONLY when the design
@@ -134,7 +134,7 @@ html[data-design="studio"] {
    2. TOKENS — studio-light. Cool near-white, NOT cream (impeccable's
    cream-palette detector wants min(r,g,b)≥209 AND r≥g≥b; #fbfcfd has r<g≤b,
    so this variant is cool by construction and can never read as warm paper).
-   Reached by `harness-design === 'studio-light'`, which the panel's ◐ writes.
+   Reached by `motdeck-design === 'studio-light'`, which the panel's ◐ writes.
    --------------------------------------------------------------------------- */
 html[data-design="studio"][data-dvariant="light"] {
   --bg:#fbfcfd; --bg2:#f3f6f7; --card:#fdfeff; --card2:#f6fafa;

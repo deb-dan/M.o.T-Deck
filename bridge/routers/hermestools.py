@@ -62,7 +62,7 @@ HERMES_MINIMAL_TOOLSETS = ("file", "terminal", "clarify")
 
 # ── WHICH ROWS THIS LEVER ACTUALLY GOVERNS ───────────────────────────────────
 # `GET /api/tools/toolsets` returns EVERY configurable toolset, but three kinds of
-# row live in that one list and only one of them reaches this harness's chat lane:
+# row live in that one list and only one of them reaches this MOT Deck's chat lane:
 #
 #  1. ordinary rows — `platform: "cli"`, persisted to `platform_toolsets.cli`,
 #     which is exactly what our lane resolves (`_get_platform_tools(cfg, "cli")`,
@@ -350,7 +350,7 @@ def hermes_toolset_view(rows, skills=None, cfg=None) -> dict:
 # i.e. `project` is STILL unconditional, and `desktop_ui` is added ONLY for a
 # session whose SOURCE is the desktop app. Ours is not: every session.create /
 # session.resume this bridge issues sends `source: HERMES_SESSION_SOURCE`
-# ("harness"), and `_resolve_session_source` (server.py:3685-3695) returns an
+# ("motdeck"), and `_resolve_session_source` (server.py:3685-3695) returns an
 # explicit source VERBATIM. So our lane's fold is exactly {"project"} and the
 # count below is still complete.
 #
@@ -372,7 +372,7 @@ HERMES_GATEWAY_ALWAYS_TOOLS = ("project_list", "project_create", "project_switch
 # The `source` every Hermes session this bridge opens is tagged with. Named rather
 # than repeated as a literal because it is not cosmetic: it selects the session's
 # PLATFORM (server.py:3685-3699), which decides the client-surface fold above.
-HERMES_SESSION_SOURCE = "harness"
+HERMES_SESSION_SOURCE = "motdeck"
 
 # Upstream gates the ENTIRE <available_skills> block on these three tool names
 # being in the schema — `has_skills_tools` (agent/system_prompt.py:412), else

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Generate · MOT Deck</title>
-<meta name="harness-build" content="comfy-v3-2026-08-29a">
+<meta name="motdeck-build" content="comfy-v3-2026-08-29a">
 <!--
   ══ THE GENERATE SURFACE — v3 "PATCHBAY" ═══════════════════════════════════════
   docs/FABLE-COMFY-SURFACE-SPEC.md (SPEC v3) · binding design source:
@@ -56,14 +56,33 @@
 <script>
 (function () {
   // ══ SKIN COHERENCE — read the panel's three axes, never write them ══════════
+  // U150: this page's no-external-resource contract is load-bearing, so migrate only
+  // MOT Deck-owned preference keys inline before the skin reads them. New keys win;
+  // unrelated storage remains untouched; storage denial cannot break Generate.
+  try {
+    Object.keys(localStorage).forEach(function (oldKey) {
+      var newKey = oldKey.indexOf('harness.') === 0
+        ? 'motdeck.' + oldKey.slice(8)
+        : (oldKey.indexOf('harness-') === 0
+            ? 'motdeck-' + oldKey.slice(8) : '');
+      if (!newKey) return;
+      if (localStorage.getItem(newKey) === null) {
+        localStorage.setItem(newKey, localStorage.getItem(oldKey));
+      }
+      localStorage.removeItem(oldKey);
+    });
+  } catch (_) {
+    /* Storage denial must not prevent Generate from booting. */
+  }
+
   // Same contract as office.html: this page is served from the SAME ORIGIN as the
   // panel, so the choices the panel persists are simply readable here. There is no
   // theme button on this page ON PURPOSE — a tab that could disagree with the app it
   // lives in is the original complaint.
   //
-  //   harness-theme  ∈ dark(default) | light | gold | cyber   → data-theme
-  //   harness-chrome === 'studio'                             → data-chrome="studio"
-  //   harness-design ∈ studio | studio-light                  → data-design/-dvariant
+  //   motdeck-theme  ∈ dark(default) | light | gold | cyber   → data-theme
+  //   motdeck-chrome === 'studio'                             → data-chrome="studio"
+  //   motdeck-design ∈ studio | studio-light                  → data-design/-dvariant
   //
   // ⚠️ IT RUNS IN THE HEAD, BEFORE THE STYLESHEET IS PARSED, for the reason the panel
   // does the same: applying it later paints the page dark and then flips it, on every
@@ -79,9 +98,9 @@
   function skin(){
     var d = document.documentElement, t = null, c = null, g = null;
     try {
-      t = localStorage.getItem('harness-theme');
-      c = localStorage.getItem('harness-chrome');
-      g = localStorage.getItem('harness-design');
+      t = localStorage.getItem('motdeck-theme');
+      c = localStorage.getItem('motdeck-chrome');
+      g = localStorage.getItem('motdeck-design');
     } catch (e) { return; }                    // private mode: defaults stand, silently
     if (t === 'light' || t === 'gold' || t === 'cyber') d.setAttribute('data-theme', t);
     else d.removeAttribute('data-theme');
@@ -1452,7 +1471,7 @@ function hueFor(pickId) {
 /* ══ DEBI'S STAGE: RESIZE + SPLIT, PERSISTED ═══════════════════════════════════
    Both are view state, so both live in one localStorage key of our own. The page
    still NEVER writes the panel's three appearance keys — this is not one of them. */
-const VIEW_KEY = 'harness-comfy-view';
+const VIEW_KEY = 'motdeck-comfy-view';
 function clampFrac(v) {
   v = Number(v);
   if (!isFinite(v)) return 0.58;
@@ -2380,7 +2399,7 @@ document.addEventListener('focusout', () => setTimeout(flushPending, 0));
    after one of our OWN tabs took the user out of the app entirely.
 
    The fix is the shipped handler pattern (v1.5.38 / v1.5.46, and office.html's goHome):
-   post `{cmd:'switchTab', id, title}` to `window.webkit.messageHandlers.harness`, which
+   post `{cmd:'switchTab', id, title}` to `window.webkit.messageHandlers.motdeck`, which
    app/main.swift resolves against its tab REGISTRY — id first, title second — and then
    takes the exact path a strip click takes. The Generate tab is one of the six webviews
    that gets the handler registered (main.swift's `t.id == "comfy"` branch), so this
@@ -2394,7 +2413,7 @@ document.addEventListener('focusout', () => setTimeout(flushPending, 0));
 function shellHandler() {
   try {
     return (window.webkit && window.webkit.messageHandlers
-            && window.webkit.messageHandlers.harness) || null;
+            && window.webkit.messageHandlers.motdeck) || null;
   } catch (e) { return null; }
 }
 function switchTab(title, id) {

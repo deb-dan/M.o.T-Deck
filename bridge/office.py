@@ -1,4 +1,4 @@
-"""Harness-native OFFICE lane — slice 1, SHEETS ONLY (.xlsx).
+"""MOT Deck-native OFFICE lane — slice 1, SHEETS ONLY (.xlsx).
 
 Built to docs/research/2026-08-20-office-lane-recon.md §5/§7 and the Fable rulings
 of 2026-08-21. Same shape as the voice and music lanes and deliberately NOT a
@@ -258,7 +258,7 @@ PT_PER_PX = 0.75               # row height: openpyxl points ↔ Univer pixels
 # rectangle. So the page now phones home at every step of its own boot and the
 # bridge writes it down. The next report is one command, not a theory:
 #
-#     grep loffice ~/Library/Application\ Support/Harness/data/logs/bridge.log
+#     grep loffice ~/Library/Application\ Support/MOT Deck/data/logs/bridge.log
 #
 # The trace also lands in its own file (data/logs/loffice-boot.log, viewable in the
 # panel's log picker) so it survives a bridge log that has rolled past it.

@@ -128,7 +128,7 @@ over-read this).
 9. Confirm the model-id parsing path (does it split on `/`?) before writing any provider config for MLX.
 
 **Then, slice 1 (PTY lane) — mirrors the aider slice exactly:**
-- `build.goose_pin` in harness.yaml (sha, not tag); `scripts/install_goose.sh` (download + sha-verify **before**
+- `build.goose_pin` in motdeck.yaml (sha, not tag); `scripts/install_goose.sh` (download + sha-verify **before**
   extract → `data/goose/`; **must call `scripts/flip_installed.py`** — the standalone-installer trap that bit
   opencode and searxng); log in `_LOG_NAMES` + `LOG_SOURCES`; **exec bit staged via `git update-index --chmod=+x`**
   (test_script_hygiene now enforces this).

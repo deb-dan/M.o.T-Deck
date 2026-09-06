@@ -346,7 +346,7 @@ check("expired ask stamps instead of claiming an answer",
       "j.status === 'expired'" in _PANEL and "expireApprovalCard(card)" in _PANEL)
 # NEGATIVE: nothing in the ask path may answer on the user's behalf — in
 # conversation mode the mic is gated because the turn never ends, and an
-# auto-answer would make the harness talk to itself.
+# auto-answer would make MOT Deck talk to itself.
 _ASK = _PANEL.split("function chatAsk(", 1)[1].split("\nfunction expireAskCard", 1)[0]
 check("ask path never auto-answers or auto-sends",
       "convSend" not in _ASK and "sendChat" not in _ASK

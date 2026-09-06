@@ -55,7 +55,7 @@ eq('markdown → markdown', cmModeFor('markdown', 'n.md'), 'markdown');
 eq('mermaid → plain (null)', cmModeFor('mermaid', 'f.mmd'), null);
 eq('csv → plain (null)', cmModeFor('csv', 'd.csv'), null);
 eq('code .py → python', cmModeFor('code', 'run.py'), 'python');
-eq('code .yaml → yaml', cmModeFor('code', 'harness.yaml'), 'yaml');
+eq('code .yaml → yaml', cmModeFor('code', 'motdeck.yaml'), 'yaml');
 eq('code .css → css', cmModeFor('code', 'a.css'), 'css');
 eq('code unknown ext → plain', cmModeFor('code', 'Makefile'), null);
 eq('code no filename → plain', cmModeFor('code', ''), null);

@@ -198,10 +198,10 @@ check('the ⊕ still carries BOTH design children (studio icon + editorial glyph
 console.log('\n-- every entry point uses the same verdict --');
 check('pickImage gates on attachVerdict, not on a hardcoded lane name',
       /attachVerdict\(chatPane\.mode, liveVision, odyVisionCfg\(\)\)/.test(grab('pickImage')));
-// harnessNativeDrop is an assignment onto `window`, not a declaration — the Swift
+// motdeckNativeDrop is an assignment onto `window`, not a declaration — the Swift
 // shell calls it directly for Finder drags WKWebView never forwards to the DOM.
-const nativeDrop = html.slice(html.indexOf('window.harnessNativeDrop'),
-                              html.indexOf('window.harnessNativeAudioDrop'));
+const nativeDrop = html.slice(html.indexOf('window.motdeckNativeDrop'),
+                              html.indexOf('window.motdeckNativeAudioDrop'));
 check('the NATIVE Finder-drop path gates on attachVerdict too (it is the path a '
       + 'Mac user actually uses, and it had its own copy of the lane check)',
       /attachVerdict\(chatPane\.mode, liveVision, odyVisionCfg\(\)\)/.test(nativeDrop));

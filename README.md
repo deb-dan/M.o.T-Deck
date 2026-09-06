@@ -1,20 +1,20 @@
 # MOT Deck
 
-> **NAMING (2026-08-21).** The product is **MOT Deck** — *Mixture of Tools*. Its home
-> screen is **MOT Main** (formerly "Mission Control"). The internal codename remains
-> `harness` and is NOT being renamed: `harness.yaml`, `HARNESS_*` env vars, API routes,
-> nav ids, `~/Library/Application Support/Harness`, and the build artifact
-> `dist/Harness.app` stay exactly as they are. Finder may install that bundle as either
-> `/Applications/Harness.app` or `/Applications/M.O.T.app`; its stable identity is
-> `local.harness.app`. Older text below says "Harness" for the product; read it as MOT Deck.
+> **IDENTITY (U150, 2026-09-07).** The product is **MOT Deck** — *Mixture of Tools*;
+> the logo artwork remains **M.O.T**. Its app is `MOT Deck.app`, installer and volume are
+> `MOT Deck`, machine slug is `motdeck`, bundle identity is `local.motdeck.app`,
+> executable is `MOTDeck`, manifest is `motdeck.yaml`, environment prefix is
+> `MOT_DECK_*`, and live state is `~/Library/Application Support/MOT Deck`.
 
 ## ⟳ STATE UPDATE — 2026-09-02 (v1.5.72)
 
 This README describes the early scaffold. Current reality, in order of authority:
 **`CLAUDE.md`** (working memory), **`docs/ROADMAP.md`** (what's done / in progress / next),
 **`docs/UNFORGET.md`** (the deferred-work ledger — every paused plan, audit finding, and
-user-reported issue), **`docs/HARNESS-INTERNALS.md`** (code-derived system reference),
+user-reported issue), **`docs/MOT-DECK-INTERNALS.md`** (code-derived system reference),
 **`docs/USER-GUIDE.md`** / **`docs/USER-EXPLAINERS.md`** (how to use it).
+The exhaustive identity map and file-by-file U150 rename record is
+**`docs/U150-IDENTITY-CHANGE-INVENTORY.md`**.
 
 - Nine live components on Mission Control: **Bridge** :8700 (our own code — control panel, panel
   UI, all lifecycle/model/chat plumbing) · **runner** :6767 (llama.cpp for GGUF, Apple MLX for mlx
@@ -30,10 +30,10 @@ user-reported issue), **`docs/HARNESS-INTERNALS.md`** (code-derived system refer
   app; plain **⌘Q "Quit MOT Deck"** leaves the stack running so reopening reuses it instantly.
 - Two app builds: `./scripts/build_app.sh` (lean dev app — serves this repo live) and
   `./scripts/build_app.sh --fat` (offline installer + a fat `.dmg` at `dist/` — serves a
-  provisioned snapshot at `~/Library/Application Support/Harness`). **Standing ops rule: all
+  provisioned snapshot at `~/Library/Application Support/MOT Deck`). **Standing ops rule: all
   code ships via `./scripts/ship.sh`** — the fat app will otherwise serve stale code
-  (HARNESS-INTERNALS §3).
-- `guards/harness-path-guard/` is a Hermes plugin (seeded into `~/.hermes/plugins/` on start) that
+  (MOT-DECK-INTERNALS §3).
+- `guards/motdeck-path-guard/` is a Hermes plugin (seeded into `~/.hermes/plugins/` on start) that
   fences the agent's `write_file`/`patch` calls; `bridge/tests/` + `bridge/contract_tests/` are the
   test and pin-bump suites.
 - The never-edit-`vendor/` rule below is unchanged and enforced.
@@ -45,7 +45,7 @@ Personal AI workspace merging [Hermes Agent](https://github.com/NousResearch/her
 (agent brain) and [Odysseus](https://github.com/pewdiepie-archdaemon/odysseus)
 (web workspace) as pluggable, one-click-updatable components. macOS-native, no Docker.
 
-Full design: `docs/harness-architecture.md`.
+Full design: `docs/motdeck-architecture.md`.
 
 ## Quick start
 
@@ -61,7 +61,7 @@ your approval before touching anything.
 ## Layout
 
 ```
-harness.yaml        pins, ports, endpoints — single source of truth
+motdeck.yaml        pins, ports, endpoints — single source of truth
 vendor/             pinned submodules (never modified — all glue lives in bridge/)
 bridge/             the only code we own: panel, lifecycle, adapter, gearbox
 policies/           routing.yaml (model gearbox), approvals.yaml (command patterns)
@@ -80,7 +80,7 @@ The bridge (panel + gearbox) always runs.
 
 - Never edit anything under `vendor/` — updates would wipe it, and the update
   button depends on pristine submodules.
-- Pins change only via the updater (or deliberately in `harness.yaml` + commit).
+- Pins change only via the updater (or deliberately in `motdeck.yaml` + commit).
 - One upstream update at a time; contract tests gate every switch.
 
 <!-- unforget-registry:begin -->

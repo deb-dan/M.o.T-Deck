@@ -7,7 +7,7 @@ bridge/gooseui.py; these routes are wiring.
 THE WHOLE LANE IN FIVE LINES:
   GET  /gooseui                     OUR entry document = the vendored index.html + one
                                     <script> tag. Starts goosed if it is not up.
-  GET  /gooseui/harness-preload.js  OUR window.electron / window.appConfig shim.
+  GET  /gooseui/motdeck-preload.js  OUR window.electron / window.appConfig shim.
   GET  /gooseui/<rel>               the vendored bundle, read-only, contained.
   GET  /api/gooseui/status          installed? serving? which pin, which model, which acp
   POST /api/gooseui/start|stop      supervise our own `goose serve --platform desktop`
@@ -407,7 +407,7 @@ def gooseui_page_redirect() -> Response:
 
     The vendored entry document references its bundle RELATIVELY —
     `<script type="module" src="./assets/index-YGtEK3wY.js">`. Served at `/gooseui`,
-    `./assets/…` resolves against the PARENT, i.e. `/assets/…` — which in this harness is
+    `./assets/…` resolves against the PARENT, i.e. `/assets/…` — which in MOT Deck is
     a real, occupied mount (bridge/panel/assets, the Univer/React vendor tree). So the
     page did not 404 into an obvious hole: it asked OUR OWN asset route for goose's
     bundle, got 404s, and rendered a black rectangle with no error a user could act on.
@@ -552,7 +552,7 @@ poll();
 </script>"""
 
 
-@app.get("/gooseui/harness-preload.js")
+@app.get("/gooseui/motdeck-preload.js")
 def gooseui_preload() -> Response:
     """OUR window.electron / window.appConfig shim — GENERATED, never a file on disk.
 

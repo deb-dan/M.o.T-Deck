@@ -34,7 +34,7 @@ from pathlib import Path
 for _k in [k for k in os.environ if k.lower().endswith("_proxy")]:
     os.environ.pop(_k, None)
 
-_TMP = tempfile.mkdtemp(prefix="harness-hsk-home-")
+_TMP = tempfile.mkdtemp(prefix="motdeck-hsk-home-")
 os.environ["HERMES_HOME"] = _TMP
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -483,7 +483,7 @@ check("the staleness warning is carried, like the toolset group's",
 # Both groups may therefore promise it outright; the only case left is a Hermes
 # dashboard open OUTSIDE this app, which both groups must still name.
 check("...and both groups promise the automatic reload outright",
-      PANEL.count("the harness reloads that tab for you") == 2)
+      PANEL.count("MOT Deck reloads that tab for you") == 2)
 check("...with split view covered, not excepted, on both groups",
       PANEL.count("already open <i>beside</i> this one in split view") == 1
       and PANEL.count("in split view too") == 1)

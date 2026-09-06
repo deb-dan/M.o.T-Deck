@@ -1,4 +1,4 @@
-# Model gearbox policy (M2) — see docs/harness-architecture.md §7
+# Model gearbox policy (M2) — see docs/motdeck-architecture.md §7
 privacy:
   - match: ["~/finance/**", "~/health/**", "*.env", "**/secrets*"]
     route: local-only

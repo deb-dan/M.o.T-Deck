@@ -20,7 +20,7 @@ Releases API.
 | Component | Pinned now | Latest available | Contract risk | Recommendation |
 |---|---|---|---|---|
 | **Hermes** | `v2026.7.30` | **`v2026.8.13`** (also `v2026.8.3`) | **LOW** — 13/14 contract asserts pass at the candidate; the 1 failure is a **cosmetic import reformat**, not a seam loss | **BUMP WITH CARE** (this week's green-light candidate) |
-| **Odysseus** | `25c9e73` (harness.yaml says "main" — **it is not on main**) | `dev` HEAD `c436930` (+44 commits) | **MEDIUM** — every *runtime* seam intact, but **2 contract tests break on file paths** (mcp routes moved; the unpaged history handler was consolidated) | **DEFER 1–2 weeks**; fix the two contract tests first, then bump |
+| **Odysseus** | `25c9e73` (motdeck.yaml says "main" — **it is not on main**) | `dev` HEAD `c436930` (+44 commits) | **MEDIUM** — every *runtime* seam intact, but **2 contract tests break on file paths** (mcp routes moved; the unpaged history handler was consolidated) | **DEFER 1–2 weeks**; fix the two contract tests first, then bump |
 | **VoiceStudio** | `v0.4.2` | **`v0.5.0`** (2026-08-13) | **LOW on contracts** (11/11 pass) / **MEDIUM on install** — huge release, new engines, new deps, uv.lock churn | **DEFER** — not blocking anything; bump when someone will actually sit through a reinstall |
 | **Voicebox** | `v0.5.0` | `v0.5.0` — **already current** | none | **NO ACTION** (repo still stale: tag dated 2026-04-25) |
 | **llama.cpp** | `b10295` | **`b10427`** (macos-arm64 asset **confirmed present**) | **LOW** — every flag we depend on verified present at b10427 | **BUMP WITH CARE** (second green-light candidate) |
@@ -102,11 +102,11 @@ features (`setup_mcp` card — desktop surface, not ours), and `image.generate` 
 **Bump sequence (isolated ship — do nothing else in the same pass):**
 
 ```bash
-cd ~/"Claude Proj Rootz/New Harness/harness"
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck"
 git -C vendor/hermes reset --hard                 # upstream files only; mode-flip/dirty guard
 git -C vendor/hermes fetch --tags origin
 git -C vendor/hermes checkout v2026.8.13
-#  edit harness.yaml: components.hermes.pin: v2026.8.13
+#  edit motdeck.yaml: components.hermes.pin: v2026.8.13
 #  edit bridge/contract_tests/test_hermes_ws_contract.py L220 → widen the import assertion
 python3 -m pytest bridge/contract_tests/ -q       # MUST be green before anything else
 ./scripts/install_component.sh hermes --yes       # rebuilds venv deps + web_dist (npm)
@@ -118,16 +118,16 @@ a dangerous command shows the **approval card** and `Once` works (proves `approv
 `approval.respond`) · a `write_file` outside the workspace shows the **path-guard card** (proves
 `pre_tool_call` → `request_tool_approval`) · `./scripts/test_hermes.sh` = PASS · cron still fires.
 
-**Rollback:** `git -C vendor/hermes checkout v2026.7.30` + revert the harness.yaml pin +
+**Rollback:** `git -C vendor/hermes checkout v2026.7.30` + revert motdeck.yaml pin +
 `./scripts/install_component.sh hermes --yes`. (Reverting the contract-test widening is optional —
 the widened assertion passes at both tags.)
 
 ---
 
-### 2. Odysseus — `25c9e73` → `dev@c436930` — **DEFER** (and fix a factual error in harness.yaml)
+### 2. Odysseus — `25c9e73` → `dev@c436930` — **DEFER** (and fix a factual error in motdeck.yaml)
 
 **🔴 FINDING, independent of any bump: our pin is NOT on `main`.**
-`harness.yaml`'s comment and CLAUDE.md both describe the pin as `main@25c9e73`. Measured:
+`motdeck.yaml`'s comment and CLAUDE.md both describe the pin as `main@25c9e73`. Measured:
 
 ```
 origin/main  cf4e240  2026-07-23  "Merge verified Odysseus fixes"     ← STALE, 3 weeks old
@@ -193,11 +193,11 @@ someone is going to sit and verify chat + sessions properly — not bundled with
 **Bump sequence (when the time comes):**
 
 ```bash
-cd ~/"Claude Proj Rootz/New Harness/harness"
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck"
 git -C vendor/odysseus reset --hard                # upstream rewrites scripts/odysseus-* at runtime
 git -C vendor/odysseus fetch origin dev
 git -C vendor/odysseus checkout c4369305f01417b2b02cb06dfa1d8ba8c963762f
-#  harness.yaml: components.odysseus.pin: c436930…  + FIX THE COMMENT to say dev@, not main@
+#  motdeck.yaml: components.odysseus.pin: c436930…  + FIX THE COMMENT to say dev@, not main@
 #  bridge/contract_tests/test_seam.py           → routes/mcp/mcp_routes.py (or resolve either path)
 #  bridge/contract_tests/test_odysseus_msg_contract.py → history_routes.py:140 + pin "limit is None"
 python3 -m pytest bridge/contract_tests/ -q
@@ -248,10 +248,10 @@ consume — we point a webview at it. **Bump when Debi wants the new engines, no
 **Bump sequence:**
 
 ```bash
-cd ~/"Claude Proj Rootz/New Harness/harness"
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck"
 git -C vendor/voicestudio fetch --tags origin
 git -C vendor/voicestudio checkout v0.5.0
-#  harness.yaml: components.voicestudio.pin: v0.5.0
+#  motdeck.yaml: components.voicestudio.pin: v0.5.0
 python3 -m pytest bridge/contract_tests/test_voicestudio_contract.py -q
 ./scripts/install_component.sh voicestudio --yes     # uv sync --frozen + bun build; SLOW
 ./scripts/ship.sh
@@ -314,9 +314,9 @@ The CI-lag trap that forced `b10094`/`b10295` did **not** bite here — the newe
 **Bump sequence:**
 
 ```bash
-cd ~/"Claude Proj Rootz/New Harness/harness"
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck"
 cp -R data/llamacpp data/llamacpp.b10295.bak     # install_llamacpp.sh OVERWRITES — no auto-backup
-#  harness.yaml: runner.llamacpp_pin: b10427   (+ update the CI-lag comment: b10427 asset verified)
+#  motdeck.yaml: runner.llamacpp_pin: b10427   (+ update the CI-lag comment: b10427 asset verified)
 ./scripts/install_llamacpp.sh                     # downloads + relocates + prints --version
 python3 -m pytest bridge/contract_tests/test_llama_tts_contract.py -q   # runs --help on the Mac
 ./scripts/ship.sh
@@ -336,7 +336,7 @@ July bump was made by hand. Take the copy first; that is the whole rollback.
 
 ### 6. MLX Python pins
 
-All four are read from `harness.yaml` `build.*` by `scripts/install_mlx.sh` (single source of truth —
+All four are read from `motdeck.yaml` `build.*` by `scripts/install_mlx.sh` (single source of truth —
 it hard-errors if any is missing), and installed as one `uv pip install` line, so they bump together.
 
 #### mlx-audio `0.4.7` → `0.4.8` — **BUMP WITH CARE, but the parity fear is measured and clear**
@@ -389,13 +389,13 @@ QA) — that has not changed and remains an accepted ~2 GB cost isolated to `dat
 **Bump sequence (all MLX pins move together):**
 
 ```bash
-#  harness.yaml build.*:  mlx_vlm_pin: "0.6.13"   mlx_audio_pin: "0.4.8"
+#  motdeck.yaml build.*:  mlx_vlm_pin: "0.6.13"   mlx_audio_pin: "0.4.8"
 #                         (mlx_lm_pin / mlx_whisper_pin unchanged)
 
 # ⚠️ RUN FROM THE SNAPSHOT, NOT THE REPO — the fat app uses the snapshot's venv.
 # This is the exact 2026-08-08 ops gap that cost a debugging session.
-cd ~/Library/Application\ Support/Harness && ./scripts/install_mlx.sh
-cd ~/"Claude Proj Rootz/New Harness/harness" && ./scripts/install_mlx.sh   # keep the repo venv in step
+cd ~/Library/Application\ Support/MOT Deck && ./scripts/install_mlx.sh
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck" && ./scripts/install_mlx.sh   # keep the repo venv in step
 python3 -m pytest bridge/contract_tests/test_mlx_audio_stt_contract.py \
                   bridge/contract_tests/test_mlx_whisper_contract.py -q
 ./scripts/ship.sh
@@ -431,7 +431,7 @@ there is **no recorded commit to roll back to**. Upstream's default branch is `m
 `main` value is additionally likely resolving only by GitHub's symref courtesy.
 
 **Recommendation (a 5-minute fix, not a bump):** on the Mac, read the commit the working clone is
-actually on and write *that* into `harness.yaml`:
+actually on and write *that* into `motdeck.yaml`:
 
 ```bash
 git -C vendor/searxng rev-parse HEAD     # → pin this exact sha
@@ -465,7 +465,7 @@ currently asking for.
 
 ## Biggest caution
 
-**The Odysseus pin is not where our own manifest says it is.** `harness.yaml` and CLAUDE.md both
+**The Odysseus pin is not where our own manifest says it is.** `motdeck.yaml` and CLAUDE.md both
 describe `25c9e73` as `main`; it is on `dev`, and `main` is a stale branch that sits *behind* us and
 contains at least one change upstream later reverted (`cf4e240a`). The next person to bump
 "Odysseus to latest main" would **silently move us backwards by three weeks** and re-introduce

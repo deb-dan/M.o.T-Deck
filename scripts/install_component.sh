@@ -38,7 +38,7 @@ plan_odysseus="PLAN (odysseus):
   - serve natively on port 7860 when started"
 
 plan_voicestudio="PLAN (voicestudio) — OPTIONAL, license AGPL-3.0-only:
-  - shallow-clone vendor/voicestudio at the pinned tag from harness.yaml (not a submodule)
+  - shallow-clone vendor/voicestudio at the pinned tag from motdeck.yaml (not a submodule)
   - create venv data/voicestudio-venv and install its Python deps
     (torch + transformers + whisperx + pyannote + demucs + sherpa-onnx + mlx ⇒ ~5-8GB;
      needs ~10GB free — speech models (~2.4GB) download later, on first use)
@@ -52,7 +52,7 @@ plan_voicestudio="PLAN (voicestudio) — OPTIONAL, license AGPL-3.0-only:
   - serve on 127.0.0.1:3900 when started (API + UI on one port; no auth, loopback only)"
 
 plan_voicebox="PLAN (voicebox) — OPTIONAL, license MIT:
-  - shallow-clone vendor/voicebox at the pinned tag from harness.yaml (not a submodule)
+  - shallow-clone vendor/voicebox at the pinned tag from motdeck.yaml (not a submodule)
   - create venv data/voicebox-venv (plain python -m venv + pip — this is what the
     project's own justfile does; its dependency graph does NOT resolve any other way)
   - install backend/requirements.txt, then chatterbox-tts and hume-tada with --no-deps,
@@ -67,11 +67,11 @@ plan_voicebox="PLAN (voicebox) — OPTIONAL, license MIT:
     that download fails — the backend still serves its JSON API)
   - ⚠️ KNOWN-FRAGILE: five deps need --no-deps / git URLs / a custom package index.
     If resolution breaks, the failure is printed with the log path — it is an upstream
-    pin conflict, not a harness bug (upstream last shipped 2026-04-26).
+    pin conflict, not a motdeck bug (upstream last shipped 2026-04-26).
   - ⚠️ NO AUTH: serves 127.0.0.1:17493 with /speak, /transcribe and /mcp wide open"
 
 plan_comfyui="PLAN (comfyui) — OPTIONAL, license GPL-3.0:
-  - shallow-clone vendor/comfyui at the pinned tag from harness.yaml (not a submodule)
+  - shallow-clone vendor/comfyui at the pinned tag from motdeck.yaml (not a submodule)
   - create venv data/comfyui-venv and install its Python deps
     (torch + torchvision + torchaudio + transformers + safetensors + the SPA, which
      ships as a PIP package — no npm/bun build needed; roughly 4-6GB of wheels)
@@ -85,12 +85,12 @@ plan_comfyui="PLAN (comfyui) — OPTIONAL, license GPL-3.0:
   - ⚠ GPL-3.0: composed at ARM'S LENGTH ONLY — a separate process reached over HTTP,
     never modified, never lifted from (same posture as SearXNG's AGPL)
   - ⚠ its diffusion models load in ITS process, so their RAM is invisible to the
-    harness model-RAM ledger (memory.budget_gb) — the same known limit the voice
+    motdeck model-RAM ledger (memory.budget_gb) — the same known limit the voice
     components already have
   - image/video models are NOT downloaded here; you add them later, on first use"
 
 plan_unsloth="PLAN (unsloth) — OPTIONAL, license AGPL-3.0-only (Studio) / Apache-2.0 (library):
-  - shallow-clone vendor/unsloth at the pinned tag from harness.yaml (not a submodule)
+  - shallow-clone vendor/unsloth at the pinned tag from motdeck.yaml (not a submodule)
   - create venv data/unsloth-home/unsloth_studio and 'pip install -e vendor/unsloth[studio]'
     — the studio extra is upstream's own declared server stack (fastapi/uvicorn/datasets/
     pandas/matplotlib/pymupdf/fastmcp …), a few hundred MB. Training extras (torch et
@@ -114,7 +114,7 @@ plan_unsloth="PLAN (unsloth) — OPTIONAL, license AGPL-3.0-only (Studio) / Apac
   - ⚠ AGPL-3.0-only for Studio: composed at ARM'S LENGTH ONLY — separate process over
     HTTP, never modified
   - ⚠ it can download its own llama.cpp and models into data/unsloth-home (GB-scale,
-    on demand from its UI); contained, but invisible to the harness model-RAM ledger"
+    on demand from its UI); contained, but invisible to MOT Deck model-RAM ledger"
 
 var="plan_$NAME"; echo "${!var}"
 if [[ "$YES" != "--yes" ]]; then
@@ -126,31 +126,31 @@ PY=$(command -v python3.12 || command -v python3.11 || command -v python3)
 
 # ── shared helpers for the OPTIONAL shallow-clone components (comfyui / unsloth) ──
 # Deliberately small and explicit rather than clever: they encode the three lessons the
-# voice pair taught us (pin single-sourced from harness.yaml, the bundled-CPython-first
+# voice pair taught us (pin single-sourced from motdeck.yaml, the bundled-CPython-first
 # interpreter ladder, and `python -m pip` never `bin/pip`).
 
 # _pin_of <component> <key>  — key ∈ repo|pin|port. Block-scoped so a later component's
 # key can never be read for an earlier one.
 _pin_of() {
-  awk "/^  $1:/{f=1; next} f && /^  [a-z]/{exit} f && /^    $2:/{print \$2; exit}" harness.yaml
+  awk "/^  $1:/{f=1; next} f && /^  [a-z]/{exit} f && /^    $2:/{print \$2; exit}" motdeck.yaml
 }
 
 # _clone_pinned <component>  — shallow clone / re-pin, searxng precedent (never a submodule).
 _clone_pinned() {
   local n="$1" repo pin
   repo="$(_pin_of "$n" repo)"; pin="$(_pin_of "$n" pin)"
-  [[ -n "$repo" && -n "$pin" ]] || { echo "ERROR: components.$n repo/pin missing from harness.yaml"; exit 1; }
+  [[ -n "$repo" && -n "$pin" ]] || { echo "ERROR: components.$n repo/pin missing from motdeck.yaml"; exit 1; }
   if [[ ! -e "vendor/$n/.git" ]]; then
-    echo "[harness] cloning ${n} @ ${pin} (shallow)…"
+    echo "[motdeck] cloning ${n} @ ${pin} (shallow)…"
     git clone --depth 1 --branch "$pin" "$repo" "vendor/$n"
   else
     git -C "vendor/$n" fetch --depth 1 --quiet origin "$pin"
     git -C "vendor/$n" checkout --quiet FETCH_HEAD
   fi
-  echo "[harness] vendor/${n} pinned to ${pin}"
+  echo "[motdeck] vendor/${n} pinned to ${pin}"
 }
 
-# _pick_py  — PREFER the harness's own bundled standalone CPython (3.12.x, known-good
+# _pick_py  — PREFER MOT Deck's own bundled standalone CPython (3.12.x, known-good
 # ensurepip) over a possibly-relinked Homebrew python. Exactly the voicebox ladder.
 _pick_py() {
   local p
@@ -183,11 +183,11 @@ _mk_venv() {
   uv="$(_find_uv)"
   if [[ ! -x "$venv/bin/python" ]]; then
     if [[ -n "$uv" ]] && "$uv" venv --python "$py" --seed "$venv" >>"$log" 2>&1; then
-      echo "[harness] venv created with uv (--seed)."
+      echo "[motdeck] venv created with uv (--seed)."
     elif "$py" -m venv "$venv" >>"$log" 2>&1; then
-      echo "[harness] venv created with $py -m venv."
+      echo "[motdeck] venv created with $py -m venv."
     elif "$py" -m venv --without-pip "$venv" >>"$log" 2>&1; then
-      echo "[harness] venv created without pip (pip bootstrapped below)."
+      echo "[motdeck] venv created without pip (pip bootstrapped below)."
     else
       rm -rf "$venv"
       echo "ERROR: could not create $venv with $py. See $log"
@@ -199,9 +199,9 @@ _mk_venv() {
   # call below goes through `python -m pip`, and this guarantees the module exists.
   if ! "$venv/bin/python" -m pip --version >/dev/null 2>&1; then
     if "$venv/bin/python" -m ensurepip --upgrade >>"$log" 2>&1; then
-      echo "[harness] pip bootstrapped via ensurepip."
+      echo "[motdeck] pip bootstrapped via ensurepip."
     elif [[ -n "$uv" ]] && "$uv" pip install --python "$venv/bin/python" pip >>"$log" 2>&1; then
-      echo "[harness] pip bootstrapped via uv."
+      echo "[motdeck] pip bootstrapped via uv."
     else
       echo "ERROR: $venv has no usable pip and it could not be bootstrapped. See $log"
       echo "       Easiest fix: install uv, then re-run the install —"
@@ -235,35 +235,35 @@ if [[ "$NAME" == "hermes" ]]; then
   # add --package-lock-only=false games here: the file is upstream's, our copy of it
   # is a build artefact, and nothing we run reads it.
   if command -v npm >/dev/null 2>&1; then
-    echo "[harness] building Hermes web dashboard UI (npm --workspace web)…"
+    echo "[motdeck] building Hermes web dashboard UI (npm --workspace web)…"
     ( cd vendor/hermes \
       && npm install --workspace web --no-audit --no-fund \
       && npm run build --workspace web )
     [[ -f vendor/hermes/hermes_cli/web_dist/index.html ]] \
-      && echo "[harness] Hermes web UI built → hermes_cli/web_dist/" \
-      || echo "[harness] WARN: Hermes web build finished but web_dist/index.html not found."
+      && echo "[motdeck] Hermes web UI built → hermes_cli/web_dist/" \
+      || echo "[motdeck] WARN: Hermes web build finished but web_dist/index.html not found."
   else
-    echo "[harness] WARN: npm not found — Hermes dashboard UI not built."
-    echo "[harness]   Install Node 18+ then: (cd vendor/hermes && npm install --workspace web && npm run build --workspace web)"
+    echo "[motdeck] WARN: npm not found — Hermes dashboard UI not built."
+    echo "[motdeck]   Install Node 18+ then: (cd vendor/hermes && npm install --workspace web && npm run build --workspace web)"
   fi
 elif [[ "$NAME" == "voicestudio" ]]; then
   # ── OPTIONAL voice component (AGPL-3.0-only; composed over HTTP, never modified) ──
-  # Pin + repo are single-sourced from harness.yaml. Plain shallow clone (searxng
+  # Pin + repo are single-sourced from motdeck.yaml. Plain shallow clone (searxng
   # precedent) rather than a submodule: optional components must not be cloned by a
   # default bootstrap, and this script must never run `git submodule add`.
-  VS_REPO=$(awk '/^  voicestudio:/{f=1; next} f && /^  [a-z]/{exit} f && /^    repo:/{print $2; exit}' harness.yaml)
-  VS_PIN=$(awk '/^  voicestudio:/{f=1; next} f && /^  [a-z]/{exit} f && /^    pin:/{print $2; exit}' harness.yaml)
+  VS_REPO=$(awk '/^  voicestudio:/{f=1; next} f && /^  [a-z]/{exit} f && /^    repo:/{print $2; exit}' motdeck.yaml)
+  VS_PIN=$(awk '/^  voicestudio:/{f=1; next} f && /^  [a-z]/{exit} f && /^    pin:/{print $2; exit}' motdeck.yaml)
   [[ -n "$VS_REPO" && -n "$VS_PIN" ]] || {
-    echo "ERROR: components.voicestudio repo/pin missing from harness.yaml"; exit 1; }
+    echo "ERROR: components.voicestudio repo/pin missing from motdeck.yaml"; exit 1; }
   if [[ ! -e vendor/voicestudio/.git ]]; then
-    echo "[harness] cloning voicestudio @ $VS_PIN (shallow)…"
+    echo "[motdeck] cloning voicestudio @ $VS_PIN (shallow)…"
     git clone --depth 1 --branch "$VS_PIN" "$VS_REPO" vendor/voicestudio
   else
     # Same idiom as bootstrap.sh's add_submodule: fetch the pin shallowly, detach onto it.
     git -C vendor/voicestudio fetch --depth 1 --quiet origin "$VS_PIN"
     git -C vendor/voicestudio checkout --quiet FETCH_HEAD
   fi
-  echo "[harness] vendor/voicestudio pinned to $VS_PIN"
+  echo "[motdeck] vendor/voicestudio pinned to $VS_PIN"
   [[ -f vendor/voicestudio/backend/main.py ]] || {
     echo "ERROR: vendor/voicestudio/backend/main.py not found at $VS_PIN — upstream layout"
     echo "       changed; scripts/start_component.sh launches backend.main:app."
@@ -275,11 +275,11 @@ elif [[ "$NAME" == "voicestudio" ]]; then
   VS_VENV="$ROOT/data/voicestudio-venv"
   VS_OK=0
   if command -v uv >/dev/null 2>&1 && [[ -f vendor/voicestudio/uv.lock ]]; then
-    echo "[harness] installing voicestudio deps with uv (from uv.lock) — this is a big download…"
+    echo "[motdeck] installing voicestudio deps with uv (from uv.lock) — this is a big download…"
     if UV_PROJECT_ENVIRONMENT="$VS_VENV" uv sync --frozen --project vendor/voicestudio; then
       VS_OK=1
     else
-      echo "[harness] WARN: 'uv sync --frozen' failed — falling back to a plain venv install."
+      echo "[motdeck] WARN: 'uv sync --frozen' failed — falling back to a plain venv install."
     fi
   fi
   if [[ "$VS_OK" != "1" ]]; then
@@ -295,7 +295,7 @@ elif [[ "$NAME" == "voicestudio" ]]; then
       fi
       deactivate
     else
-      echo "[harness] uv not found — falling back to python venv + pip."
+      echo "[motdeck] uv not found — falling back to python venv + pip."
       "$PY" -m venv data/voicestudio-venv
       "$VS_VENV/bin/pip" install -U pip "setuptools>=75,<80" wheel
       if [[ -f vendor/voicestudio/requirements.txt ]]; then
@@ -319,7 +319,7 @@ elif [[ "$NAME" == "voicestudio" ]]; then
   #     imageio-ffmpeg wheel at data/ffmpeg/bin/ffmpeg. Best-effort — `|| true` keeps
   #     `set -e` from aborting the install when there is no network / no wheel.
   VS_FF="$(bash scripts/ensure_ffmpeg.sh "$VS_VENV" || true)"
-  [[ -n "$VS_FF" ]] || echo "[harness] WARN: no ffmpeg available — transcription/conversion may fail."
+  [[ -n "$VS_FF" ]] || echo "[motdeck] WARN: no ffmpeg available — transcription/conversion may fail."
 
   # 2b. Web UI (Vite SPA, built with bun). The backend mounts frontend/dist at / on the
   #    SAME port; if dist is absent it still boots and serves a stub — so a missing bun
@@ -329,50 +329,50 @@ elif [[ "$NAME" == "voicestudio" ]]; then
   #    under `set -e` and an un-buildable optional web UI must never fail the install.
   BUN="$(bash scripts/ensure_bun.sh || true)"
   if [[ -n "$BUN" ]]; then
-    echo "[harness] building the voicestudio web UI (bun)…"
+    echo "[motdeck] building the voicestudio web UI (bun)…"
     VS_WEB=""
     [[ -f vendor/voicestudio/frontend/package.json ]] && VS_WEB="vendor/voicestudio/frontend"
     [[ -z "$VS_WEB" && -f vendor/voicestudio/package.json ]] && VS_WEB="vendor/voicestudio"
     if [[ -n "$VS_WEB" ]]; then
       # BUN_INSTALL / BUN_INSTALL_CACHE_DIR keep bun's global dir + package cache inside
-      # data/ instead of ~/.bun — the harness never writes outside the project folder.
+      # data/ instead of ~/.bun — MOT Deck never writes outside the project folder.
       # PATH also carries bun so package.json scripts that call `bun`/`bunx` by name work.
       ( cd "$VS_WEB" \
         && PATH="$(cd "$(dirname "$BUN")" && pwd):$PATH" \
            BUN_INSTALL="$ROOT/data/bun" \
            BUN_INSTALL_CACHE_DIR="$ROOT/data/bun/cache" \
            bash -c 'bun install && bun run build' ) \
-        || echo "[harness] WARN: the bun build failed — the tab will show the backend's stub page."
+        || echo "[motdeck] WARN: the bun build failed — the tab will show the backend's stub page."
     else
-      echo "[harness] WARN: no package.json found — skipping the web UI build."
+      echo "[motdeck] WARN: no package.json found — skipping the web UI build."
     fi
     [[ -f vendor/voicestudio/frontend/dist/index.html ]] \
-      && echo "[harness] voicestudio web UI built → frontend/dist/" \
-      || echo "[harness] WARN: frontend/dist/index.html not found after the build."
+      && echo "[motdeck] voicestudio web UI built → frontend/dist/" \
+      || echo "[motdeck] WARN: frontend/dist/index.html not found after the build."
   else
-    echo "[harness] WARN: bun could not be provisioned — the voicestudio web UI was NOT built."
-    echo "[harness]   The component still starts and serves a stub page. The reason is"
-    echo "[harness]   printed above (usually no network); re-run this install to retry:"
-    echo "[harness]   ./scripts/install_component.sh voicestudio --yes"
+    echo "[motdeck] WARN: bun could not be provisioned — the voicestudio web UI was NOT built."
+    echo "[motdeck]   The component still starts and serves a stub page. The reason is"
+    echo "[motdeck]   printed above (usually no network); re-run this install to retry:"
+    echo "[motdeck]   ./scripts/install_component.sh voicestudio --yes"
   fi
-  echo "[harness] NOTE: voicestudio is AGPL-3.0-only and binds 127.0.0.1 with NO authentication —"
-  echo "[harness]   never expose :3900 beyond loopback (that includes any future Tailscale hop)."
+  echo "[motdeck] NOTE: voicestudio is AGPL-3.0-only and binds 127.0.0.1 with NO authentication —"
+  echo "[motdeck]   never expose :3900 beyond loopback (that includes any future Tailscale hop)."
 elif [[ "$NAME" == "voicebox" ]]; then
   # ── OPTIONAL voice component #2 (MIT; composed over HTTP, never modified) ──────
   # Same delivery shape as voicestudio: plain shallow clone (searxng precedent), venv
   # under data/, nothing written into vendor/ except the SPA the backend must serve.
-  VB_REPO=$(awk '/^  voicebox:/{f=1; next} f && /^  [a-z]/{exit} f && /^    repo:/{print $2; exit}' harness.yaml)
-  VB_PIN=$(awk '/^  voicebox:/{f=1; next} f && /^  [a-z]/{exit} f && /^    pin:/{print $2; exit}' harness.yaml)
+  VB_REPO=$(awk '/^  voicebox:/{f=1; next} f && /^  [a-z]/{exit} f && /^    repo:/{print $2; exit}' motdeck.yaml)
+  VB_PIN=$(awk '/^  voicebox:/{f=1; next} f && /^  [a-z]/{exit} f && /^    pin:/{print $2; exit}' motdeck.yaml)
   [[ -n "$VB_REPO" && -n "$VB_PIN" ]] || {
-    echo "ERROR: components.voicebox repo/pin missing from harness.yaml"; exit 1; }
+    echo "ERROR: components.voicebox repo/pin missing from motdeck.yaml"; exit 1; }
   if [[ ! -e vendor/voicebox/.git ]]; then
-    echo "[harness] cloning voicebox @ $VB_PIN (shallow)…"
+    echo "[motdeck] cloning voicebox @ $VB_PIN (shallow)…"
     git clone --depth 1 --branch "$VB_PIN" "$VB_REPO" vendor/voicebox
   else
     git -C vendor/voicebox fetch --depth 1 --quiet origin "$VB_PIN"
     git -C vendor/voicebox checkout --quiet FETCH_HEAD
   fi
-  echo "[harness] vendor/voicebox pinned to $VB_PIN"
+  echo "[motdeck] vendor/voicebox pinned to $VB_PIN"
   [[ -f vendor/voicebox/backend/main.py ]] || {
     echo "ERROR: vendor/voicebox/backend/main.py not found at $VB_PIN — upstream layout"
     echo "       changed; scripts/start_component.sh launches 'python -m backend.main'."
@@ -380,7 +380,7 @@ elif [[ "$NAME" == "voicebox" ]]; then
   [[ -f vendor/voicebox/backend/requirements.txt ]] || {
     echo "ERROR: vendor/voicebox/backend/requirements.txt not found at $VB_PIN."; exit 1; }
 
-  # 1. Interpreter. PREFER the harness's own bundled standalone CPython when present:
+  # 1. Interpreter. PREFER MOT Deck's own bundled standalone CPython when present:
   #    it is 3.12.x (exactly upstream's preferred minor), it is the interpreter that
   #    already built every other venv here, and — unlike a Homebrew python that has
   #    been upgraded/relinked — its `ensurepip` is known-good. A broken system
@@ -394,11 +394,11 @@ elif [[ "$NAME" == "voicebox" ]]; then
     [[ -n "$_p" && -x "$_p" ]] && { VB_PY="$_p"; break; }
   done
   [[ -n "$VB_PY" ]] || { echo "ERROR: no python3 found — install Python 3.12 (brew install python@3.12)."; exit 1; }
-  echo "[harness] voicebox interpreter: $VB_PY"
+  echo "[motdeck] voicebox interpreter: $VB_PY"
   VB_MINOR=$("$VB_PY" -c 'import sys; print(sys.version_info[1])')
   if [[ "$VB_MINOR" -gt 13 ]]; then
-    echo "[harness] WARN: $VB_PY is Python 3.$VB_MINOR — voicebox's ML pins may not build."
-    echo "[harness]   Recommended: brew install python@3.12, then re-run this install."
+    echo "[motdeck] WARN: $VB_PY is Python 3.$VB_MINOR — voicebox's ML pins may not build."
+    echo "[motdeck]   Recommended: brew install python@3.12, then re-run this install."
   fi
   # ffmpeg is a RUNTIME requirement (transcription / audio conversion). It is provisioned
   # AFTER the venv exists (branch 2b below) because the no-brew path installs the
@@ -425,7 +425,7 @@ elif [[ "$NAME" == "voicebox" ]]; then
   #   (b) a standalone python without a working ensurepip → `python -m venv` SUCCEEDS
   #       but the venv has NO pip, and the next step dies on "bin/pip: not found".
   # uv sidesteps both (it seeds pip itself and never calls ensurepip), so it is tried
-  # FIRST — the harness already relies on uv elsewhere (voicestudio installs with it).
+  # FIRST — MOT Deck already relies on uv elsewhere (voicestudio installs with it).
   # Resolve uv EXPLICITLY: the app is launched from Finder with a minimal PATH, so
   # `command -v uv` misses a uv in ~/.local/bin (its default install location) even
   # though the same shell finds /opt/homebrew/bin/bun. That miss is why both pip
@@ -435,15 +435,15 @@ elif [[ "$NAME" == "voicebox" ]]; then
             /usr/local/bin/uv "$HOME/.cargo/bin/uv"; do
     [[ -n "$_u" && -x "$_u" ]] && { VB_UV="$_u"; break; }
   done
-  [[ -n "$VB_UV" ]] && echo "[harness] uv: $VB_UV" || echo "[harness] uv: not found"
+  [[ -n "$VB_UV" ]] && echo "[motdeck] uv: $VB_UV" || echo "[motdeck] uv: not found"
 
   if [[ ! -x "$VB_VENV/bin/python" ]]; then
     if [[ -n "$VB_UV" ]] && "$VB_UV" venv --python "$VB_PY" --seed "$VB_VENV" >>"$VB_ILOG" 2>&1; then
-      echo "[harness] venv created with uv (--seed)."
+      echo "[motdeck] venv created with uv (--seed)."
     elif "$VB_PY" -m venv "$VB_VENV" >>"$VB_ILOG" 2>&1; then
-      echo "[harness] venv created with $VB_PY -m venv."
+      echo "[motdeck] venv created with $VB_PY -m venv."
     elif "$VB_PY" -m venv --without-pip "$VB_VENV" >>"$VB_ILOG" 2>&1; then
-      echo "[harness] venv created without pip (pip bootstrapped below)."
+      echo "[motdeck] venv created without pip (pip bootstrapped below)."
     else
       rm -rf "$VB_VENV"
       echo "ERROR: could not create data/voicebox-venv with $VB_PY. See $VB_ILOG"
@@ -453,7 +453,7 @@ elif [[ "$NAME" == "voicebox" ]]; then
   fi
   # Guarantee pip EXISTS in the venv regardless of how it was made (failure mode (b)).
   if ! "$VB_VENV/bin/python" -m pip --version >/dev/null 2>&1; then
-    echo "[harness] venv has no pip — bootstrapping…"
+    echo "[motdeck] venv has no pip — bootstrapping…"
     # 1) ensurepip (absent on uv-style standalone pythons), 2) uv, 3) the FAT app's
     # bundled wheelhouse via the pip-wheel zipapp trick — a pip .whl is directly
     # executable, which is exactly how a python that ships no ensurepip gets seeded.
@@ -464,11 +464,11 @@ elif [[ "$NAME" == "voicebox" ]]; then
     # can update must not become invisible when this offline recovery path needs pip.
     if [[ -f "$ROOT/scripts/app_bundle_identity.sh" ]]; then
       . "$ROOT/scripts/app_bundle_identity.sh"
-      HARNESS_APP_RESOLVE_QUIET=1
-      if harness_resolve_installed_app; then
-        _installed_wheels="$HARNESS_RESOLVED_APP/Contents/Resources/wheelhouse"
+      MOT_DECK_APP_RESOLVE_QUIET=1
+      if motdeck_resolve_installed_app; then
+        _installed_wheels="$MOT_DECK_RESOLVED_APP/Contents/Resources/wheelhouse"
       fi
-      unset HARNESS_APP_RESOLVE_QUIET
+      unset MOT_DECK_APP_RESOLVE_QUIET
     fi
     for _w in "$ROOT/../wheelhouse" "$_installed_wheels"; do
       [[ -d "$_w" ]] && { VB_WHEELS="$_w"; break; }
@@ -477,14 +477,14 @@ elif [[ "$NAME" == "voicebox" ]]; then
     [[ -n "$VB_WHEELS" ]] && VB_PIPWHL=$(ls "$VB_WHEELS"/pip-*.whl 2>/dev/null | head -1)
 
     if "$VB_VENV/bin/python" -m ensurepip --upgrade >>"$VB_ILOG" 2>&1; then
-      echo "[harness] pip bootstrapped via ensurepip."
+      echo "[motdeck] pip bootstrapped via ensurepip."
     elif [[ -n "$VB_UV" ]] \
          && "$VB_UV" pip install --python "$VB_VENV/bin/python" pip >>"$VB_ILOG" 2>&1; then
-      echo "[harness] pip bootstrapped via uv."
+      echo "[motdeck] pip bootstrapped via uv."
     elif [[ -n "$VB_PIPWHL" ]] \
          && "$VB_VENV/bin/python" "$VB_PIPWHL/pip" install --no-index \
               --find-links "$VB_WHEELS" pip setuptools wheel >>"$VB_ILOG" 2>&1; then
-      echo "[harness] pip bootstrapped from the bundled wheelhouse ($VB_WHEELS)."
+      echo "[motdeck] pip bootstrapped from the bundled wheelhouse ($VB_WHEELS)."
     else
       echo "ERROR: data/voicebox-venv has no usable pip and it could not be bootstrapped."
       echo "       tried: ensurepip, uv (${VB_UV:-not found}), wheelhouse (${VB_WHEELS:-not found})"
@@ -498,14 +498,14 @@ elif [[ "$NAME" == "voicebox" ]]; then
   # may have the MODULE without the console script (the exact "bin/pip: No such file
   # or directory" failure we hit).
   vb_pip() {
-    echo "[harness] pip $*"
+    echo "[motdeck] pip $*"
     if ! "$VB_VENV/bin/python" -m pip install "$@" 2>&1 | tee -a "$VB_ILOG"; then
       echo ""
       echo "ERROR: voicebox dependency install FAILED at: pip install $*"
       echo "       full log: $VB_ILOG"
       echo "       voicebox has a KNOWN-FRAGILE dependency graph (five packages with"
       echo "       mutually conflicting pins) and upstream is stale (last push 2026-04-26)."
-      echo "       This is an upstream resolution problem, not a harness bug. It needs"
+      echo "       This is an upstream resolution problem, not a motdeck bug. It needs"
       echo "       network access; there is no offline path. Re-run in a terminal with:"
       echo "         ./scripts/install_component.sh voicebox --yes"
       exit 1
@@ -517,7 +517,7 @@ elif [[ "$NAME" == "voicebox" ]]; then
   vb_pip --no-deps chatterbox-tts
   vb_pip --no-deps hume-tada
   if [[ "$(uname -m)" == "arm64" && "$(uname)" == "Darwin" ]]; then
-    echo "[harness] Apple Silicon detected — installing the MLX backend…"
+    echo "[motdeck] Apple Silicon detected — installing the MLX backend…"
     vb_pip -r "vendor/voicebox/backend/requirements-mlx.txt"
     # requirements-mlx.txt deliberately omits mlx-audio (it declares transformers>=5,
     # which fights the transformers<=4.57.6 cap) — upstream installs it --no-deps after.
@@ -535,10 +535,10 @@ elif [[ "$NAME" == "voicebox" ]]; then
   #     failure here can never abort the (already very expensive) install.
   VB_FF="$(bash scripts/ensure_ffmpeg.sh "$VB_VENV" || true)"
   if [[ -n "$VB_FF" ]]; then
-    echo "[harness] voicebox ffmpeg → $VB_FF"
+    echo "[motdeck] voicebox ffmpeg → $VB_FF"
   else
-    echo "[harness] WARN: no ffmpeg available — transcription/conversion will fail."
-    echo "[harness]   (reason printed above; re-run the install to retry)"
+    echo "[motdeck] WARN: no ffmpeg available — transcription/conversion will fail."
+    echo "[motdeck]   (reason printed above; re-run the install to retry)"
   fi
 
   # 3. Web UI. The backend serves an SPA ONLY from <repo-root>/frontend, and no
@@ -548,15 +548,15 @@ elif [[ "$NAME" == "voicebox" ]]; then
   #    release into data/bun/. `|| true` is REQUIRED (this script runs under `set -e`).
   BUN="$(bash scripts/ensure_bun.sh || true)"
   if [[ -n "$BUN" ]]; then
-    echo "[harness] building the voicebox web UI (bun)…"
+    echo "[motdeck] building the voicebox web UI (bun)…"
     # BUN_INSTALL / BUN_INSTALL_CACHE_DIR keep bun's global dir + package cache inside
-    # data/ instead of ~/.bun — the harness never writes outside the project folder.
+    # data/ instead of ~/.bun — MOT Deck never writes outside the project folder.
     ( cd vendor/voicebox \
       && PATH="$(cd "$(dirname "$BUN")" && pwd):$PATH" \
          BUN_INSTALL="$ROOT/data/bun" \
          BUN_INSTALL_CACHE_DIR="$ROOT/data/bun/cache" \
          bash -c 'bun install && bun run build:web' ) \
-      || echo "[harness] WARN: the bun build failed — the tab will have no UI (API only)."
+      || echo "[motdeck] WARN: the bun build failed — the tab will have no UI (API only)."
     if [[ -f vendor/voicebox/web/dist/index.html ]] \
        && ! git -C vendor/voicebox ls-files --error-unmatch frontend >/dev/null 2>&1; then
       # (the ls-files guard: if upstream ever TRACKS frontend/, never clobber it)
@@ -569,19 +569,19 @@ elif [[ "$NAME" == "voicebox" ]]; then
         grep -qx 'frontend/' vendor/voicebox/.git/info/exclude 2>/dev/null \
           || echo 'frontend/' >> vendor/voicebox/.git/info/exclude
       fi
-      echo "[harness] voicebox web UI built → vendor/voicebox/frontend/"
+      echo "[motdeck] voicebox web UI built → vendor/voicebox/frontend/"
     else
-      echo "[harness] WARN: web/dist/index.html not found after the build — API only."
+      echo "[motdeck] WARN: web/dist/index.html not found after the build — API only."
     fi
   else
-    echo "[harness] WARN: bun could not be provisioned — the voicebox web UI was NOT built."
-    echo "[harness]   The component still starts and serves its JSON API + /mcp. The reason"
-    echo "[harness]   is printed above (usually no network); re-run this install to retry:"
-    echo "[harness]   ./scripts/install_component.sh voicebox --yes"
+    echo "[motdeck] WARN: bun could not be provisioned — the voicebox web UI was NOT built."
+    echo "[motdeck]   The component still starts and serves its JSON API + /mcp. The reason"
+    echo "[motdeck]   is printed above (usually no network); re-run this install to retry:"
+    echo "[motdeck]   ./scripts/install_component.sh voicebox --yes"
   fi
-  echo "[harness] NOTE: voicebox is MIT, but ships NO AUTHENTICATION — /speak, /transcribe"
-  echo "[harness]   and /mcp are open to anything that reaches :17493. Loopback only;"
-  echo "[harness]   never expose it (that includes any future Tailscale hop)."
+  echo "[motdeck] NOTE: voicebox is MIT, but ships NO AUTHENTICATION — /speak, /transcribe"
+  echo "[motdeck]   and /mcp are open to anything that reaches :17493. Loopback only;"
+  echo "[motdeck]   never expose it (that includes any future Tailscale hop)."
 elif [[ "$NAME" == "comfyui" ]]; then
   # ── OPTIONAL image/video generation component (GPL-3.0; composed over HTTP, never
   #    modified, never lifted from — arm's-length only, same posture as SearXNG). ───
@@ -598,7 +598,7 @@ elif [[ "$NAME" == "comfyui" ]]; then
   CU_ILOG="$ROOT/data/logs/comfyui-install.log"
   : > "$CU_ILOG"
   CU_PY="$(_pick_py)" || { echo "ERROR: no python3 found — install Python 3.12."; exit 1; }
-  echo "[harness] comfyui interpreter: $CU_PY"
+  echo "[motdeck] comfyui interpreter: $CU_PY"
   # upstream pyproject at the pin declares requires-python >= 3.10
   CU_MINOR=$("$CU_PY" -c 'import sys; print(sys.version_info[1])')
   if [[ "$CU_MINOR" -lt 10 ]]; then
@@ -607,7 +607,7 @@ elif [[ "$NAME" == "comfyui" ]]; then
   _mk_venv "$CU_VENV" "$CU_PY" "$CU_ILOG"
 
   cu_pip() {
-    echo "[harness] pip $*"
+    echo "[motdeck] pip $*"
     if ! "$CU_VENV/bin/python" -m pip install "$@" 2>&1 | tee -a "$CU_ILOG"; then
       echo ""
       echo "ERROR: comfyui dependency install FAILED at: pip install $*"
@@ -625,14 +625,14 @@ elif [[ "$NAME" == "comfyui" ]]; then
   # nightly index is unreachable we fall back to stable PyPI torch (which does have MPS)
   # and say so, rather than failing an otherwise fine install.
   if [[ "$(uname -m)" == "arm64" && "$(uname)" == "Darwin" ]]; then
-    echo "[harness] Apple Silicon — installing the PyTorch NIGHTLY build (upstream README's instruction)…"
+    echo "[motdeck] Apple Silicon — installing the PyTorch NIGHTLY build (upstream README's instruction)…"
     if "$CU_VENV/bin/python" -m pip install --pre torch torchvision torchaudio \
          --index-url https://download.pytorch.org/whl/nightly/cpu 2>&1 | tee -a "$CU_ILOG"; then
-      echo "[harness] torch nightly installed."
+      echo "[motdeck] torch nightly installed."
     else
-      echo "[harness] WARN: the PyTorch nightly index was unreachable — falling back to"
-      echo "[harness]   stable torch from PyPI (MPS works there too; upstream simply"
-      echo "[harness]   recommends nightly for the newest Metal fixes)."
+      echo "[motdeck] WARN: the PyTorch nightly index was unreachable — falling back to"
+      echo "[motdeck]   stable torch from PyPI (MPS works there too; upstream simply"
+      echo "[motdeck]   recommends nightly for the newest Metal fixes)."
     fi
   fi
   cu_pip -r vendor/comfyui/requirements.txt
@@ -642,12 +642,12 @@ elif [[ "$NAME" == "comfyui" ]]; then
   # NEXT TO main.py, i.e. straight into vendor/. start_component.sh always passes
   # --base-directory; create it here so the first Start has somewhere to write.
   mkdir -p "$ROOT/data/comfyui"
-  echo "[harness] comfyui base directory → $ROOT/data/comfyui (models/output/input/user)"
-  echo "[harness] NOTE: comfyui is GPL-3.0. The harness composes it at ARM'S LENGTH —"
-  echo "[harness]   a separate process reached over HTTP on 127.0.0.1:8188, never edited."
-  echo "[harness]   It binds loopback with NO authentication; never expose that port."
-  echo "[harness]   Its models load in ITS process, so they are invisible to the harness"
-  echo "[harness]   model-RAM ledger (memory.budget_gb) — a known, accepted limit."
+  echo "[motdeck] comfyui base directory → $ROOT/data/comfyui (models/output/input/user)"
+  echo "[motdeck] NOTE: comfyui is GPL-3.0. MOT Deck composes it at ARM'S LENGTH —"
+  echo "[motdeck]   a separate process reached over HTTP on 127.0.0.1:8188, never edited."
+  echo "[motdeck]   It binds loopback with NO authentication; never expose that port."
+  echo "[motdeck]   Its models load in ITS process, so they are invisible to MOT Deck"
+  echo "[motdeck]   model-RAM ledger (memory.budget_gb) — a known, accepted limit."
 elif [[ "$NAME" == "unsloth" ]]; then
   # ── OPTIONAL training/serving studio (AGPL-3.0-only for studio/, Apache-2.0 for the
   #    training library; composed over HTTP, never modified). ─────────────────────────
@@ -675,14 +675,14 @@ elif [[ "$NAME" == "unsloth" ]]; then
   US_VENV="$US_HOME/unsloth_studio"
   mkdir -p "$US_HOME" "$ROOT/data/logs"
   if [[ -d "$ROOT/data/unsloth-venv" ]]; then
-    echo "[harness] NOTE: data/unsloth-venv is the OLD shared-home layout's venv — no"
-    echo "[harness]   longer used by anything. Safe to delete to reclaim space:"
-    echo "[harness]     rm -rf '$ROOT/data/unsloth-venv'"
+    echo "[motdeck] NOTE: data/unsloth-venv is the OLD shared-home layout's venv — no"
+    echo "[motdeck]   longer used by anything. Safe to delete to reclaim space:"
+    echo "[motdeck]     rm -rf '$ROOT/data/unsloth-venv'"
   fi
   US_ILOG="$ROOT/data/logs/unsloth-install.log"
   : > "$US_ILOG"
   US_PY="$(_pick_py)" || { echo "ERROR: no python3 found — install Python 3.12."; exit 1; }
-  echo "[harness] unsloth interpreter: $US_PY"
+  echo "[motdeck] unsloth interpreter: $US_PY"
   # upstream pyproject at the pin declares requires-python >=3.9,<3.15
   US_MINOR=$("$US_PY" -c 'import sys; print(sys.version_info[1])')
   if [[ "$US_MINOR" -lt 9 || "$US_MINOR" -ge 15 ]]; then
@@ -691,7 +691,7 @@ elif [[ "$NAME" == "unsloth" ]]; then
   _mk_venv "$US_VENV" "$US_PY" "$US_ILOG"
 
   us_pip() {
-    echo "[harness] pip $*"
+    echo "[motdeck] pip $*"
     if ! "$US_VENV/bin/python" -m pip install "$@" 2>&1 | tee -a "$US_ILOG"; then
       echo ""
       echo "ERROR: unsloth dependency install FAILED at: pip install $*"
@@ -708,8 +708,8 @@ elif [[ "$NAME" == "unsloth" ]]; then
   # tab does not need them. Editable so the SPA we build below is found in place.
   us_pip -e "vendor/unsloth[studio]"
   [[ -x "$US_VENV/bin/unsloth" ]] || {
-    echo "[harness] WARN: the 'unsloth' console script is not in data/unsloth-home/unsloth_studio/bin —"
-    echo "[harness]   start_component.sh falls back to 'python -m unsloth_cli'."; }
+    echo "[motdeck] WARN: the 'unsloth' console script is not in data/unsloth-home/unsloth_studio/bin —"
+    echo "[motdeck]   start_component.sh falls back to 'python -m unsloth_cli'."; }
 
   # SPA. ⚠ UNLIKE voicestudio/voicebox this is NOT optional: at this pin
   # studio/backend/run.py's _missing_frontend_is_fatal() returns True for any launch that
@@ -718,30 +718,30 @@ elif [[ "$NAME" == "unsloth" ]]; then
   # start_component.sh refuses up front with the same reason.
   BUN="$(bash scripts/ensure_bun.sh || true)"
   if [[ -n "$BUN" ]]; then
-    echo "[harness] building the unsloth Studio SPA (bun)…"
+    echo "[motdeck] building the unsloth Studio SPA (bun)…"
     ( cd vendor/unsloth/studio/frontend \
       && PATH="$(cd "$(dirname "$BUN")" && pwd):$PATH" \
          BUN_INSTALL="$ROOT/data/bun" \
          BUN_INSTALL_CACHE_DIR="$ROOT/data/bun/cache" \
          bash -c 'bun install && bun run build' ) \
-      || echo "[harness] WARN: the bun build failed — see above."
+      || echo "[motdeck] WARN: the bun build failed — see above."
   else
-    echo "[harness] WARN: bun could not be provisioned (reason printed above)."
+    echo "[motdeck] WARN: bun could not be provisioned (reason printed above)."
   fi
   if [[ -f vendor/unsloth/studio/frontend/dist/index.html ]]; then
-    echo "[harness] unsloth Studio SPA built → studio/frontend/dist/"
+    echo "[motdeck] unsloth Studio SPA built → studio/frontend/dist/"
   else
-    echo "[harness] WARN: studio/frontend/dist/index.html is MISSING."
-    echo "[harness]   Unsloth Studio REFUSES to start a web-UI launch without it, so the"
-    echo "[harness]   tab will not work until this build succeeds. Re-run the install:"
-    echo "[harness]   ./scripts/install_component.sh unsloth --yes"
+    echo "[motdeck] WARN: studio/frontend/dist/index.html is MISSING."
+    echo "[motdeck]   Unsloth Studio REFUSES to start a web-UI launch without it, so the"
+    echo "[motdeck]   tab will not work until this build succeeds. Re-run the install:"
+    echo "[motdeck]   ./scripts/install_component.sh unsloth --yes"
   fi
-  echo "[harness] NOTE: Unsloth Studio is AGPL-3.0-only (the training library is Apache-2.0)."
-  echo "[harness]   The harness composes it at ARM'S LENGTH — a separate process on"
-  echo "[harness]   127.0.0.1:8899, never edited. It has its OWN login, handled in its own UI."
-  echo "[harness]   We never run 'unsloth start' and never set HERMES_HOME: that is its"
-  echo "[harness]   agent-wiring path and it must not touch your ~/.hermes."
-  echo "[harness]   Models it loads live in ITS process — invisible to memory.budget_gb."
+  echo "[motdeck] NOTE: Unsloth Studio is AGPL-3.0-only (the training library is Apache-2.0)."
+  echo "[motdeck]   MOT Deck composes it at ARM'S LENGTH — a separate process on"
+  echo "[motdeck]   127.0.0.1:8899, never edited. It has its OWN login, handled in its own UI."
+  echo "[motdeck]   We never run 'unsloth start' and never set HERMES_HOME: that is its"
+  echo "[motdeck]   agent-wiring path and it must not touch your ~/.hermes."
+  echo "[motdeck]   Models it loads live in ITS process — invisible to memory.budget_gb."
 else
   uv venv "data/odysseus-venv" --python "$PY" 2>/dev/null || true
   # shellcheck disable=SC1091
@@ -755,8 +755,8 @@ else
   # coordinated migration rotates every consumer. Fresh bootstrap already used
   # --fresh before any process existed.
   "$SECRET_PY" "$ROOT/scripts/local_secrets.py" ensure "$ROOT" >/dev/null
-  ODY_USER="$("$SECRET_PY" "$ROOT/scripts/local_secrets.py" get "$ROOT" MOT_ODYSSEUS_ADMIN_USER)"
-  ODY_PASSWORD="$("$SECRET_PY" "$ROOT/scripts/local_secrets.py" get "$ROOT" MOT_ODYSSEUS_ADMIN_PASSWORD)"
+  ODY_USER="$("$SECRET_PY" "$ROOT/scripts/local_secrets.py" get "$ROOT" MOT_DECK_ODYSSEUS_ADMIN_USER)"
+  ODY_PASSWORD="$("$SECRET_PY" "$ROOT/scripts/local_secrets.py" get "$ROOT" MOT_DECK_ODYSSEUS_ADMIN_PASSWORD)"
   ( cd vendor/odysseus && ODYSSEUS_ADMIN_USER="$ODY_USER" \
       ODYSSEUS_ADMIN_PASSWORD="$ODY_PASSWORD" python setup.py )
   # Connect step (one-switch): wire Odysseus to the local Jan endpoint as default model.
@@ -765,23 +765,23 @@ else
   RUNNER_KEY="$("$SECRET_PY" "$ROOT/scripts/read_manifest.py" \
     "$ROOT" runner.api_key str)"
   [[ -n "$RUNNER_KEY" ]] || {
-    echo "[harness] ERROR: runner.api_key is not provisioned; Odysseus was not seeded." >&2
+    echo "[motdeck] ERROR: runner.api_key is not provisioned; Odysseus was not seeded." >&2
     exit 1
   }
   ( cd vendor/odysseus && JAN_BASE_URL="$RUNNER_ENDPOINT" JAN_API_KEY="$RUNNER_KEY" \
       python "$ROOT/scripts/seed_odysseus_jan.py" ) || \
-    echo "[harness] note: Jan not reachable yet — endpoint seeded; model auto-discovers on Start"
+    echo "[motdeck] note: Jan not reachable yet — endpoint seeded; model auto-discovers on Start"
   deactivate
 fi
 
-# flip installed: true in harness.yaml. Mission Control reads THAT FLAG, not the disk
+# flip installed: true in motdeck.yaml. Mission Control reads THAT FLAG, not the disk
 # (bridge/app.py::status), so an install that skips this line shows "Not installed"
 # forever — which is exactly how OpenCode shipped. The writer lives in ONE file that
 # every component-shaped installer calls; see scripts/flip_installed.py.
 "${PY:-python3}" "$ROOT/scripts/flip_installed.py" "$NAME" || {
-  echo "[harness] ERROR: $NAME installed on disk but the harness.yaml flag could not be"
-  echo "[harness]   set, so its card will still say 'Not installed'. Fix with:"
-  echo "[harness]   python3 scripts/flip_installed.py $NAME"
+  echo "[motdeck] ERROR: $NAME installed on disk but motdeck.yaml flag could not be"
+  echo "[motdeck]   set, so its card will still say 'Not installed'. Fix with:"
+  echo "[motdeck]   python3 scripts/flip_installed.py $NAME"
   exit 1; }
 
-echo "[harness] $NAME installed. Start it from the panel or scripts/start_component.sh $NAME"
+echo "[motdeck] $NAME installed. Start it from the panel or scripts/start_component.sh $NAME"

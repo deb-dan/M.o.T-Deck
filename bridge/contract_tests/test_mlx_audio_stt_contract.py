@@ -61,7 +61,7 @@ def _help():
 def test_pin_exists_and_is_exact():
     """Always runs. The whole case for this engine is "no new pin" — it rides the
     mlx-audio version the TTS half already pins — so that pin must stay exact."""
-    c = yaml.safe_load((ROOT / "harness.yaml").read_text())
+    c = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
     pin = str(((c.get("build") or {}).get("mlx_audio_pin") or "")).strip()
     assert pin, "build.mlx_audio_pin is missing — the STT engine rides it too now"
     assert all(part.isdigit() for part in pin.split(".")), (

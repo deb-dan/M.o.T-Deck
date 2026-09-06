@@ -6,7 +6,7 @@ components keep serving), ⌥⌘Q stops everything.
 
 What this file pins, and why each fence exists rather than being obvious:
 
-  1. THE ORDER comes from harness.yaml, not from a list in the router. A consumer is
+  1. THE ORDER comes from motdeck.yaml, not from a list in the router. A consumer is
      stopped before what it consumes (hermes and odysseus before the runner and searxng),
      and the runner goes last. A hardcoded order is a second copy of the dependency graph
      that can silently disagree with the manifest.
@@ -119,7 +119,7 @@ def test_a_dependency_cycle_still_stops_everything():
 
 def test_the_real_manifest_orders_the_live_nine():
     import yaml
-    c = yaml.safe_load(_read(os.path.join(ROOT, "harness.yaml")))
+    c = yaml.safe_load(_read(os.path.join(ROOT, "motdeck.yaml")))
     order = stop_order(c["components"], EXTRA_DEPS)
     assert order[-1] == "runner"
     for name in c["components"]:

@@ -1,4 +1,4 @@
-"""harness-path-guard — fence Hermes file writes behind the human approval gate.
+"""motdeck-path-guard — fence Hermes file writes behind the human approval gate.
 
 Upstream Hermes gates *dangerous shell commands* with a human approval prompt, but
 ``write_file`` / ``patch`` are ungated BY DESIGN: the agent can write anywhere the
@@ -7,7 +7,7 @@ upstream's own first-class seam — the ``pre_tool_call`` hook (hermes_cli/plugi
 ``_get_pre_tool_call_directive_details`` / ``resolve_pre_tool_block``) — whose
 ``{"action": "approve"}`` directive escalates ANY tool call into the SAME approval
 gate (``tools.approval.request_tool_approval``) that dangerous commands use. On the
-Harness panel that surfaces as the existing Phase-2 approval card with zero UI work.
+MOT Deck panel that surfaces as the existing Phase-2 approval card with zero UI work.
 
 Policy (``policy.yaml`` beside this file, re-read on every gated call so edits apply
 without a restart):
@@ -108,7 +108,7 @@ def load_policy(policy_path: str) -> Dict[str, List[str]]:
         with open(policy_path, "r", encoding="utf-8") as fh:
             return parse_policy_text(fh.read())
     except Exception as exc:  # missing, unreadable, malformed
-        logger.warning("harness-path-guard: cannot read policy %s (%s) — "
+        logger.warning("motdeck-path-guard: cannot read policy %s (%s) — "
                        "escalating every write", policy_path, exc)
         return dict(_EMPTY_POLICY)
 
@@ -117,9 +117,9 @@ def load_policy(policy_path: str) -> Dict[str, List[str]]:
 # Pure matcher
 # ---------------------------------------------------------------------------
 
-def resolve_roots(raw_roots: Sequence[str], *, cwd: str, harness_root: str = "",
+def resolve_roots(raw_roots: Sequence[str], *, cwd: str, motdeck_root: str = "",
                   tmpdir: str = "", home: str = "") -> List[str]:
-    """Expand ``{HERMES_CWD}`` / ``{HARNESS_ROOT}`` / ``{TMPDIR}`` + ``~`` and
+    """Expand ``{HERMES_CWD}`` / ``{MOT_DECK_ROOT}`` / ``{TMPDIR}`` + ``~`` and
     realpath each root. Roots whose placeholder resolves empty are dropped (an
     unset $TMPDIR must NOT collapse to "/" and allow the whole filesystem)."""
     home = home or os.path.expanduser("~")
@@ -128,7 +128,7 @@ def resolve_roots(raw_roots: Sequence[str], *, cwd: str, harness_root: str = "",
         r = str(raw or "").strip()
         if not r:
             continue
-        subs = (("{HERMES_CWD}", cwd), ("{HARNESS_ROOT}", harness_root),
+        subs = (("{HERMES_CWD}", cwd), ("{MOT_DECK_ROOT}", motdeck_root),
                 ("{TMPDIR}", tmpdir))
         bad = False
         for token, value in subs:
@@ -255,11 +255,11 @@ def _policy_path() -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), POLICY_FILENAME)
 
 
-def _harness_root_hint() -> str:
-    """{HARNESS_ROOT} is substituted with the repo root when start_component.sh
-    seeds policy.yaml. HARNESS_ROOT env (if the launcher exports one) is honored
+def _motdeck_root_hint() -> str:
+    """{MOT_DECK_ROOT} is substituted with the repo root when start_component.sh
+    seeds policy.yaml. MOT_DECK_ROOT env (if the launcher exports one) is honored
     as a fallback so an unsubstituted placeholder still resolves."""
-    return os.environ.get("HARNESS_ROOT", "") or ""
+    return os.environ.get("MOT_DECK_ROOT", "") or ""
 
 
 def _on_pre_tool_call(tool_name: str = "", args: Any = None,
@@ -271,21 +271,21 @@ def _on_pre_tool_call(tool_name: str = "", args: Any = None,
         policy = load_policy(_policy_path())
         cwd = os.getcwd()
         allow = resolve_roots(policy.get("allow", []), cwd=cwd,
-                              harness_root=_harness_root_hint(),
+                              motdeck_root=_motdeck_root_hint(),
                               tmpdir=os.environ.get("TMPDIR", ""))
         deny = resolve_roots(policy.get("deny", []), cwd=cwd,
-                             harness_root=_harness_root_hint(),
+                             motdeck_root=_motdeck_root_hint(),
                              tmpdir=os.environ.get("TMPDIR", ""))
         directive = evaluate(tool_name, args, allow_roots=allow, deny_roots=deny,
                              cwd=cwd)
         if directive:
-            logger.info("harness-path-guard: %s on %s → %s", tool_name,
+            logger.info("motdeck-path-guard: %s on %s → %s", tool_name,
                         (args or {}).get("path") if isinstance(args, dict) else "?",
                         directive.get("action"))
         return directive
     except Exception as exc:
         # Fail-CLOSED: never let a guard bug turn into a silent allow.
-        logger.warning("harness-path-guard: internal error (%s) — escalating", exc)
+        logger.warning("motdeck-path-guard: internal error (%s) — escalating", exc)
         return escalate_directive(
             "path-guard: guard error, human confirmation required for "
             "{}".format(tool_name))

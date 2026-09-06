@@ -240,7 +240,7 @@ propelrc.com/comfyui-vs-automatic1111-vs-fooocus · A1111 issue #3841 · Fooocus
 ### 2.8 The native-macOS lens — Pixelmator Pro / Photomator / Image Playground
 
 The platform's own answer to "ML for non-technical people", and the closest cultural fit for a
-Mac-native harness (Pixelmator is Apple-owned since 2024; pixelmator.com now 301s to
+Mac-native motdeck (Pixelmator is Apple-owned since 2024; pixelmator.com now 301s to
 apple.com/pixelmator-pro):
 
 - **One named verb per capability, in context.** Remove Background is a single menu item, zero

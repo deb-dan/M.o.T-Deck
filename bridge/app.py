@@ -1,4 +1,4 @@
-"""Harness bridge — control panel + component lifecycle API.
+"""MOT Deck bridge — control panel + component lifecycle API.
 
 M0/M1 scope: status, install (with plan → approve → execute), start/stop.
 Gearbox (M2) and adapter/self-heal (M3) are stubs; see gearbox.py / adapter.py.
@@ -53,8 +53,8 @@ def _lane(name: str) -> _ModuleType:
     """Import one lane, and DIAGNOSE a missing one instead of dying anonymously.
 
     ⚠️ THIS IS DELIBERATELY *NOT* THE DEFENSIVE PATTERN THE SATELLITES USE. voice.py or
-    oo.py going missing costs the harness one tab, so those imports swallow the failure
-    and the affected route says why. A missing LANE is not a degraded harness — it is
+    oo.py going missing costs MOT Deck one tab, so those imports swallow the failure
+    and the affected route says why. A missing LANE is not a degraded MOT Deck build — it is
     the routes themselves gone. There is nothing to degrade to and pretending otherwise
     would serve a bridge that answers 404 to half the panel, which is the exact
     LIE-TO-USER shape this project ranks above a crash.
@@ -103,7 +103,7 @@ class _WatchedStatic(StaticFiles):
     otherwise silent.
 
     A `BaseHTTPMiddleware` would answer it too — and would also wrap EVERY response in
-    the harness, including the SSE chat relays, in a queue-and-pump that is documented
+    MOT Deck, including the SSE chat relays, in a queue-and-pump that is documented
     to interfere with streaming and background tasks. The whole Hermes lane rides those
     streams (a 20s heartbeat frame the panel's stall watchdog counts on), so a
     diagnostic for the spreadsheet tab may not go anywhere near them. This subclass
@@ -370,7 +370,7 @@ class _Facade(_ModuleType):
     touch. So a write goes to every lane that holds the name (the owner AND every lane
     that imported it), which is exactly the set of globals that could resolve it. Same
     for `A.ROOT = tmpdir`, which the aider / nav / installed-flip / office-mcp suites
-    use to redirect the whole harness at a temp tree.
+    use to redirect the whole motdeck at a temp tree.
 
     A name NO lane holds is simply set here — that is a test adding a new attribute, and
     nothing else could have been meant by it.

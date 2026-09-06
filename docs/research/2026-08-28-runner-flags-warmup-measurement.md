@@ -12,7 +12,7 @@ This machine was NOT quiet during measurement — see "Honest limits."
 ## Setup (reproducible)
 
 - Binary: `data/llamacpp/build/bin/llama-server`, `version: 0.3.0-dev (build 10662,
-  commit 18443257a)`, AppleClang 21, Darwin arm64. Same binary the harness launches
+  commit 18443257a)`, AppleClang 21, Darwin arm64. Same binary MOT Deck launches
   (read from `scripts/start_component.sh` runner branch).
 - Model: the real resident 27B — `Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-Q4_K_S.gguf`
   (17.09 GB, from `~/.lmstudio/models/DavidAU/...MTP-GGUF/`).
@@ -26,7 +26,7 @@ This machine was NOT quiet during measurement — see "Honest limits."
   gguf file as the live runner, so weight pages are shared page cache. Scratch RSS
   showed 19.5 GB but system-wide free stayed at 24-25% before/after load
   (`memory_pressure -Q`). Swap was near-full (10.7/11 GB) the whole time regardless.
-- Prompts: built from repo docs text (`docs/HARNESS-INTERNALS.md` + `docs/harness-architecture.md`
+- Prompts: built from repo docs text (`docs/MOT-DECK-INTERNALS.md` + `docs/motdeck-architecture.md`
   + the rest of docs/), trimmed via the server's `/tokenize`:
   "8k" file = **7,745 tokens**, "24k" file = **23,493 tokens**.
 - Requests: native `/completion`, `cache_prompt: false` (forces full prefill every run),

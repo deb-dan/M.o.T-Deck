@@ -183,24 +183,24 @@ for (const p of PACKS) {
 // 2. PERSISTENCE — THE KEYS DID NOT CHANGE
 // ═══════════════════════════════════════════════════════════════════════════════
 console.log('persistence keys');
-ok(/localStorage\.setItem\('harness-theme', id\)/.test(html),
-   'the theme is persisted in harness-theme — the SAME key, so office.html follows along');
-ok(!/harness-theme-pack|harness-themepack|harness-pack/.test(html),
+ok(/localStorage\.setItem\('motdeck-theme', id\)/.test(html),
+   'the theme is persisted in motdeck-theme — the SAME key, so office.html follows along');
+ok(!/motdeck-theme-pack|motdeck-themepack|motdeck-pack/.test(html),
    'no second theme key was invented (one axis, one key)');
 {
-  // no NEW localStorage key at all in this slice: the rail reuses harness-chat-rail.
+  // no NEW localStorage key at all in this slice: the rail reuses motdeck-chat-rail.
   const keys = new Set((html.match(/localStorage\.(?:get|set|remove)Item\('([^']+)'/g) || [])
     .map(s => s.replace(/.*\('/, '').replace(/'$/, '')));
-  ok(keys.has('harness-theme') && keys.has('harness-chrome') && keys.has('harness-chat-rail')
-     && keys.has('harness-sessions-rail'),
+  ok(keys.has('motdeck-theme') && keys.has('motdeck-chrome') && keys.has('motdeck-chat-rail')
+     && keys.has('motdeck-sessions-rail'),
      'the four skin/layout keys are all still the shipped names');
 }
 // pre-paint: same pass, theme first, and the whitelist is explicit.
 {
   const pre = html.split('</style>')[1].split('</head>')[0];
-  ok(pre.indexOf('harness-theme') < pre.indexOf('harness-chrome'),
+  ok(pre.indexOf('motdeck-theme') < pre.indexOf('motdeck-chrome'),
      'theme is still applied before chrome in the ONE pre-paint pass (no flash)');
-  const line = (pre.match(/[\s\S]*?getItem\('harness-theme'\)[\s\S]*?catch/) || [''])[0];
+  const line = (pre.match(/[\s\S]*?getItem\('motdeck-theme'\)[\s\S]*?catch/) || [''])[0];
   for (const p of ['light', 'gold', 'cyber']) {
     ok(line.includes("'" + p + "'"), 'the pre-paint whitelist knows ' + p);
   }
@@ -213,7 +213,7 @@ ok(!/harness-theme-pack|harness-themepack|harness-pack/.test(html),
   ok(/if \(theme === 'light'\) d\.setAttribute\('data-theme', 'light'\);/.test(office)
      && /else d\.removeAttribute\('data-theme'\);/.test(office),
      'office.html still maps light→light and EVERYTHING ELSE→its own dark (not edited)');
-  ok(!/setItem\('harness-theme'/.test(office),
+  ok(!/setItem\('motdeck-theme'/.test(office),
      '…and still never writes the key — the panel remains the only author');
   // executed: the office mapping, run over all four pack ids.
   const officeTheme = t => (t === 'light' ? 'light' : 'dark');
@@ -381,7 +381,7 @@ console.log('sidebar rail (executed decision table)');
      '…and the page starts after the strip, so nothing sits underneath it');
 }
 // persistence + the toggle's flip source
-ok(/localStorage\.setItem\('harness-chat-rail', next\)/.test(html),
+ok(/localStorage\.setItem\('motdeck-chat-rail', next\)/.test(html),
    'the rail choice is persisted in the SHIPPED key (no new key for a promoted feature)');
 {
   const i = html.indexOf('function toggleSideRail()');

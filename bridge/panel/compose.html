@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Music · MOT Deck</title>
-<meta name="harness-build" content="compose-2026-08-29b">
+<meta name="motdeck-build" content="compose-2026-08-29b">
 <!--
   ══ COMPOSE — THE ALTERNATIVE MUSIC SURFACE, SPECTRUM LAYOUT ═══════════════════
   docs/FABLE-MUSIC-COMPOSE-SPEC.md §"SPEC v2" (BINDING) · design source:
@@ -64,14 +64,33 @@
 <script>
 (function () {
   // ══ SKIN COHERENCE — read the panel's three axes, never write them ══════════
+  // U150: the no-external-resource contract is load-bearing here too. Migrate only
+  // MOT Deck-owned preference keys inline before the skin reads them. New keys win;
+  // unrelated storage remains untouched; storage denial cannot break Music.
+  try {
+    Object.keys(localStorage).forEach(function (oldKey) {
+      var newKey = oldKey.indexOf('harness.') === 0
+        ? 'motdeck.' + oldKey.slice(8)
+        : (oldKey.indexOf('harness-') === 0
+            ? 'motdeck-' + oldKey.slice(8) : '');
+      if (!newKey) return;
+      if (localStorage.getItem(newKey) === null) {
+        localStorage.setItem(newKey, localStorage.getItem(oldKey));
+      }
+      localStorage.removeItem(oldKey);
+    });
+  } catch (_) {
+    /* Storage denial must not prevent Music from booting. */
+  }
+
   // Same contract as comfy.html/office.html: this page is served from the SAME ORIGIN
   // as the panel, so the choices the panel persists are simply readable here. There is
   // no theme button on this page on purpose — a tab that could disagree with the app it
   // lives in is the original complaint.
   //
-  //   harness-theme  ∈ dark(default) | light | gold | cyber   → data-theme
-  //   harness-chrome === 'studio'                             → data-chrome="studio"
-  //   harness-design ∈ studio | studio-light                  → data-design/-dvariant
+  //   motdeck-theme  ∈ dark(default) | light | gold | cyber   → data-theme
+  //   motdeck-chrome === 'studio'                             → data-chrome="studio"
+  //   motdeck-design ∈ studio | studio-light                  → data-design/-dvariant
   //
   // It runs in the HEAD, before the stylesheet is parsed: applying it later paints the
   // page dark and then flips it, on every load. The whitelists are duplicated here
@@ -80,9 +99,9 @@
   function skin(){
     var d = document.documentElement, t = null, c = null, g = null;
     try {
-      t = localStorage.getItem('harness-theme');
-      c = localStorage.getItem('harness-chrome');
-      g = localStorage.getItem('harness-design');
+      t = localStorage.getItem('motdeck-theme');
+      c = localStorage.getItem('motdeck-chrome');
+      g = localStorage.getItem('motdeck-design');
     } catch (e) { return; }                    // private mode: defaults stand, silently
     if (t === 'light' || t === 'gold' || t === 'cyber') d.setAttribute('data-theme', t);
     else d.removeAttribute('data-theme');
@@ -1878,7 +1897,7 @@ function renderEnginesSheet() {
       '<button class="btn" data-act="reveal-dir">Reveal</button>' +
       (S.dirEdit
         ? '<input id="dir-inp" style="width:260px" value="' +
-            esc(S.dirValue == null ? dir : S.dirValue) + '" placeholder="~/Music/Harness">' +
+            esc(S.dirValue == null ? dir : S.dirValue) + '" placeholder="~/Music/MOT Deck">' +
           '<button class="btn" data-act="set-dir">Set</button>' +
           '<button class="btn" data-act="cancel-dir">Cancel</button>'
         : '<button class="btn" data-act="edit-dir">Change ▸</button>') +

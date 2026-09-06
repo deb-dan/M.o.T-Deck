@@ -89,7 +89,7 @@ def sanitize_artifact_filename(name) -> str | None:
 
 @app.post("/api/artifact/save")
 async def artifact_save(req: Request) -> JSONResponse:
-    """Save an edited artifact buffer to ~/Downloads/harness-artifacts/ (canvas Save).
+    """Save an edited artifact buffer to ~/Downloads/motdeck-artifacts/ (canvas Save).
 
     SECURITY (Fable spec, non-negotiable): the client sends {filename, content}
     ONLY — never a path. The filename is reduced to a sanitized, extension-
@@ -112,7 +112,7 @@ async def artifact_save(req: Request) -> JSONResponse:
         print(f"[artifact] reject save: bad filename {data.get('filename')!r}", flush=True)
         return JSONResponse({"ok": False, "log": "invalid or non-whitelisted filename"},
                             status_code=400)
-    save_dir = os.path.join(os.path.expanduser("~"), "Downloads", "harness-artifacts")
+    save_dir = os.path.join(os.path.expanduser("~"), "Downloads", "motdeck-artifacts")
     os.makedirs(save_dir, exist_ok=True)
     stem, ext = name.rsplit(".", 1)
     path = os.path.join(save_dir, name)

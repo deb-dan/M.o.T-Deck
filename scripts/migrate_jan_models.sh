@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Migrate GGUF models out of Jan's data folder into harness ownership (data/models/),
-# then re-seed the registry. Part of the "make the harness Jan-free" cleanup slice.
+# Migrate GGUF models out of Jan's data folder into motdeck ownership (data/models/),
+# then re-seed the registry. Part of the "make MOT Deck Jan-free" cleanup slice.
 #
 # For each  ~/Library/Application Support/Jan/data/llamacpp/models/<id>/  that holds a
 # model.gguf, move the WHOLE folder to  data/models/<id>/  (same volume = instant rename;
@@ -18,8 +18,8 @@ DEST="data/models"
 mkdir -p "$DEST"
 
 if [[ ! -d "$JAN_MODELS" ]]; then
-  echo "[harness] no Jan models dir at: $JAN_MODELS"
-  echo "[harness] nothing to migrate — re-seeding registry from data/models/ only."
+  echo "[motdeck] no Jan models dir at: $JAN_MODELS"
+  echo "[motdeck] nothing to migrate — re-seeding registry from data/models/ only."
   python3 scripts/seed_registry.py
   exit 0
 fi
@@ -29,19 +29,19 @@ for folder in "$JAN_MODELS"/*/; do
   [[ -d "$folder" ]] || continue
   id=$(basename "$folder")
   # Only migrate folders that actually contain a model.gguf.
-  [[ -f "$folder/model.gguf" ]] || { echo "[harness] skip (no model.gguf): $id"; continue; }
+  [[ -f "$folder/model.gguf" ]] || { echo "[motdeck] skip (no model.gguf): $id"; continue; }
   target="$DEST/$id"
   if [[ -e "$target" ]]; then
-    echo "[harness] skip (already in data/models): $id"
+    echo "[motdeck] skip (already in data/models): $id"
     skipped=$((skipped+1))
     continue
   fi
-  echo "[harness] migrating: $id"
+  echo "[motdeck] migrating: $id"
   mv "$folder" "$target"
   moved=$((moved+1))
 done
 
-echo "[harness] migrated $moved model(s), skipped $skipped."
-echo "[harness] re-seeding registry…"
+echo "[motdeck] migrated $moved model(s), skipped $skipped."
+echo "[motdeck] re-seeding registry…"
 python3 scripts/seed_registry.py
-echo "[harness] done. Verify data/models.json, then start the Runner (panel → Runner → Start)."
+echo "[motdeck] done. Verify data/models.json, then start the Runner (panel → Runner → Start)."

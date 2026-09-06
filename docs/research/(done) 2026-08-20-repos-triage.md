@@ -11,7 +11,7 @@ Hermes = resident agent, Odysseus = chat workspace.
 
 ## VERDICTS TABLE
 
-| Item | What it really is | License | Mac + local-model fit | Overlap with harness | Verdict |
+| Item | What it really is | License | Mac + local-model fit | Overlap with motdeck | Verdict |
 |---|---|---|---|---|---|
 | **aider** | Terminal REPL coding agent (+ experimental Streamlit browser UI). No server API. | Apache-2.0 | **Best of the lot: needs NO tool-calling** — edits via text edit formats. `OPENAI_API_BASE` + `openai/<model>` is documented. | Complements Hermes (repo map + edit-loop discipline Hermes lacks) | **ADOPT (primary)** — but pin it: upstream has had **no release since 2025-08-09**; living fork is `cecli`. |
 | **goose** | General-purpose agent (desktop app + CLI + ACP/REST server), not a coding agent | Apache-2.0 | First-class local config (`OPENAI_HOST`/`OPENAI_BASE_PATH`), but vendor says **"works best with Claude 4"** and tool-calling is load-bearing | Duplicates Hermes almost exactly | **REJECT** — a second Hermes with worse local-model odds. |
@@ -74,13 +74,13 @@ Integration shape — deliberately the cheapest one available:
 - **Not** a `components:` entry. aider is a CLI with no health endpoint and no server API; a port+health component
   would be fiction.
 - Hermes's dashboard **already embeds a PTY** (`/api/pty`). The honest shape is a **new tab running `aider` in a PTY**,
-  or simply a ⌘K action that opens one — the same class of surface the harness already ships.
+  or simply a ⌘K action that opens one — the same class of surface MOT Deck already ships.
 - Config is three lines and needs no new machinery:
-  `OPENAI_API_BASE=http://127.0.0.1:6767/v1`, `OPENAI_API_KEY=harness-local`, `aider --model openai/<registry-id>`.
-  Note this must use the **wire model id** rule the harness already encodes (`wire_model_id()` in `bridge/app.py`):
+  `OPENAI_API_BASE=http://127.0.0.1:6767/v1`, `OPENAI_API_KEY=motdeck-local`, `aider --model openai/<registry-id>`.
+  Note this must use the **wire model id** rule MOT Deck already encodes (`wire_model_id()` in `bridge/app.py`):
   gguf → registry id, mlx → the registry *path*.
 - aider auto-commits. On this repo, with its uncommitted-work discipline, that wants an explicit `--no-auto-commits`
-  decision before anyone runs it in the harness tree.
+  decision before anyone runs it in MOT Deck tree.
 
 **The catch, and it is real:** upstream aider's last GitHub release is **v0.86.0, 2025-08-09** — roughly twelve months
 cold, with ~1,600 open issues and a maintainer described as AFK. The community fork `aider-ce` was created for exactly
@@ -97,14 +97,14 @@ upstream" and "pin an active fork" is a Fable call, not a builder's.
 - **Crush** — technically the best-engineered for this exact machine: native `llamacpp` **and `omlx` (MLX)** provider
   types, model auto-discovery off `/v1/models`, explicit per-model `--context-window`, a separate **small-model slot**
   for housekeeping, and `permissions deny` that *hides* a tool from the agent. Two blockers: the **FSL-1.1-MIT licence
-  is source-available, not open source** (fine for personal internal use, materially different if the harness is ever
+  is source-available, not open source** (fine for personal internal use, materially different if MOT Deck is ever
   open-sourced or shipped — GitHub reports it as `NOASSERTION`, so scanners will flag it), and its config is **trusted
   code** (`crushrc` is Bash; `$(...)` in `crush.json` executes at load). Also: metrics on by default
   (`CRUSH_DISABLE_METRICS=1`) and a provider catalog that auto-updates from Charm's servers
-  (`CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1`) — both want disabling in a local-first harness.
+  (`CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1`) — both want disabling in a local-first motdeck.
 - **OpenCode** — the only candidate that hands you a **documented versioned HTTP contract** for building a native
   panel: `opencode serve`, OpenAPI 3.1 at `/doc`, SSE at `/event`, `POST /session/:id/permissions/:permissionID`,
-  `OPENCODE_SERVER_PASSWORD`. If the harness ever wants a coding lane rendered in its *own* editorial UI with approval
+  `OPENCODE_SERVER_PASSWORD`. If MOT Deck ever wants a coding lane rendered in its *own* editorial UI with approval
   cards (exactly the Hermes-lane pattern already built), this is the substrate. Against it: **6,496 open issues** and
   a 4B cannot drive it.
 
@@ -182,7 +182,7 @@ Three honest options, cheapest first:
    **launch a headless-but-visible Chromium with `--remote-debugging-port`, point `BROWSER_CDP_URL` at it, and show
    it in a window/pane** — the agent and the human then share one real browser. That is a real slice (process
    lifecycle, port, window management) and wants a Fable spec. ⚠️ Whether a CDP-driven Chromium window can be hosted
-   *inside* the harness window on macOS, versus sitting beside it, is unverified.
+   *inside* MOT Deck window on macOS, versus sitting beside it, is unverified.
 
 **browser-use itself: REJECT as a component.** Its default forces
 `response_format: {type: "json_schema", strict: true}` on every step over a large DOM-state prompt. The very existence
@@ -234,11 +234,11 @@ beyond."* Installed as a Claude Code plugin marketplace. Its repo tree is per-ha
 run**.
 
 - **"Is this better than Hermes?"** — Not comparable. Hermes is an agent runtime (model loop, tools, approvals,
-  sessions, WS gateway). ECC has **no inference layer at all**; it configures whatever harness you already run. It
+  sessions, WS gateway). ECC has **no inference layer at all**; it configures whatever motdeck you already run. It
   cannot replace Hermes because it does not do what Hermes does.
 - **"Could it be our engine but more robust?"** — No. There is no engine in it.
 - **"Is this a combination of Hermes and Odysseus?"** — No. It is a *prompt-and-skills layer* — the same category as
-  Hermes's own skills, our `guards/harness-path-guard`, and this `CLAUDE.md` working-memory discipline. It is a
+  Hermes's own skills, our `guards/motdeck-path-guard`, and this `CLAUDE.md` working-memory discipline. It is a
   competing take on the layer we already have, not a combination of the two components.
 
 **Maturity:** genuinely, intensely active — created 2026-01-18, ~2,428 commits, last push the day before this report.
@@ -252,7 +252,7 @@ because it is the authoritative source, but I did not audit it, and the README l
 `api.ecc.tools/badge/stars` endpoint rather than GitHub's own shield. Treat the number as unverified.
 
 **Verdict: REJECT as a dependency; read for ideas.** Installing a third party's `hooks/` into the agent's tool path is
-precisely the surface `guards/harness-path-guard` and the approval-card work exist to control. Its cross-harness skill
+precisely the surface `guards/motdeck-path-guard` and the approval-card work exist to control. Its cross-harness skill
 *packaging* ideas may be worth reading.
 
 ---
@@ -270,7 +270,7 @@ package: planning, subagents, filesystem), and **LangSmith** (the paid observabi
 Why it is not comparable to Hermes/Odysseus: those are *finished applications* with their own runtimes, UIs, session
 stores and tool implementations. LangChain is the raw material you would use to *build* such a thing.
 
-**Use for this harness: none, and adopting it would be actively costly.** The compose-don't-build doctrine says: take
+**Use for this motdeck: none, and adopting it would be actively costly.** The compose-don't-build doctrine says: take
 finished components and wire them over HTTP/MCP. LangChain is the opposite move — it would mean rewriting the bridge's
 lanes, fan-out and relay against someone else's abstraction layer, for **zero end-user capability gain**. The one place
 it legitimately shows up is indirectly: LibreChat's RAG API is a LangChain/FastAPI service. That is fine — it is
@@ -303,7 +303,7 @@ alternative."
 **Integration shape if adopted:** it fits the component pattern on paper (daemon, port, SQLite, no Docker) — but note
 it would be a component whose engine is *a coding agent CLI*, i.e. it only becomes useful **after** item 1 is settled.
 
-**Verdict: RECON-FURTHER, sandbox-first.** The capability is genuinely new to the harness and the licence/runtime are
+**Verdict: RECON-FURTHER, sandbox-first.** The capability is genuinely new to MOT Deck and the licence/runtime are
 compatible; the marketing posture and the unverifiable numbers mean nobody should adopt this on README trust.
 
 ---
@@ -325,7 +325,7 @@ Sheets additionally needs a **Rust toolchain** for its xlsx sidecar.
 **Verdict: REJECT as a component.** Electron desktop app — no port, no health endpoint, nothing to embed as a tab, and
 its AI cannot point at `:6767`. **What is worth stealing:** the Apache-2.0 TypeScript **engine packages**
 (`docx-engine`, `pptx-engine`/`pptx-render`, `file-parse`, `agent-core`) have zero Electron dependency and are
-importable as libraries — a credible route to local docx/pptx read-write if the harness ever wants document output.
+importable as libraries — a credible route to local docx/pptx read-write if MOT Deck ever wants document output.
 ⚠️ Whether `ai-provider` has an *undocumented* base-URL override is unverified (would need to read source).
 
 ---
@@ -345,7 +345,7 @@ a dummy key would just work. Health is strong, and it has just picked up corpora
 power an "Agentic Data Stack"** — worth watching for roadmap drift).
 
 **The honest overlap answer: ~80% duplicate of Odysseus.** Chat over multiple endpoints, sessions, tools, MCP, web
-search, artifacts, file upload — Odysseus already does all of that, and the harness has built a great deal of bespoke
+search, artifacts, file upload — Odysseus already does all of that, and MOT Deck has built a great deal of bespoke
 machinery *on top of* Odysseus (the direct lane, the session rail, per-message actions, the attachment sidecar, the
 artifact renderer, the capabilities panel). Running a second chat app would fork the user's attention and double the
 surface for zero new capability in the common case.
@@ -354,16 +354,16 @@ surface for zero new capability in the common case.
 appear to cover:
 
 - **Agents / Subagents / Agent Plugins / Skills** + an Agents API — no-code custom assistants with their own tools and
-  files. (The harness's analogue is the Hermes lane; a *user-defined agent* surface is genuinely absent.)
+  files. (MOT Deck's analogue is the Hermes lane; a *user-defined agent* surface is genuinely absent.)
 - **Sandboxed Code Interpreter** (Python/JS/Go/Rust). Note: paid hosted service, not self-hostable — so this is an
   idea, not a component.
-- **User Memory** — persistent cross-conversation context. (The harness's unified-memory milestone is still open.)
+- **User Memory** — persistent cross-conversation context. (MOT Deck's unified-memory milestone is still open.)
 - **Model Arena / side-by-side comparison.**
-- **Resumable streams** — auto-reconnect after an interrupted response. Directly relevant: the harness has fought
+- **Resumable streams** — auto-reconnect after an interrupted response. Directly relevant: MOT Deck has fought
   turn-lifecycle and WS-1005 teardown bugs repeatedly, and "the stream survives a reconnect" is a real design idea.
-- **Enterprise auth** (OAuth2/SAML/LDAP/2FA, roles, admin panel) — irrelevant for a single-user personal harness, and
+- **Enterprise auth** (OAuth2/SAML/LDAP/2FA, roles, admin panel) — irrelevant for a single-user personal motdeck, and
   worth naming as irrelevant so it doesn't inflate the comparison.
-- Conversation **forking** and **import from ChatGPT** — the harness already has fork; import does not exist.
+- Conversation **forking** and **import from ChatGPT** — MOT Deck already has fork; import does not exist.
 - No "assistants marketplace" in the app-store sense; the analogue is shared/permissioned Agents.
 
 **Verdict: REJECT as a component (MongoDB + duplicate), ADOPT as a feature quarry.** The two highest-value ideas to
@@ -391,7 +391,7 @@ local interface."* Per Unsloth's own docs:
   `/v1/responses`, `/v1/messages`, `/v1/models`) with `sk-unsloth-…` bearer keys and a live API monitor.
 - **Data Recipes** — auto-builds datasets from PDF/CSV/JSON/DOCX/TXT (powered by NVIDIA NeMo Data Designer).
 - Exports to **GGUF / 16-bit safetensors** for llama.cpp, Ollama, LM Studio.
-- **Licence: dual — Apache-2.0 core, AGPL-3.0 for the Studio UI.** Same posture the harness already accepted for
+- **Licence: dual — Apache-2.0 core, AGPL-3.0 for the Studio UI.** Same posture MOT Deck already accepted for
   SearXNG and VoiceStudio, and the same doctrine applies (arm's-length HTTP, never edit vendor, never modify-and-serve).
 
 So Debi's claim — *"unsloth is doing everything I'm trying to do — text/audio/image in one app for local AI"* — is
@@ -406,7 +406,7 @@ command, and this warning, verbatim:
 > its own server-side tools, **which swallows the agent's tool calls, so Hermes answers but never runs its tools.**
 > `--disable-tools` switches to passthrough, so Hermes's own tools are used.
 
-That is a precise description of a failure mode this harness would have hit blind — and it is the exact seam
+That is a precise description of a failure mode this motdeck would have hit blind — and it is the exact seam
 (`platform_toolsets`, the toolset lever, the approval cards) that has consumed several sessions. Unsloth also documents
 the Hermes config path we already write to (`~/.hermes/config.yaml` + `.env`) and the "Custom OpenAI-compatible
 endpoint" wizard flow.
@@ -420,10 +420,10 @@ endpoint" wizard flow.
 2. **It is a rival whole-stack, not a feature.** Studio brings its own chat, its own web search, its own code
    execution, its own model hub, its own agent launcher, and its own **llama.cpp build** (`~/.unsloth/llama.cpp`,
    needs `brew install cmake openssl git`) alongside our pinned `b10427`. Adopting it wholesale would mean adopting a
-   competitor to the harness's entire reason for existing.
+   competitor to MOT Deck's entire reason for existing.
 3. **Security posture cuts against ours.** Server-side tools (web search, **Python and terminal execution**) *"run as
    your user and are on by default"* on loopback — *"Anyone who can reach the server with the API key can run code on
-   this machine."* That is a strictly weaker stance than the harness's path-guard + approval-card discipline, and it
+   this machine."* That is a strictly weaker stance than MOT Deck's path-guard + approval-card discipline, and it
    would sit on the same box.
 4. **RAM-ledger blindness.** It uses `~/.cache/huggingface` (which our registry already scans as `audio-hf-cache`) and
    loads its own resident models. A model loaded in Studio is **invisible to `memory.budget_gb: 48`** — the same class
@@ -435,8 +435,8 @@ endpoint" wizard flow.
 
 **RECON-FURTHER — highest-value item on the list, adopted narrowly.**
 
-The wrong move is a "Tune tab" that is really a second harness. The right move, if Debi wants this, is a **component in
-the VoiceStudio pattern**: `components.unsloth` in `harness.yaml` (repo/pin/port 8888/installed:false/enabled:false),
+The wrong move is a "Tune tab" that is really a second motdeck. The right move, if Debi wants this, is a **component in
+the VoiceStudio pattern**: `components.unsloth` in `motdeck.yaml` (repo/pin/port 8888/installed:false/enabled:false),
 `installed:false` by default, its own tab, health-checked on `:8888`, **started only when training** — and explicitly
 **not** wired as a chat provider or an agent endpoint. Our runner stays `:6767`. Its AGPL UI is reached over HTTP,
 never modified.
@@ -454,8 +454,8 @@ Two paths, and the first is nearly free:
 
 **(a) `mlx_lm.lora` — already installed.** Confirmed present in the provisioned venv:
 `data/mlx-venv/bin/mlx_lm.lora`, plus `mlx_lm.fuse`, `mlx_lm.convert`, `mlx_lm.dwq`, `mlx_lm.awq`, `mlx_lm.gptq`,
-`mlx_lm.evaluate`, `mlx_lm.perplexity`. Pinned `mlx-lm==0.31.3` (`harness.yaml:202`), with `transformers 5.14.1` and
-`torch 2.13.0` already in that venv. **There is zero fine-tuning surface in the harness today** — a repo-wide grep for
+`mlx_lm.evaluate`, `mlx_lm.perplexity`. Pinned `mlx-lm==0.31.3` (`motdeck.yaml:202`), with `transformers 5.14.1` and
+`torch 2.13.0` already in that venv. **There is zero fine-tuning surface in MOT Deck today** — a repo-wide grep for
 `lora|finetune|fine_tune|train` outside `vendor/`/`data/` returns nothing but prose and one HF dataset split. So the
 capability is sitting in the venv, unexposed.
 
@@ -479,7 +479,7 @@ mlx-tune`, Apple Silicon only, macOS 13+, Python 3.9+, 8GB minimum. It deliberat
 broad for a community project: SFT/DPO/ORPO/GRPO/KTO/SimPO, **vision** (via mlx-vlm — Gemma 4, Qwen3.5, Pixtral),
 **TTS** (Orpheus, OuteTTS, Spark, Sesame/CSM, Qwen3-TTS), **STT** (Whisper, Moonshine, Canary, Voxtral, **Parakeet
 TDT**), embeddings, OCR, MoE (39+ architectures), and continual pretraining. Several of those model families are ones
-the harness *already ships* (mlx-audio TTS, Parakeet STT, mlx-vlm) — so this is the natural route to "fine-tune my own
+MOT Deck *already ships* (mlx-audio TTS, Parakeet STT, mlx-vlm) — so this is the natural route to "fine-tune my own
 voice/vision model" without leaving MLX.
 
 ⚠️ Real caveats: **solo maintainer, explicitly unofficial**, and it declares a dependency graph that already conflicts
@@ -506,7 +506,7 @@ whole-stack on the box" question is accepted.
    AGPL-licensed no-code web UI on `:8888` doing train + run + export for text/vision/TTS/embedding **with Mac MLX
    training**, an OpenAI- *and* Anthropic-compatible API — **and a documented first-class Hermes Agent integration**
    including the exact `--disable-tools` gotcha (Studio's server-side tools otherwise *swallow Hermes's tool calls*)
-   that this harness would have hit blind.
+   that this motdeck would have hit blind.
 3. **Every agentic coding agent on the list disqualifies itself on the 4B, in the vendors' own words** — goose
    ("works best with Claude 4"), OpenCode ("only a few are good at both code and tool calling"), OpenHands ("requires a
    powerful model", 35B/64GB/22k-context, community floor 14B). **aider survives for a structural reason, not a
@@ -545,4 +545,4 @@ Others: [affaan-m/ECC](https://github.com/affaan-m/ECC) · [langchain](https://g
 
 Unsloth/MLX: [Unsloth Studio](https://unsloth.ai/docs/new/studio.md) · [Unsloth Studio install](https://unsloth.ai/docs/new/studio/install.md) · [Unsloth requirements](https://unsloth.ai/docs/get-started/fine-tuning-for-beginners/unsloth-requirements) · [Unsloth API endpoint](https://unsloth.ai/docs/basics/api.md) · [Unsloth × Hermes Agent](https://unsloth.ai/docs/integrations/hermes-agent.md) · [mlx-tune](https://github.com/ARahim3/mlx-tune) · [mlx-lm #353 (GGUF export)](https://github.com/ml-explore/mlx-lm/issues/353)
 
-Local repo facts: `vendor/hermes/toolsets.py:205-215` · `vendor/hermes/tools/browser_tool.py:452-514,688-692` · `vendor/hermes/tools/browser_use_cli.py:21,117` · `bridge/app.py:5006-5011,5113-5117` · `harness.yaml:66-71,78-84,104-132,140-144,181-182,202-229` · `data/mlx-venv/bin/mlx_lm.lora`
+Local repo facts: `vendor/hermes/toolsets.py:205-215` · `vendor/hermes/tools/browser_tool.py:452-514,688-692` · `vendor/hermes/tools/browser_use_cli.py:21,117` · `bridge/app.py:5006-5011,5113-5117` · `motdeck.yaml:66-71,78-84,104-132,140-144,181-182,202-229` · `data/mlx-venv/bin/mlx_lm.lora`

@@ -33,7 +33,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
-say() { echo "[harness] $*" >&2; }
+say() { echo "[motdeck] $*" >&2; }
 
 VENV="${1:-}"
 DEST="$ROOT/data/ffmpeg"
@@ -56,12 +56,12 @@ if [[ -x "$BINPATH" ]] && "$BINPATH" -version >/dev/null 2>&1; then
 fi
 
 # ── (c) provision from the imageio-ffmpeg wheel, into the caller's venv ───────
-_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' harness.yaml; }
+_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' motdeck.yaml; }
 PIN="${IMAGEIO_FFMPEG_PIN:-$(_yb imageio_ffmpeg_pin)}"
 [[ -n "$PIN" ]] || {
-  say "ERROR: build.imageio_ffmpeg_pin missing from $(pwd)/harness.yaml"
+  say "ERROR: build.imageio_ffmpeg_pin missing from $(pwd)/motdeck.yaml"
   say "  (if this is the FAT app's snapshot: ship.sh deliberately never overwrites"
-  say "   harness.yaml, so a newly added build.* key only arrives with a --fat rebuild."
+  say "   motdeck.yaml, so a newly added build.* key only arrives with a --fat rebuild."
   say "   Add 'imageio_ffmpeg_pin: \"0.6.0\"' under build:, or export"
   say "   IMAGEIO_FFMPEG_PIN=0.6.0 and re-run.)"
   exit 1; }

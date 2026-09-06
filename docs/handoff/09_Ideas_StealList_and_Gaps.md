@@ -12,14 +12,14 @@ Fable ranked this list on 2026-07-23; most of the top of it is now built. Live p
   tiered-memory auto-promotion · session-graph/time-travel · schema-generated settings form ·
   file-based agent mailboxes. All remain parked with their original triggers.
 - **Still true and still enforced:** doc 09 §0's correction — the **gearbox is SHELVED** and the
-  harness is local-only — plus every 🔴 CONFLICTS tag (no Docker, no WASM, no LanceDB, no React
+  motdeck is local-only — plus every 🔴 CONFLICTS tag (no Docker, no WASM, no LanceDB, no React
   rewrite of the panel).
 - **Next from the modality side:** voice (`docs/handoff/FABLE-VOICE-TABS-SPEC.md`), not more
   breadth in this list.
 
 ---
 
-**Written:** 2026-07-21 (by Claude Opus 4.8, at Debi's request). **Status:** reference only — no code changed, no docs resynced, nothing on any milestone. This captures a research pass over other "agent OS / harness" projects + a Gemini analysis, **cross-checked against this project's own plans (00–08 + `harness/CLAUDE.md` + `policies/routing.yaml`)** so a fresh chat can tell *new* ideas from things already decided/planned/shelved.
+**Written:** 2026-07-21 (by Claude Opus 4.8, at Debi's request). **Status:** reference only — no code changed, no docs resynced, nothing on any milestone. This captures a research pass over other "agent OS / motdeck" projects + a Gemini analysis, **cross-checked against this project's own plans (00–08 + `motdeck/CLAUDE.md` + `policies/routing.yaml`)** so a fresh chat can tell *new* ideas from things already decided/planned/shelved.
 
 **How to read this:** every idea is tagged:
 - 🟢 **NEW** — not in the current plan; worth considering.
@@ -34,7 +34,7 @@ Fable ranked this list on 2026-07-23; most of the top of it is now built. Live p
 
 ## 0. Correction to earlier advice (important)
 
-In an earlier chat, Claude recommended "build the gearbox next — it's the keystone stub." **That was wrong.** Per `07_Salvage_from_v1.md` #5, the gearbox (local↔cloud routing, privacy globs, escalation, daily budget) is **deliberately shelved** because the harness is local-only today; it revives *only if cloud API keys ever enter*. The draft policy in `policies/routing.yaml` is labeled "(M2)" but the current plan supersedes that label — treat the gearbox as parked. Do not build it without a decision to add cloud.
+In an earlier chat, Claude recommended "build the gearbox next — it's the keystone stub." **That was wrong.** Per `07_Salvage_from_v1.md` #5, the gearbox (local↔cloud routing, privacy globs, escalation, daily budget) is **deliberately shelved** because MOT Deck is local-only today; it revives *only if cloud API keys ever enter*. The draft policy in `policies/routing.yaml` is labeled "(M2)" but the current plan supersedes that label — treat the gearbox as parked. Do not build it without a decision to add cloud.
 
 ---
 
@@ -69,7 +69,7 @@ Each entry: **what · why · how it works · where to find the full detail · st
 ### Hollow-agentOS — https://github.com/ninjahawk/hollow-agentOS (Python, wiki: ninjahawk.github.io/hollow-wiki)
 - **Codebase fact-check verification (→ a "Verified ✓ / Unverified ⚠" badge).** 🟢 NEW
   - *Why:* your `verify` gates prove *component connectivity* only (`02` manifests). There is **no** answer/claim verification. Local models emit confident, well-formatted hallucinations; a fact-check layer is the antidote and a genuine differentiator.
-  - *How (Hollow's 5-layer completion gate):* mechanical placeholder/AST checks → semantic accomplishment eval → peer feedback → **codebase fact-check that opens the files an artifact claims to touch and confirms the claim** → promote to ✓ only if it passes. For this harness: when Hermes says "done," have the Bridge read the referenced files / run a linter before the activity feed shows ✓.
+  - *How (Hollow's 5-layer completion gate):* mechanical placeholder/AST checks → semantic accomplishment eval → peer feedback → **codebase fact-check that opens the files an artifact claims to touch and confirms the claim** → promote to ✓ only if it passes. For this motdeck: when Hermes says "done," have the Bridge read the referenced files / run a linter before the activity feed shows ✓.
   - *Note:* v1's `verify_visual` (screenshot-check a built app) was **deprioritised** in `07` — the fact-check idea is textual/code verification, lighter and different.
 - **Mechanical state-gated capabilities + OS-level path validation before shell exec.** 🟢 NEW (the path-guard part)
   - *Why:* your only execution boundary today is "process spawn + HTTP/CLI, no linking" (`02` rule 1). Hermes runs shell with approval, but there's no mechanical path fence.
@@ -78,7 +78,7 @@ Each entry: **what · why · how it works · where to find the full detail · st
 
 ### Rivet agentos — https://github.com/rivet-dev/agentos (deepwiki.com/rivet-dev/agentos)
 - **Durable, replayable transcripts → time-travel / session-graph.** 🟢 NEW
-  - *Why:* not in the plan (no session graph, no time-travel — confirmed gap). For a harness whose value is "trust what ran while I slept," being able to scrub/replay/branch an agent run is compelling.
+  - *Why:* not in the plan (no session graph, no time-travel — confirmed gap). For a motdeck whose value is "trust what ran while I slept," being able to scrub/replay/branch an agent run is compelling.
   - *How:* store each conversation as a structured graph (not a flat list) with step snapshots; allow rewind + regenerate-from-here. Rivet backs this with actor durable state; you'd back it with SQLite. **Heavy** — a later luxury, not near-term.
 - **In-process WASM sandbox.** 🔴 CONFLICTS. Gemini also flagged this correctly: WASM can't run npm/pip/git/headless-Chromium that real agent tools need. And your no-Docker decision rules out the container alternative. Stick with host subprocess + path-guard (Hollow, above).
 - **ACP (Agent Communication Protocol) for federating agent CLIs.** 🟡 your Hermes↔Odysseus seam already picks MCP-vs-ACP as an open question (`02` §13.1); ACP is on your radar.
@@ -170,7 +170,7 @@ For a fresh chat: these appear in the research as "great ideas" but are **alread
 
 ## 6. Source index (for a fresh chat)
 
-**Research briefs live in Claude Code memory** for the *Base Harness* working dir: `harness-project.md`, `harness-research-sources.md` (at `~/.claude/projects/-Users-debik-Claude-Proj-Rootz-Base-Harness/memory/`). If a new chat runs from a different dir, rely on this doc + the URLs below.
+**Research briefs live in Claude Code memory** for the *Base MOT Deck* working dir: `motdeck-project.md`, `motdeck-research-sources.md` (at `~/.claude/projects/-Users-debik-Claude-Proj-Rootz-Base-MOT Deck/memory/`). If a new chat runs from a different dir, rely on this doc + the URLs below.
 
 - OpenFang — https://github.com/RightNow-AI/openfang · openfang.sh
 - Hollow-agentOS — https://github.com/ninjahawk/hollow-agentOS · ninjahawk.github.io/hollow-wiki

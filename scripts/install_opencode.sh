@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install OPENCODE — the harness's second coding lane, run as a TAB.
+# Install OPENCODE — MOT Deck's second coding lane, run as a TAB.
 #
 #   ./scripts/install_opencode.sh [--yes]
 #
@@ -38,7 +38,7 @@ say() { echo "[opencode] $*"; }
 die() { echo "[opencode] ERROR: $*" >&2; exit 1; }
 
 # ── pin reader (identical awk shape to install_aider.sh / install_music.sh) ───
-_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' harness.yaml; }
+_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' motdeck.yaml; }
 
 resolve_py() {
   local p
@@ -53,7 +53,7 @@ resolve_py() {
 }
 
 # ── which prebuilt package do we need? ───────────────────────────────────────
-# Only the two macOS builds are supported here — the harness is a Mac product and a
+# Only the two macOS builds are supported here — MOT Deck is a Mac product and a
 # wrong guess would download 45MB of the wrong ISA and fail at exec time.
 plat_pkg() {
   local os arch
@@ -69,7 +69,7 @@ plat_pkg() {
 main() {
   local pin pkg py free_gb tgz sha_recorded integrity_expect url want digest_key
   pin="$(_yb opencode_pin)"
-  [[ -n "$pin" ]] || die "build.opencode_pin missing from harness.yaml"
+  [[ -n "$pin" ]] || die "build.opencode_pin missing from motdeck.yaml"
   pkg="$(plat_pkg)"
   case "$pkg" in
     opencode-darwin-arm64) digest_key="opencode_darwin_arm64_sha256" ;;
@@ -195,7 +195,7 @@ seed_workspace_project() {
     say "  OpenCode project; it will share the shared 'global' one."
     return 0; }
   if [[ ! -f "$ws/README.md" ]]; then
-    printf '%s\n' "# Harness workspace" "" \
+    printf '%s\n' "# MOT Deck workspace" "" \
       "This is the working directory the OpenCode lane is started in — and, because" \
       "OpenCode is started nowhere else, the only boundary on what it edits." \
       "(The Hermes path-guard is a Hermes plugin hook and does NOT cover this lane.)" \
@@ -203,7 +203,7 @@ seed_workspace_project() {
   fi
   ( cd "$ws" \
     && git init --quiet \
-    && git -c user.name="Harness" -c user.email="harness@localhost" \
+    && git -c user.name="MOT Deck" -c user.email="motdeck@localhost" \
            -c commit.gpgsign=false commit --allow-empty --quiet -m "opencode workspace" \
   ) && say "workspace: git-initialised — one empty commit is what makes it a real" \
     && say "  OpenCode project rather than the shared 'global' one" \
@@ -221,19 +221,19 @@ post_install() {
   seed_workspace_project
 
   # ── THE MANIFEST FLAG. Mission Control's card reads components.opencode.installed
-  # from harness.yaml (bridge/app.py::status), NOT the disk — so without this the
+  # from motdeck.yaml (bridge/app.py::status), NOT the disk — so without this the
   # binary lands, the script says "installed", and the card still offers Install.
   # That was the 2026-08-21 bug: install_component.sh has flipped the flag in its tail
   # since M0, and this standalone installer never learned to. It runs on the
   # "already installed at the pin" path too, so a plain re-run repairs a stale flag.
   # $ROOT is this script's OWN root, which is what makes it edit the SNAPSHOT's
-  # manifest when the bridge spawns it from ~/Library/Application Support/Harness
+  # manifest when the bridge spawns it from ~/Library/Application Support/MOT Deck
   # (ship.sh's merge is additive-only and will never set it later).
   local py_flip
   py_flip="$(resolve_py)" || py_flip="python3"
   "$py_flip" "$ROOT/scripts/flip_installed.py" opencode || {
     say "ERROR: the binary is installed but components.opencode.installed could not be"
-    say "  set in harness.yaml, so the card will still say 'Not installed'. Fix with:"
+    say "  set in motdeck.yaml, so the card will still say 'Not installed'. Fix with:"
     say "  python3 scripts/flip_installed.py opencode"
     exit 1; }
   echo ""
@@ -242,7 +242,7 @@ post_install() {
   say "  therefore the only boundary on what it edits (the Hermes path-guard is a"
   say "  Hermes plugin hook and does NOT cover this lane)."
   say "provider: Start writes an OpenAI-compatible provider named 'llama.cpp' pointing"
-  say "  at the harness runner, into BOTH data/opencode/xdg/config/opencode/opencode.json"
+  say "  at MOT Deck runner, into BOTH data/opencode/xdg/config/opencode/opencode.json"
   say "  and data/opencode-workspace/opencode.json. In OpenCode it shows as CONNECTED in"
   say "  Settings -> Providers and its models are yours. If the picker offers OpenCode's"
   say "  own Zen models (Big Pickle, gpt-5...) instead, the config did not reach it — the"
@@ -250,7 +250,7 @@ post_install() {
   say "NOTE: OpenCode REQUIRES tool-calling and has no text-edit fallback. Load a model"
   say "  with the green 'tools' pill in Models, or it will look broken rather than slow."
   say "NOTE: auto-update is disabled two ways (config + env). Never use its in-app"
-  say "  upgrade — this install is pinned at build.opencode_pin in harness.yaml."
+  say "  upgrade — this install is pinned at build.opencode_pin in motdeck.yaml."
 }
 
 main "$@"

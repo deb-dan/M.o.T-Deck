@@ -90,8 +90,8 @@ there means the marker was deleted, not that this is a pre-slice config. Without
 bound, `rm data/hermes_seed_state.json` would hand the user's picked model straight back
 to us on the next Start — U12, one directory tidy-up away.
 
-Env in:  HERMES_CFG, BASE_URL, KEY, MODEL (wire id), CTXLEN, HARNESS_ROOT (registry).
-Files out (both under <HARNESS_ROOT>/data/, both OURS — never read by Hermes):
+Env in:  HERMES_CFG, BASE_URL, KEY, MODEL (wire id), CTXLEN, MOT_DECK_ROOT (registry).
+Files out (both under <MOT_DECK_ROOT>/data/, both OURS — never read by Hermes):
   hermes-provider.json  — the verdict the Start script prints/verifies against;
   hermes_seed_state.json — the marker: ONLY the values we actually wrote.
 """
@@ -106,7 +106,7 @@ import tempfile
 try:
     import yaml
 except Exception:                                                   # noqa: BLE001
-    print("[harness] WARNING: PyYAML unavailable — Hermes provider NOT seeded")
+    print("[motdeck] WARNING: PyYAML unavailable — Hermes provider NOT seeded")
     raise SystemExit(0)
 
 PRODUCT_NAME = "MOT Deck (local)"
@@ -121,7 +121,7 @@ def _load_modelreg():
         import importlib.util
         p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          os.pardir, "bridge", "core", "modelreg.py")
-        spec = importlib.util.spec_from_file_location("harness_modelreg", p)
+        spec = importlib.util.spec_from_file_location("motdeck_modelreg", p)
         if spec is None or spec.loader is None:
             return None
         mod = importlib.util.module_from_spec(spec)
@@ -358,13 +358,13 @@ def main() -> int:
     base_url = (os.environ.get("BASE_URL") or "").strip()
     api_key = (os.environ.get("KEY") or "").strip()
     wire = (os.environ.get("MODEL") or "").strip()
-    root = os.environ.get("HARNESS_ROOT") or os.getcwd()
+    root = os.environ.get("MOT_DECK_ROOT") or os.getcwd()
     try:
         ctxlen = int(os.environ.get("CTXLEN") or 0)
     except ValueError:
         ctxlen = 0
     if not base_url:
-        print("[harness] WARNING: no runner endpoint — Hermes provider NOT seeded")
+        print("[motdeck] WARNING: no runner endpoint — Hermes provider NOT seeded")
         return 0
 
     try:
@@ -374,7 +374,7 @@ def main() -> int:
         # A config we cannot parse is a config we must not rewrite (it may be the
         # user's half-finished edit). Say so and leave the file alone; the anonymous
         # model.* wiring the Start script writes still routes every turn.
-        print("[harness] WARNING: could not parse %s (%s) — provider NOT seeded"
+        print("[motdeck] WARNING: could not parse %s (%s) — provider NOT seeded"
               % (cfg_path, exc))
         return 0
     if not isinstance(data, dict):
@@ -387,7 +387,7 @@ def main() -> int:
         # model_switch/runtime_provider both warn and bail). Never overwrite it —
         # that would delete configuration the user is one dash away from fixing.
         if providers is not None:
-            print("[harness] WARNING: custom_providers in %s is not a list — provider "
+            print("[motdeck] WARNING: custom_providers in %s is not a list — provider "
                   "NOT seeded (each entry needs a leading '-'; run `hermes doctor`)"
                   % cfg_path)
             return 0
@@ -600,14 +600,14 @@ def main() -> int:
     except Exception:                                               # noqa: BLE001
         pass
 
-    print('[harness] Hermes provider "%s" -> %s · %d model(s) · slug %s%s'
+    print('[motdeck] Hermes provider "%s" -> %s · %d model(s) · slug %s%s'
           % (final_name, base_url, len(merged), slug,
              "" if changed else " (already current)"))
-    print("[harness]   main model: %s @ %s (key %s, ctx %s)"
+    print("[motdeck]   main model: %s @ %s (key %s, ctx %s)"
           % (kept_model or "unset", base_url, "set" if api_key else "none",
              (data.get("model") or {}).get("context_length", "auto")))
     for n in notes:
-        print("[harness]   %s" % n)
+        print("[motdeck]   %s" % n)
     return 0
 
 

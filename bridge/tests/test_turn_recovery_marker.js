@@ -17,7 +17,7 @@ global.turnStage = global.chatSummary = global.chatToolErrsRedraw = global.rende
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'panel', 'assets', 'turn-stream.js'), 'utf8');
 vm.runInThisContext(source, {filename:'turn-stream.js'});
-const H = window.HarnessTurnStream;
+const H = window.MOTDeckTurnStream;
 
 let failures = 0;
 function check(label, value){

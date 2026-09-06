@@ -342,13 +342,13 @@ for (const k of ['id', 'sid', 'mode', 'busy', 'model', 'stampModel', 'hermesSid'
  * UI preference (no prompt/event content) and must be painted before first use. */
 const storedMode = grab('storedChatMode'), setMode = grab('setMode');
 check('reload restores only one of the three real chat lanes',
-  /localStorage\.getItem\('harness-chat-mode'\)/.test(storedMode)
+  /localStorage\.getItem\('motdeck-chat-mode'\)/.test(storedMode)
   && /\['agent', 'chat', 'hermes'\]\.includes\(value\)/.test(storedMode)
   && /\? value : 'agent'/.test(storedMode));
 check('the pane starts from the validated persisted lane',
   /mode: storedChatMode\(\)/.test(paneDecl));
 check('every lane switch persists the selected lane without making storage fatal',
-  /try \{ localStorage\.setItem\('harness-chat-mode', m\); \} catch \(_\) \{\}/.test(setMode));
+  /try \{ localStorage\.setItem\('motdeck-chat-mode', m\); \} catch \(_\) \{\}/.test(setMode));
 check('boot paints the restored lane before the Chat view is first opened',
   /setMode\(chatPane\.mode\);[^\n]*U31/.test(html));
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Harness OFFLINE first-run provisioner (§G-phase3, fat installer).
+# MOT Deck OFFLINE first-run provisioner (§G-phase3, fat installer).
 # Invoked by main.swift on a fresh Mac from inside the app bundle:
 #     bash firstrun_fat.sh <RESOURCES_DIR> <DEST_ROOT>
-# where RESOURCES_DIR = Harness.app/Contents/Resources (holds the bundled payloads) and
-# DEST_ROOT = ~/Library/Application Support/Harness (the runtime root).
+# where RESOURCES_DIR = MOT Deck.app/Contents/Resources (holds the bundled payloads) and
+# DEST_ROOT = ~/Library/Application Support/MOT Deck (the runtime root).
 #
 # Unlike scripts/firstrun.sh (portable, needs internet + brew + npm), this variant provisions
 # EVERYTHING OFFLINE from bundled payloads:
@@ -27,7 +27,7 @@ fail() { printf "\033[1;31m[firstrun-fat]\033[0m %s\n" "$*" >&2; exit 1; }
 # manifest over a live 6-component install (nothing was lost — the snapshot was moved
 # aside by hand — but two components vanished from Mission Control and their tabs
 # served bare API JSON). Now: refuse, and say exactly why.
-_seed_components() {   # <harness.yaml> -> count of top-level entries under components:
+_seed_components() {   # <motdeck.yaml> -> count of top-level entries under components:
   [[ -f "${1:-}" ]] || { echo ""; return 0; }
   awk '/^components:/{f=1;next} f && /^[^ ]/{exit} f && /^  [A-Za-z0-9_-]+:/{n++} END{print n+0}' "$1" 2>/dev/null
 }
@@ -55,11 +55,11 @@ seed_guard() {
   {
     echo "  existing : components=${have_n:-unknown}  build=${have_d:-unknown}"
     echo "  installer: components=${seed_n:-unknown}  build=${seed_d:-unknown}"
-    echo "  This looks like an OLD Harness.app seeding over a NEWER install, which would"
+    echo "  This looks like an OLD MOT Deck.app seeding over a NEWER install, which would"
     echo "  roll your components and manifest backwards. Nothing has been changed."
     echo "  If that is really what you want, move the existing install aside DELIBERATELY:"
-    echo "    mv ~/Library/Application\\ Support/Harness ~/Library/Application\\ Support/Harness.saved"
-    echo "  then reopen Harness. (Otherwise: install a newer Harness.app.)"
+    echo "    mv ~/Library/Application\\ Support/MOT Deck ~/Library/Application\\ Support/MOT Deck.saved"
+    echo "  then reopen MOT Deck. (Otherwise: install a newer MOT Deck.app.)"
   } >&2
   return 3
 }
@@ -73,7 +73,7 @@ RES="${1:-}"; DEST="${2:-}"
 [[ -n "$RES"  && -d "$RES"  ]] || { echo "[firstrun-fat] ERROR: resources dir missing: '$RES'"  >&2; exit 1; }
 [[ -n "$DEST" ]]               || { echo "[firstrun-fat] ERROR: destination root not given"       >&2; exit 1; }
 
-SEED="$RES/harness-seed-fat.tar.gz"
+SEED="$RES/motdeck-seed-fat.tar.gz"
 PYTAR="$RES/python-standalone.tar.gz"
 WHEELS="$RES/wheelhouse"
 [[ -f "$SEED"  ]] || fail "bundled seed missing: $SEED (not a fat build?)"
@@ -83,20 +83,20 @@ WHEELS="$RES/wheelhouse"
 # ---------- 0. do not seed backwards over an existing install ----------
 # Only meaningful when something is already provisioned there; a fresh (absent) root
 # provisions exactly as before.
-if [[ -f "$DEST/harness.yaml" ]]; then
+if [[ -f "$DEST/motdeck.yaml" ]]; then
   PRE="$(mktemp -d)"
   # peek at just the two members we need to compare (both spellings; tar member names
   # depend on how the archive was created).
-  tar xzf "$SEED" -C "$PRE" ./harness.yaml ./SEED_STAMP 2>/dev/null \
-    || tar xzf "$SEED" -C "$PRE" harness.yaml SEED_STAMP 2>/dev/null || true
-  if ! seed_guard "$DEST/harness.yaml" "$DEST/.seed_stamp" "$PRE/harness.yaml" "$PRE/SEED_STAMP"; then
+  tar xzf "$SEED" -C "$PRE" ./motdeck.yaml ./SEED_STAMP 2>/dev/null \
+    || tar xzf "$SEED" -C "$PRE" motdeck.yaml SEED_STAMP 2>/dev/null || true
+  if ! seed_guard "$DEST/motdeck.yaml" "$DEST/.seed_stamp" "$PRE/motdeck.yaml" "$PRE/SEED_STAMP"; then
     rm -rf "$PRE"; exit 1
   fi
   rm -rf "$PRE"
 fi
 
 # ---------- 1. extract the seed → runtime root ----------
-say "Provisioning Harness into: $DEST"
+say "Provisioning MOT Deck into: $DEST"
 mkdir -p "$DEST"
 tar xzf "$SEED" -C "$DEST" || fail "could not extract the seed into $DEST"
 # record which bundle this install came from, so the NEXT installer can compare.
@@ -167,8 +167,8 @@ mkvenv data/odysseus-venv odysseus "$OLOG"
 pipi data/odysseus-venv odysseus "$OLOG" -r vendor/odysseus/requirements.txt
 pipi_try data/odysseus-venv "$OLOG" ddgs || say "note: ddgs not in wheelhouse — DDG web-search fallback unavailable until installed."
 # setup.py seeds the generated admin account + DB (fully local, no network).
-ODY_USER="$("$DEST/data/bridge-venv/bin/python" scripts/local_secrets.py get "$DEST" MOT_ODYSSEUS_ADMIN_USER)"
-ODY_PASSWORD="$("$DEST/data/bridge-venv/bin/python" scripts/local_secrets.py get "$DEST" MOT_ODYSSEUS_ADMIN_PASSWORD)"
+ODY_USER="$("$DEST/data/bridge-venv/bin/python" scripts/local_secrets.py get "$DEST" MOT_DECK_ODYSSEUS_ADMIN_USER)"
+ODY_PASSWORD="$("$DEST/data/bridge-venv/bin/python" scripts/local_secrets.py get "$DEST" MOT_DECK_ODYSSEUS_ADMIN_PASSWORD)"
 ( cd vendor/odysseus && ODYSSEUS_ADMIN_USER="$ODY_USER" ODYSSEUS_ADMIN_PASSWORD="$ODY_PASSWORD" \
     "$DEST/data/odysseus-venv/bin/python" setup.py ) >>"$OLOG" 2>&1 \
   || fail "odysseus: setup.py failed — see $OLOG"
@@ -200,15 +200,15 @@ EOF
 fi
 
 # ---------- 7. mlx runtime venv ----------
-# PINNED from harness.yaml build.mlx_*_pin — the same values build_app.sh bundled into
+# PINNED from motdeck.yaml build.mlx_*_pin — the same values build_app.sh bundled into
 # the wheelhouse. Asking for anything else here fails OFFLINE ("no matching distribution").
 # Empty pin ⇒ fall back to unpinned so a hand-edited yaml can't hard-block provisioning.
-_yb_mlx() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' "$DEST/harness.yaml" 2>/dev/null; }
+_yb_mlx() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' "$DEST/motdeck.yaml" 2>/dev/null; }
 MLX_LM_PIN="$(_yb_mlx mlx_lm_pin)"; MLX_VLM_PIN="$(_yb_mlx mlx_vlm_pin)"
 if [[ -n "$MLX_LM_PIN" && -n "$MLX_VLM_PIN" ]]; then
   MLX_PKGS=("mlx-lm==$MLX_LM_PIN" "mlx-vlm==$MLX_VLM_PIN")
 else
-  echo "[firstrun] WARN: build.mlx_*_pin missing from harness.yaml — installing mlx unpinned"
+  echo "[firstrun] WARN: build.mlx_*_pin missing from motdeck.yaml — installing mlx unpinned"
   MLX_PKGS=(mlx-lm mlx-vlm)
 fi
 MLOG="$LOGDIR/firstrun_mlx.log"; : >"$MLOG"

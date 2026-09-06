@@ -36,7 +36,7 @@ from pathlib import Path
 for _k in [k for k in os.environ if k.lower().endswith("_proxy")]:
     os.environ.pop(_k, None)
 
-_TMP = tempfile.mkdtemp(prefix="harness-hgen-home-")
+_TMP = tempfile.mkdtemp(prefix="motdeck-hgen-home-")
 os.environ["HERMES_HOME"] = _TMP
 
 ROOT = Path(__file__).resolve().parent.parent.parent

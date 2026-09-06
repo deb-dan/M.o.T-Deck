@@ -332,7 +332,7 @@ check('...and still NAMES the trap (Hermes’s own page fetches once on open, '
 // may therefore promise the automatic reload for BOTH, and the only case left uncovered
 // is a Hermes dashboard open outside this app, which it must still name.
 check('...and now promises the automatic reload, not a tab switch you have to make',
-  /the harness reloads that tab for you/i.test(out2));
+  /MOT Deck reloads that tab for you/i.test(out2));
 check('...covering split view explicitly, and still naming the one case it cannot reach',
   /split view/i.test(out2) && /outside<\/i> this app/i.test(out2) && /⌘R/.test(out2));
 check('the defaults preset chip no longer promises "everything"',

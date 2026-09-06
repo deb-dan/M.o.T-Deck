@@ -256,7 +256,7 @@ row it mirrors) and its click is `el(data-row).click()`, so the handler, the ena
 the disabled REASON and the pressed state are all read off the menu after `menuPaint` has
 decided them. The writer-set fence in `test_office_ai.js` still names exactly seven
 writers — the toolbar added none. `View → Show toolbar` toggles it
-(`harness-office-toolbar`, default ON).
+(`motdeck-office-toolbar`, default ON).
 
 **§7.2 submenus** shipped, one nesting level with Google's `▸`: `View → Zoom ▸` (the five
 sibling rows moved in, ids unchanged) and `Format → Text ▸` (bold/italic/underline/

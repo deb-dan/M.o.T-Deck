@@ -15,16 +15,16 @@ from ..yamlfile import transform_file
 
 
 SECRET_PATHS = {
-    "runner.api_key": "MOT_RUNNER_API_KEY",
-    "aux.api_key": "MOT_AUX_API_KEY",
-    "components.odysseus.admin_user": "MOT_ODYSSEUS_ADMIN_USER",
-    "components.odysseus.admin_password": "MOT_ODYSSEUS_ADMIN_PASSWORD",
+    "runner.api_key": "MOT_DECK_RUNNER_API_KEY",
+    "aux.api_key": "MOT_DECK_AUX_API_KEY",
+    "components.odysseus.admin_user": "MOT_DECK_ODYSSEUS_ADMIN_USER",
+    "components.odysseus.admin_password": "MOT_DECK_ODYSSEUS_ADMIN_PASSWORD",
 }
 WEAK_DEFAULTS = {
-    "MOT_RUNNER_API_KEY": "harness-local",
-    "MOT_AUX_API_KEY": "harness-aux",
-    "MOT_ODYSSEUS_ADMIN_USER": "admin",
-    "MOT_ODYSSEUS_ADMIN_PASSWORD": "admin123",
+    "MOT_DECK_RUNNER_API_KEY": "motdeck-local",
+    "MOT_DECK_AUX_API_KEY": "motdeck-aux",
+    "MOT_DECK_ODYSSEUS_ADMIN_USER": "admin",
+    "MOT_DECK_ODYSSEUS_ADMIN_PASSWORD": "admin123",
 }
 MAX_BYTES = 16 * 1024
 
@@ -97,10 +97,10 @@ def _yaml_value(data: Mapping, dotted: str) -> str:
 
 def generate() -> dict[str, str]:
     return {
-        "MOT_RUNNER_API_KEY": secrets.token_urlsafe(32),
-        "MOT_AUX_API_KEY": secrets.token_urlsafe(32),
-        "MOT_ODYSSEUS_ADMIN_USER": "mot-admin-" + secrets.token_hex(4),
-        "MOT_ODYSSEUS_ADMIN_PASSWORD": secrets.token_urlsafe(32),
+        "MOT_DECK_RUNNER_API_KEY": secrets.token_urlsafe(32),
+        "MOT_DECK_AUX_API_KEY": secrets.token_urlsafe(32),
+        "MOT_DECK_ODYSSEUS_ADMIN_USER": "mot-admin-" + secrets.token_hex(4),
+        "MOT_DECK_ODYSSEUS_ADMIN_PASSWORD": secrets.token_urlsafe(32),
     }
 
 
@@ -158,7 +158,7 @@ def ensure(root: Path, *, fresh: bool = False) -> dict[str, str]:
         if not missing:
             return existing
         raise ValueError("data/.env.local exists but is incomplete")
-    manifest = yaml.safe_load((Path(root) / "harness.yaml").read_text()) or {}
+    manifest = yaml.safe_load((Path(root) / "motdeck.yaml").read_text()) or {}
     generated = generate()
     values = {}
     for dotted, key in SECRET_PATHS.items():
@@ -189,21 +189,21 @@ def overlay_config(data: dict, root: Path) -> dict:
 
 
 def manifest_secret_values(root: Path) -> dict[str, str]:
-    data = yaml.safe_load((Path(root) / "harness.yaml").read_text()) or {}
+    data = yaml.safe_load((Path(root) / "motdeck.yaml").read_text()) or {}
     if not isinstance(data, Mapping):
-        raise ValueError("harness.yaml root must be a mapping")
+        raise ValueError("motdeck.yaml root must be a mapping")
     return {key: _yaml_value(data, dotted) for dotted, key in SECRET_PATHS.items()}
 
 
 def scrub_manifest(root: Path) -> None:
     """Blank only the four secret scalars while preserving all unrelated bytes."""
-    path = Path(root) / "harness.yaml"
+    path = Path(root) / "motdeck.yaml"
     targets = {tuple(dotted.split(".")) for dotted in SECRET_PATHS}
 
     def edit(text: str) -> str:
         document = yaml.compose(text)
         if document is None:
-            raise ValueError("harness.yaml is empty")
+            raise ValueError("motdeck.yaml is empty")
         replacements: list[tuple[int, int]] = []
 
         def walk(node, prefix: tuple[str, ...] = ()) -> None:
@@ -223,13 +223,13 @@ def scrub_manifest(root: Path) -> None:
 
         walk(document)
         if len(replacements) != len(targets):
-            raise ValueError("harness.yaml does not contain every secret field")
+            raise ValueError("motdeck.yaml does not contain every secret field")
         result = text
         for start, end in sorted(replacements, reverse=True):
             result = result[:start] + result[end:]
         parsed = yaml.safe_load(result) or {}
         if any(_yaml_value(parsed, dotted) for dotted in SECRET_PATHS):
-            raise ValueError("harness.yaml secret scrub did not verify")
+            raise ValueError("motdeck.yaml secret scrub did not verify")
         return result
 
     transform_file(path, edit)

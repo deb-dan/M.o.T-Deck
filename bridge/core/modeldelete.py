@@ -29,7 +29,7 @@ def deletable_target(entry: dict, models_root: str) -> tuple[str | None, str | N
     """
     source = (entry or {}).get("source")
     if source not in DELETABLE_SOURCES:
-        return None, (f"'{source or 'unknown'}' models are read-only imports the harness "
+        return None, (f"'{source or 'unknown'}' models are read-only imports MOT Deck "
                       "does not own — remove them in the app that manages them")
     path = (entry or {}).get("path")
     if not path:
@@ -38,7 +38,7 @@ def deletable_target(entry: dict, models_root: str) -> tuple[str | None, str | N
     lexical_root = os.path.abspath(os.path.expanduser(str(models_root)))
     lexical_path = os.path.abspath(os.path.expanduser(str(path)))
     if lexical_path != lexical_root and not lexical_path.startswith(lexical_root + os.sep):
-        return None, "model path is outside the harness models directory"
+        return None, "model path is outside MOT Deck models directory"
     relative = os.path.relpath(lexical_path, lexical_root)
     current = lexical_root
     for part in relative.split(os.sep):
@@ -50,7 +50,7 @@ def deletable_target(entry: dict, models_root: str) -> tuple[str | None, str | N
     real_root = os.path.realpath(lexical_root)
     real_path = os.path.realpath(lexical_path)
     if real_path != real_root and not real_path.startswith(real_root + os.sep):
-        return None, "model path is outside the harness models directory"
+        return None, "model path is outside MOT Deck models directory"
     first = os.path.relpath(real_path, real_root).split(os.sep)[0]
     if first in ("", ".", ".."):
         return None, "could not resolve a model target under the models directory"

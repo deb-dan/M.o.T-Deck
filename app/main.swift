@@ -1,7 +1,7 @@
-// Harness.app — native macOS shell. One window, tabbed (see `tabs` below for the list).
+// MOT Deck.app — native macOS shell. One window, tabbed (see `tabs` below for the list).
 // Each tab is its own top-level WKWebView load — sidesteps Odysseus's X-Frame-Options/
 // frame-ancestors (which block iframing) entirely. Auto-starts the bridge on launch.
-// Built by scripts/build_app.sh (which generates Config.swift with harnessRoot).
+// Built by scripts/build_app.sh (which generates Config.swift with motdeckRoot).
 //
 // ⚠️ STANDING RULE (Debi, 2026-08-20): every tab inherits EVERY tab behaviour by
 // construction — split view, tab-drag, ghosts, ⌘R reload, lazy load and the
@@ -37,7 +37,7 @@ func terminateExactSpawnedChild(_ process: Process) {
 // id-keyed webview table and the ghost table — so none of them can drift from each
 // other. STUDIO PHASE 2 split it in two: the REGISTRY (everything that can be a tab)
 // and `tabs` (what is on the strip now), which the nav model chooses.
-struct HarnessTab {
+struct MOTDeckTab {
     let id: String
     let title: String
     let url: URL
@@ -46,11 +46,11 @@ struct HarnessTab {
 // which of them are ON the strip right now, in the user's order, rebuilt from
 // data/nav.json. The ID is the stable key — webviews are keyed by it, so reordering or
 // hiding a tab never reloads a page — while the TITLE is only ever a label.
-let tabRegistry: [HarnessTab] = [
+let tabRegistry: [MOTDeckTab] = [
     // MOT Deck — the Bridge control panel. Index 0 BY CONSTRUCTION: it is the
     // app's home, the page the bridge-wait screen writes into, and the only file-drop
     // target (DropOverlay). Keep it first. (The id stays "mc": ids are internal keys.)
-    HarnessTab(id: "mc", title: "MOT Deck", url: bridgeURL),
+    MOTDeckTab(id: "mc", title: "MOT Deck", url: bridgeURL),
     // Enter through the bridge's managed-cookie handoff, then redirect to Odysseus's
     // own unmodified page on :7860. v1.5.81 rotated the old repository password into
     // the protected local store, but a direct URL still showed the ordinary login form
@@ -58,26 +58,26 @@ let tabRegistry: [HarnessTab] = [
     // server-to-server through Odysseus's own API and gives WebKit only its HttpOnly
     // session cookie — never the password, never injected JavaScript. See U145 and
     // bridge/routers/ody.py:ody_managed_workspace.
-    HarnessTab(id: "odysseus", title: "Odysseus", url: URL(string: "http://127.0.0.1:8700/odysseus")!),
-    HarnessTab(id: "hermes", title: "Hermes", url: URL(string: "http://127.0.0.1:9119")!),
+    MOTDeckTab(id: "odysseus", title: "Odysseus", url: URL(string: "http://127.0.0.1:8700/odysseus")!),
+    MOTDeckTab(id: "hermes", title: "Hermes", url: URL(string: "http://127.0.0.1:9119")!),
     // Optional components — usually NOT running, so their first load normally fails into
     // the shared "Not reachable yet" placeholder and retries on re-select / ⌘R.
-    HarnessTab(id: "voicestudio", title: "VoiceStudio", url: URL(string: "http://127.0.0.1:3900")!),
-    HarnessTab(id: "voicebox", title: "Voicebox", url: URL(string: "http://127.0.0.1:17493")!),
-    HarnessTab(id: "comfyui", title: "ComfyUI", url: URL(string: "http://127.0.0.1:8188")!),
+    MOTDeckTab(id: "voicestudio", title: "VoiceStudio", url: URL(string: "http://127.0.0.1:3900")!),
+    MOTDeckTab(id: "voicebox", title: "Voicebox", url: URL(string: "http://127.0.0.1:17493")!),
+    MOTDeckTab(id: "comfyui", title: "ComfyUI", url: URL(string: "http://127.0.0.1:8188")!),
     // :8899, NOT upstream's default :8888 — that port belongs to Debi's standalone
-    // Unsloth app (harness.yaml carries the same number and the reason).
-    HarnessTab(id: "unsloth", title: "Unsloth", url: URL(string: "http://127.0.0.1:8899")!),
+    // Unsloth app (motdeck.yaml carries the same number and the reason).
+    MOTDeckTab(id: "unsloth", title: "Unsloth", url: URL(string: "http://127.0.0.1:8899")!),
     // OpenCode — the second coding lane. Its own server serves its own embedded SPA on
     // one loopback port (:4096; upstream's own --port DEFAULT is 0/ephemeral, so
-    // start_component.sh always passes it explicitly and harness.yaml carries the same).
+    // start_component.sh always passes it explicitly and motdeck.yaml carries the same).
     //
     // ⚠️ THE URL IS THE BRIDGE, NOT :4096, AND THAT IS THE FIX for "the tab opens on
     // Nothing here yet". GET /opencode is a 307 to OpenCode's own new-session composer
     // for data/opencode-workspace — a route only the bridge can build, because only it
     // knows ROOT (repo vs snapshot) and the configured port. See opencode_landing_url
     // in bridge/app.py for why there is nothing to seed instead.
-    HarnessTab(id: "opencode", title: "OpenCode",
+    MOTDeckTab(id: "opencode", title: "OpenCode",
                url: URL(string: "http://127.0.0.1:8700/opencode")!),
     // DeepSeek Harness — the third coding lane (`dsh web`, MIT, pre-1.0). Its own
     // server serves its own SPA and its own JSON/websocket API on one loopback port.
@@ -89,16 +89,16 @@ let tabRegistry: [HarnessTab] = [
     // IS the app, and the workspace is chosen inside the page (see U67). Inventing a
     // /deepseek redirect that only ever forwarded to a constant would add a second hop,
     // a second failure mode and a second place the port is written down, for nothing.
-    // 3080 is upstream's own default AND harness.yaml's `port` AND what
+    // 3080 is upstream's own default AND motdeck.yaml's `port` AND what
     // start_component.sh passes explicitly — one number, three agreeing sources.
     //
     // Nothing else in this file needs an edit for this tab: it is a third-party page,
     // so it falls into the final `else` of the wvById loop and gets a bare WKWebView
-    // with no `harness` handler and no shellScript. Deliberately NOT added to the
+    // with no `motdeck` handler and no shellScript. Deliberately NOT added to the
     // loffice/aider/goose/comfy/compose/gooseui branch — that grants window.webkit to a
     // page we did not write. It gets no OpenCode-style user script either: that one
     // exists to relabel OpenCode's auto-minted draft tabs and has no analogue here.
-    HarnessTab(id: "deepseek", title: "DeepSeek",
+    MOTDeckTab(id: "deepseek", title: "DeepSeek",
                url: URL(string: "http://127.0.0.1:3080")!),
     // Music is OUR OWN panel page, opened chromeless: same bridge origin, ?solo=music
     // hides the sidebar + topbar and pins the panel to the Music view. It is therefore
@@ -119,7 +119,7 @@ let tabRegistry: [HarnessTab] = [
     // Aider — the coding agent, running in a pseudo-terminal. Also ours, also the
     // bridge origin, but its OWN document (/aider): it loads xterm.js and talks to
     // ws://…/api/pty/aider, so it must not carry the panel's poll loops.
-    HarnessTab(id: "aider", title: "Aider", url: URL(string: "http://127.0.0.1:8700/aider")!),
+    MOTDeckTab(id: "aider", title: "Aider", url: URL(string: "http://127.0.0.1:8700/aider")!),
     // Goose CLI — the third agent lane, and a pty for the same verified reason Aider is:
     // goose's own CLI has NO browser UI at all (no `web`, no `ui` subcommand; `goose
     // serve` is an ACP client API that serves no page — docs/research/2026-08-28-goose-
@@ -139,7 +139,7 @@ let tabRegistry: [HarnessTab] = [
     // PINNED prefix, and test_nav_model.py asserts it equals nav.py's pinned defaults;
     // goose is declared unpinned there (the strip is at 11 of 12), so it must NOT appear
     // in the list below or the three-way agreement breaks.
-    HarnessTab(id: "goose", title: "Goose CLI", url: URL(string: "http://127.0.0.1:8700/goose")!),
+    MOTDeckTab(id: "goose", title: "Goose CLI", url: URL(string: "http://127.0.0.1:8700/goose")!),
     // Goose UI — goose Desktop's OWN renderer (vendored, unmodified, v1.5.40), served by
     // the bridge at /gooseui/ and talking WebSocket ACP to a goosed WE supervise. Ours by
     // ORIGIN and by supervision even though the bundle is upstream's: it is served from
@@ -160,7 +160,7 @@ let tabRegistry: [HarnessTab] = [
     // ⚠️ IN THE REGISTRY BUT NOT IN navDefaultTopbar — goose's, comfy's and compose's
     // note applies verbatim: `gooseui` is declared unpinned in nav.py, so it must NOT
     // appear in that list or the three-way agreement breaks.
-    HarnessTab(id: "gooseui", title: "Goose UI",
+    MOTDeckTab(id: "gooseui", title: "Goose UI",
                url: URL(string: "http://127.0.0.1:8700/gooseui/")!),
     // LOffice — spreadsheets over vendored Univer, served from OUR bridge (/office).
     // Ours, bridge origin, its own document for the same reason Aider is: it loads
@@ -168,7 +168,7 @@ let tabRegistry: [HarnessTab] = [
     // "Office Lane"; the tab-strip width budget below rules a two-word title out, so
     // the name is LOffice (2026-08-21). The ROUTE stays /office: internal names do
     // not churn with a wordmark.
-    HarnessTab(id: "loffice", title: "LOffice", url: URL(string: "http://127.0.0.1:8700/office")!),
+    MOTDeckTab(id: "loffice", title: "LOffice", url: URL(string: "http://127.0.0.1:8700/office")!),
     // Generate — MOT Deck's OWN image/video surface (v1.5.36), served by the bridge at
     // /comfy and driving the ComfyUI engine through /api/comfy/*. Ours, bridge origin,
     // its own document for LOffice's reason: it renders a gallery and long-lived
@@ -184,7 +184,7 @@ let tabRegistry: [HarnessTab] = [
     // row opens it), while navDefaultTopbar is the PINNED prefix that test_nav_model.py
     // asserts equals nav.py's pinned defaults. `comfy` is declared unpinned there, so it
     // must NOT appear in that list or the three-way agreement breaks.
-    HarnessTab(id: "comfy", title: "Generate", url: URL(string: "http://127.0.0.1:8700/comfy")!),
+    MOTDeckTab(id: "comfy", title: "Generate", url: URL(string: "http://127.0.0.1:8700/comfy")!),
     // Compose — the ALTERNATIVE music surface (docs/FABLE-MUSIC-COMPOSE-SPEC.md), served
     // by the bridge at /compose and driving the SAME /api/music/* routes the panel's
     // Music view drives. Ours, bridge origin, its own document for Generate's reason: it
@@ -204,14 +204,14 @@ let tabRegistry: [HarnessTab] = [
     // `compose` is the route (/compose), the tab id and the row in every saved
     // nav.json. This is THE Music tab now — the Studio look, opening by default, with
     // Classic one header dropdown away.
-    HarnessTab(id: "compose", title: "Music", url: URL(string: "http://127.0.0.1:8700/compose")!),
+    MOTDeckTab(id: "compose", title: "Music", url: URL(string: "http://127.0.0.1:8700/compose")!),
     // PHASE 2: the three panel VIEWS that can be pinned to the strip. They are the same
     // chromeless `?solo=` load Music already used, generalised — the panel hides its own
     // sidebar/topbar and pins itself to that view. None of them is on the strip by
     // default (they are one sidebar click away), so this changes nothing until asked.
-    HarnessTab(id: "chat", title: "Chat", url: URL(string: "http://127.0.0.1:8700/?solo=chat")!),
-    HarnessTab(id: "models", title: "Models", url: URL(string: "http://127.0.0.1:8700/?solo=models")!),
-    HarnessTab(id: "caps", title: "Capabilities", url: URL(string: "http://127.0.0.1:8700/?solo=caps")!),
+    MOTDeckTab(id: "chat", title: "Chat", url: URL(string: "http://127.0.0.1:8700/?solo=chat")!),
+    MOTDeckTab(id: "models", title: "Models", url: URL(string: "http://127.0.0.1:8700/?solo=models")!),
+    MOTDeckTab(id: "caps", title: "Capabilities", url: URL(string: "http://127.0.0.1:8700/?solo=caps")!),
 ]
 
 // The DEFAULT strip, in order (eleven tabs since OpenCode landed, 2026-08-21). It is
@@ -238,12 +238,12 @@ let navDefaultTopbar = ["mc", "hermes", "unsloth", "opencode", "odysseus",
 // Voicebox — with those two now swappable instead of fixed.
 let navDefaultMru = ["compose", "voicebox"]
 let navWindowMax = 3
-func tabsFor(_ ids: [String]) -> [HarnessTab] {
+func tabsFor(_ ids: [String]) -> [MOTDeckTab] {
     return ids.compactMap { i in tabRegistry.first(where: { $0.id == i }) }
 }
 // THE STRIP. A `var` now: applyNav rebuilds it from data/nav.json (order + hidden), and
 // every use site below reads it live rather than caching an index.
-var tabs: [HarnessTab] = tabsFor(navDefaultTopbar + navDefaultMru)
+var tabs: [MOTDeckTab] = tabsFor(navDefaultTopbar + navDefaultMru)
 var tabTitles: [String] { tabs.map { $0.title } }
 
 // WHAT THE SHELL TELLS THE PANEL ABOUT ITSELF (2026-08-21, the regression repair).
@@ -257,7 +257,7 @@ var tabTitles: [String] { tabs.map { $0.title } }
 // therefore a NORMAL state that must be DETECTABLE rather than a silent no-op.
 //
 // So the shell injects one global into its own first-party pages:
-//     window.harnessShell = { api: <shellAPI>, tabs: [<every tabRegistry id>] }
+//     window.motdeckShell = { api: <shellAPI>, tabs: [<every tabRegistry id>] }
 // `tabs` is the REGISTRY, not the strip: the question is "does this build know that tab
 // at all", and a hidden tab is still reachable (switchTab shows it for the session).
 // Bump `shellAPI` when the panel needs to detect a NEW shell capability.
@@ -305,7 +305,7 @@ final class PaneCloseButton: NSButton {
     override func mouseExited(with event: NSEvent) { tint(paneFaint) }
 }
 
-// PROVEN by /tmp/harness-drag.log: macOS never delivers drag events to the WKWebView
+// PROVEN by /tmp/motdeck-drag.log: macOS never delivers drag events to the WKWebView
 // at all (registrations correct, draggingEntered never called). So a transparent
 // sibling ABOVE the panel is the drag destination: invisible to clicks (hitTest nil),
 // registered only for file drags, forwarding every phase to DropWebView's logic.
@@ -457,17 +457,17 @@ struct DepNeed {
 // Mission Control's webview: WKWebView does not forward Finder file-drags to the DOM
 // (page handlers never fire — verified: same page accepts drops in a real browser).
 // So the SHELL is the drop target: catch the drag natively, read the image, and hand
-// it to the page's `harnessNativeDrop(name, dataURL)` hook. The page does the real
+// it to the page's `motdeckNativeDrop(name, dataURL)` hook. The page does the real
 // gating (vision model, Chat mode, size) and shows its own notes.
 final class DropWebView: WKWebView {
-    // diagnostic trail for the drag chain → /tmp/harness-drag.log
+    // diagnostic trail for the drag chain → /tmp/motdeck-drag.log
     private func dragLog(_ s: String) {
         let line = "\(Date()) \(s)\n"
         guard let d = line.data(using: .utf8) else { return }
-        if let h = FileHandle(forWritingAtPath: "/tmp/harness-drag.log") {
+        if let h = FileHandle(forWritingAtPath: "/tmp/motdeck-drag.log") {
             h.seekToEndOfFile(); h.write(d); h.closeFile()
         } else {
-            try? line.write(toFile: "/tmp/harness-drag.log", atomically: true, encoding: .utf8)
+            try? line.write(toFile: "/tmp/motdeck-drag.log", atomically: true, encoding: .utf8)
         }
     }
 
@@ -559,7 +559,7 @@ final class DropWebView: WKWebView {
         let name = url.lastPathComponent
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        let hook = isAudio ? "harnessNativeAudioDrop" : "harnessNativeDrop"
+        let hook = isAudio ? "motdeckNativeAudioDrop" : "motdeckNativeDrop"
         let js = "window.\(hook) && \(hook)(\"\(name)\", \"data:\(mime);base64,\(data.base64EncodedString())\");"
         dragLog("perform: injecting \(data.count) bytes as \(mime) via \(hook)")
         evaluateJavaScript(js) { _, err in
@@ -800,7 +800,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     //     policy and a staleness clock — a few hundred lines of new machinery, with its
     //     own failure modes, to save two integers' worth of traffic.
     //  2. THIS POLL IS NOW LOAD-BEARING FOR THE PANEL. A component that dies on its own
-    //     is not a transition the harness causes, so the only place that fact exists is
+    //     is not a transition MOT Deck causes, so the only place that fact exists is
     //     the debounced verdict computed inside GET /api/status (bridge/core/health.py's
     //     _health_track, which now pushes on a CHANGE). Whoever calls /api/status fans
     //     that out to every open panel — and this 4s timer is the most reliable caller
@@ -836,7 +836,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     //
     // FOUR FENCES. Any one of them failing means the script does NOTHING AT ALL — never
     // a partial effect, never an error in their console, never a changed UI:
-    //   1. VERSION. The pin is read from harness.yaml here and compared, inside the
+    //   1. VERSION. The pin is read from motdeck.yaml here and compared, inside the
     //      page, against OpenCode's own GET /global/health. A different build → return.
     //      (No pin readable → the script is not injected at all.)
     //   2. THE STORE. A key matching `opencode.window.*.dat:tabs` must exist and parse
@@ -881,7 +881,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // listeners; no write, no DOM change) — so a non-matching build still gets nothing.
     //
     // FIFTH FENCE, AND OUR ONE PIECE OF STATE: the answer is remembered under OUR OWN
-    // key `harness.opencode.autoDrafts` (a plain array of ids) so a label survives a
+    // key `motdeck.opencode.autoDrafts` (a plain array of ids) so a label survives a
     // reload and a relaunch — and so a + draft, once judged the user's, is NEVER marked
     // later even after a restart. We never read or write ANY `opencode.*` entry: theirs
     // stay byte-untouched, which is what keeps their ✕ cleanup working. The set is
@@ -893,11 +893,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // ⚠️ THE WEBVIEWS ARE BUILT BEFORE `resolvedRoot` IS SETTLED (the provisioning
         // resolve runs later in applicationDidFinishLaunching), so this reads the baked
         // root FIRST and the fat snapshot SECOND rather than trusting one of them. Both
-        // carry the same harness.yaml; whichever answers first is the pin.
+        // carry the same motdeck.yaml; whichever answers first is the pin.
         var yaml: String? = nil
-        for r in [resolvedRoot, harnessRoot,
-                  NSString(string: "~/Library/Application Support/Harness").expandingTildeInPath] {
-            if let s = try? String(contentsOfFile: "\(r)/harness.yaml", encoding: .utf8) {
+        for r in [resolvedRoot, motdeckRoot,
+                  NSString(string: "~/Library/Application Support/MOT Deck").expandingTildeInPath] {
+            if let s = try? String(contentsOfFile: "\(r)/motdeck.yaml", encoding: .utf8) {
                 yaml = s; break
             }
         }
@@ -909,8 +909,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // quoted; the SNAPSHOT's copy is produced by ship.sh's additive pyyaml merge,
         // which dumps it UNQUOTED (`opencode_pin: 1.18.23` — verified on the live
         // snapshot 2026-08-29). A quote-only regex therefore reads the pin on this dev
-        // Mac (where harnessRoot points at the repo) and finds NOTHING on a fat or
-        // portable install, where the snapshot is the only harness.yaml there is — the
+        // Mac (where motdeckRoot points at the repo) and finds NOTHING on a fat or
+        // portable install, where the snapshot is the only motdeck.yaml there is — the
         // whole feature would silently not exist there. The value class excludes spaces
         // and `#`, so an unquoted match still cannot swallow a trailing comment.
         guard let m = y.range(of: #"opencode_pin:\s*"?[0-9][0-9A-Za-z.\-]*"?"#,
@@ -949,7 +949,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     //
     // THREE FENCES. Any one failing ⇒ NOTHING is injected or painted, and the tab is
     // upstream's UI exactly as before:
-    //   1. THE PIN. `goose_pin` is read from harness.yaml here (repo or snapshot,
+    //   1. THE PIN. `goose_pin` is read from motdeck.yaml here (repo or snapshot,
     //      quoted or not — the v1.5.59 lesson) and compared, inside the page, against
     //      the version the bridge reports. No pin readable ⇒ the script is not injected.
     //   2. THE BUNDLE. /api/gooseui/status must report `bundle_sha256` EQUAL to
@@ -964,9 +964,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // function restores upstream's sidebar on the next launch.
     func goosePin() -> String? {
         var yaml: String? = nil
-        for r in [resolvedRoot, harnessRoot,
-                  NSString(string: "~/Library/Application Support/Harness").expandingTildeInPath] {
-            if let s = try? String(contentsOfFile: "\(r)/harness.yaml", encoding: .utf8) {
+        for r in [resolvedRoot, motdeckRoot,
+                  NSString(string: "~/Library/Application Support/MOT Deck").expandingTildeInPath] {
+            if let s = try? String(contentsOfFile: "\(r)/motdeck.yaml", encoding: .utf8) {
                 yaml = s; break
             }
         }
@@ -988,7 +988,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
         let src = """
         (function () {
-          var PIN = "\(pin)", MARK = "data-harness-gdel";
+          var PIN = "\(pin)", MARK = "data-motdeck-gdel";
           var ID_RE = /^\\d{8}_\\d+$/, armedRow = null;
 
           // FENCE 3: the row's OWN props. Bounded walk; no id ⇒ no ✕ on that row.
@@ -1016,9 +1016,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             return null;
           }
           function style() {
-            if (document.getElementById("harness-gdel-style")) return;
+            if (document.getElementById("motdeck-gdel-style")) return;
             var s = document.createElement("style");
-            s.id = "harness-gdel-style";
+            s.id = "motdeck-gdel-style";
             s.textContent =
               ".hgdel{margin-left:auto;flex:none;display:flex;align-items:center;gap:4px;" +
                 "opacity:0;transition:opacity .12s}" +
@@ -1109,7 +1109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                 return;
               }
               var msg = (res.j && res.j.message) || "goose refused that";
-              try { console.warn("[harness-gdel] " + id + ": HTTP " + res.status + " — " + msg); }
+              try { console.warn("[motdeck-gdel] " + id + ": HTTP " + res.status + " — " + msg); }
               catch (e) {}
               note(row, "Nothing was deleted — " + msg,
                    "HTTP " + res.status + " · /api/gooseui/session/delete");
@@ -1191,7 +1191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         (function(){
           var PIN = "\(pin)", LABEL = "runner auto session", FROM = "New session";
           // OURS. Never an `opencode.*` key: their entries are read-only to us.
-          var MINE = "harness.opencode.autoDrafts", CAP = 64;
+          var MINE = "motdeck.opencode.autoDrafts", CAP = 64;
           function tabsKey(){
             try {
               for (var i=0;i<localStorage.length;i++){
@@ -1331,10 +1331,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     let depsPoll: TimeInterval = 10
     var bridgeProcess: Process?
     var spawnedBridge = false
-    // Working harness root: the baked dev path if present, else ~/Harness (portable builds).
-    var resolvedRoot = harnessRoot
+    // Working MOT Deck root: the baked dev path if present, else the canonical
+    // Application Support root (portable and fat builds deliberately agree).
+    var resolvedRoot = motdeckRoot
+
+    // U150: changing the bundle id moves UserDefaults into a new preference domain.
+    // Copy only the shell-owned keys, and only when the new key is absent. The same
+    // routine also handles a migrated plist whose contents still carry old key names.
+    func migrateLegacyIdentityPreferences() {
+        let current = UserDefaults.standard
+        let legacy = UserDefaults(suiteName: "local.harness.app")
+        let suffixes = [
+            "tabbar.hidden", "split.on", "split.left", "split.right",
+            "split.leftId", "split.rightId", "split.focus"
+        ]
+        for suffix in suffixes {
+            let oldKey = "harness." + suffix
+            let newKey = "motdeck." + suffix
+            if current.object(forKey: newKey) == nil {
+                if let value = current.object(forKey: oldKey) ?? legacy?.object(forKey: oldKey) {
+                    current.set(value, forKey: newKey)
+                }
+            }
+            current.removeObject(forKey: oldKey)
+        }
+        current.set(true, forKey: "motdeck.identity.migrated")
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        migrateLegacyIdentityPreferences()
         if #available(macOS 11.3, *) { downloadHandler = DownloadHandler() }
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 820),
@@ -1365,7 +1390,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // arrives asynchronously, so the strip starts on the DEFAULT order — seed it
         // with any saved id that is not in that order, or a customised layout would
         // restore its panes onto whatever happens to sit at those indices instead.
-        for key in ["harness.split.leftId", "harness.split.rightId"] {
+        for key in ["motdeck.split.leftId", "motdeck.split.rightId"] {
             guard let id = UserDefaults.standard.string(forKey: key), !id.isEmpty,
                   tabRegistry.contains(where: { $0.id == id }),
                   !tabs.contains(where: { $0.id == id }),
@@ -1416,7 +1441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // ── web views ──
         // DropWebView: native drag-destination so Finder image drops reach the chat.
         //
-        // OUR OWN PAGES — and only ours — get the "harness" script-message handler, so
+        // OUR OWN PAGES — and only ours — get the "motdeck" script-message handler, so
         // that a sidebar row (or LOffice's File menu) can ask the shell to switch tabs.
         // That is the panel here, plus LOffice, Aider, Goose CLI, Goose UI, Generate and
         // Compose in the loop below;
@@ -1428,20 +1453,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // `tabRegistry`, so there is nothing here to escape.
         let shellIds = tabRegistry.map { "\"\($0.id)\"" }.joined(separator: ",")
         let shellScript = WKUserScript(
-            source: "window.harnessShell={api:\(shellAPI),tabs:[\(shellIds)]};",
+            source: "window.motdeckShell={api:\(shellAPI),tabs:[\(shellIds)]};",
             injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        // The live WebKit store is moved with the bundle-identity migration. Rename
+        // only MOT Deck-owned keys before page code reads them; preserve new values.
+        let identityMigrationScript = WKUserScript(source: """
+          (function(){
+            try {
+              Object.keys(localStorage).forEach(function(oldKey){
+                var newKey = oldKey.indexOf('harness.') === 0
+                  ? 'motdeck.' + oldKey.slice(8)
+                  : (oldKey.indexOf('harness-') === 0
+                      ? 'motdeck-' + oldKey.slice(8) : '');
+                if (!newKey) return;
+                if (localStorage.getItem(newKey) === null)
+                  localStorage.setItem(newKey, localStorage.getItem(oldKey));
+                localStorage.removeItem(oldKey);
+              });
+            } catch (_) {}
+          })();
+        """, injectionTime: .atDocumentStart, forMainFrameOnly: true)
 
         let panelCfg = WKWebViewConfiguration()
-        panelCfg.userContentController.add(self, name: "harness")
+        panelCfg.userContentController.add(self, name: "motdeck")
+        panelCfg.userContentController.addUserScript(identityMigrationScript)
         panelCfg.userContentController.addUserScript(shellScript)
         panelWV = DropWebView(frame: .zero, configuration: panelCfg)
 
-        // "Harness skin" for Odysseus: override its base --font-family (unset → falls back to
+        // "MOT Deck skin" for Odysseus: override its base --font-family (unset → falls back to
         // Fira Code monospace everywhere) with a refined sans for prose/UI. Code blocks use an
         // explicit 'Fira Code' rule, so they stay mono. Colors are left to Odysseus's Theme editor.
         let odyCfg = WKWebViewConfiguration()
         let skin = ":root{--font-family:-apple-system,'SF Pro Text','Segoe UI',system-ui,sans-serif;} body{line-height:1.5;} .msg,.message,p{letter-spacing:0.1px;}"
-        let inject = "(function(){var s=document.getElementById('harness-skin')||document.createElement('style');s.id='harness-skin';s.textContent=`\(skin)`;document.documentElement.appendChild(s);})();"
+        let inject = "(function(){var s=document.getElementById('motdeck-skin')||document.createElement('style');s.id='motdeck-skin';s.textContent=`\(skin)`;document.documentElement.appendChild(s);})();"
         let userScript = WKUserScript(source: inject, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         odyCfg.userContentController.addUserScript(userScript)
         odyWV = WKWebView(frame: .zero, configuration: odyCfg)
@@ -1463,7 +1507,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             else if t.id == hermesId { wvById[t.id] = hermesWV! }
             // LOffice + Aider + Goose CLI + Generate + Compose + Goose UI are OUR OWN
             // pages served by the bridge (first-party, same origin as the panel) — they
-            // get the "harness" handler too, so their own menus can ask the shell to
+            // get the "motdeck" handler too, so their own menus can ask the shell to
             // switch tabs. Third-party pages never do. The list is EXPLICIT rather than
             // "anything on :8700": a page earns the handler by being one we wrote, and
             // that has to be stated once per page.
@@ -1487,7 +1531,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             else if t.id == "loffice" || t.id == "aider" || t.id == "goose"
                     || t.id == "comfy" || t.id == "compose" || t.id == "gooseui" {
                 let c = WKWebViewConfiguration()
-                c.userContentController.add(self, name: "harness")
+                c.userContentController.add(self, name: "motdeck")
+                c.userContentController.addUserScript(identityMigrationScript)
                 c.userContentController.addUserScript(shellScript)
                 // The sidebar's per-chat ✕ — see gooseSidebarDeleteScript(). Fenced;
                 // any fence unreadable ⇒ nothing injected and the tab is upstream's.
@@ -1520,7 +1565,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         splitView = NSSplitView()
         splitView.isVertical = true
         splitView.dividerStyle = .thin
-        splitView.autosaveName = "harness-split"
+        splitView.autosaveName = "motdeck-split"
         splitView.delegate = self
         splitView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(splitView)
@@ -1615,20 +1660,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // v1.5.26 — restore the strip's own visibility BEFORE the panes are laid out, so
         // a hidden strip never flashes on launch. The monitor is armed from the same
         // fact, so the peek works on the first pointer move after a cold start.
-        tabBarHidden = ud.bool(forKey: "harness.tabbar.hidden")
+        tabBarHidden = ud.bool(forKey: "motdeck.tabbar.hidden")
         applyTabBar()
         setTabBarPeekMonitor(tabBarHidden)
-        let wasSplit = ud.bool(forKey: "harness.split.on")
+        let wasSplit = ud.bool(forKey: "motdeck.split.on")
         // ID first (PHASE 2), the old integer key second so an upgrade from the previous
         // build still restores its arrangement rather than silently resetting it.
-        let savedRightId = ud.string(forKey: "harness.split.rightId") ?? ""
-        let savedLeftId = ud.string(forKey: "harness.split.leftId") ?? ""
+        let savedRightId = ud.string(forKey: "motdeck.split.rightId") ?? ""
+        let savedLeftId = ud.string(forKey: "motdeck.split.leftId") ?? ""
         rightTab = tabs.firstIndex(where: { $0.id == savedRightId })
-                   ?? (ud.object(forKey: "harness.split.right") as? Int ?? 1)
+                   ?? (ud.object(forKey: "motdeck.split.right") as? Int ?? 1)
         if rightTab < 0 || rightTab >= tabTitles.count { rightTab = 1 }
         if wasSplit {
             currentTab = tabs.firstIndex(where: { $0.id == savedLeftId })
-                         ?? (ud.object(forKey: "harness.split.left") as? Int ?? 0)
+                         ?? (ud.object(forKey: "motdeck.split.left") as? Int ?? 0)
             if currentTab < 0 || currentTab >= tabTitles.count { currentTab = 0 }
             // The two panes can never hold the same tab (that is what the swap rule
             // guarantees); repair a defaults file that somehow says otherwise.
@@ -1638,7 +1683,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         seg.selectedSegment = currentTab
         setSplit(wasSplit, persist: false)
         if wasSplit {
-            let f = ud.object(forKey: "harness.split.focus") as? Int ?? 0
+            let f = ud.object(forKey: "motdeck.split.focus") as? Int ?? 0
             setFocus(f == 1 ? 1 : 0)
         }
 
@@ -1687,13 +1732,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     // ── §G-phase2 portable first-run ──
-    // Dev builds bake a valid harnessRoot → this whole path is dormant. Portable builds
-    // have no valid baked root → resolve to ~/Harness, self-installing on first launch.
-    func homeHarness() -> String { NSHomeDirectory() + "/Harness" }
-    // §G-phase3 fat build: the runtime root lives in Application Support (the app installs
-    // there on first run rather than into a repo checkout).
-    func appSupportHarness() -> String {
-        NSHomeDirectory() + "/Library/Application Support/Harness"
+    // All packaged builds use one live root. Keeping portable and fat builds together
+    // prevents two installations from silently diverging.
+    func appSupportMOTDeck() -> String {
+        NSHomeDirectory() + "/Library/Application Support/MOT Deck"
     }
     func rootIsProvisioned(_ root: String) -> Bool {
         FileManager.default.fileExists(atPath: root + "/bridge/app.py")
@@ -1708,13 +1750,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // Fat/offline build: dedicated Application Support root + offline provisioner.
         // Dev/thin/portable builds (fatBuild == false) fall through unchanged.
         if fatBuild {
-            let dest = appSupportHarness()
+            let dest = appSupportMOTDeck()
             if fatProvisioned(dest) { resolvedRoot = dest; ensureBridgeThenLoad(attempt: 0) }
             else { runFirstRunFat() }
             return
         }
-        if rootIsProvisioned(harnessRoot) { resolvedRoot = harnessRoot; ensureBridgeThenLoad(attempt: 0); return }
-        let dest = homeHarness()
+        if rootIsProvisioned(motdeckRoot) { resolvedRoot = motdeckRoot; ensureBridgeThenLoad(attempt: 0); return }
+        let dest = appSupportMOTDeck()
         if rootIsProvisioned(dest) { resolvedRoot = dest; ensureBridgeThenLoad(attempt: 0); return }
         runFirstRun()   // nothing provisioned anywhere → portable first-run
     }
@@ -1739,27 +1781,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     func runFirstRun() {
-        let seed = (Bundle.main.resourcePath ?? "") + "/harness-seed.tar.gz"
+        let seed = (Bundle.main.resourcePath ?? "") + "/motdeck-seed.tar.gz"
         if !FileManager.default.fileExists(atPath: seed) {
-            panelWV.loadHTMLString(setupHTML("Harness folder not found",
-                "This build expects the harness at<br><code>\(esc(harnessRoot))</code><br>which isn’t present, and it carries no portable seed.<br><br>Rebuild from the repo with <code>./scripts/build_app.sh</code>, or make a portable build with <code>--portable</code>."), baseURL: nil)
+            panelWV.loadHTMLString(setupHTML("MOT Deck folder not found",
+                "This build expects MOT Deck at<br><code>\(esc(motdeckRoot))</code><br>which isn’t present, and it carries no portable seed.<br><br>Rebuild from the repo with <code>./scripts/build_app.sh</code>, or make a portable build with <code>--portable</code>."), baseURL: nil)
             return
         }
         let a = NSAlert()
         a.messageText = "Set up MOT Deck"
-        a.informativeText = "MOT Deck will install its local stack into:\n\(homeHarness())\n\nRequirements: Xcode Command Line Tools, Homebrew, and an internet connection. This can take several minutes."
+        a.informativeText = "MOT Deck will install its local stack into:\n\(appSupportMOTDeck())\n\nRequirements: Xcode Command Line Tools, Homebrew, and an internet connection. This can take several minutes."
         a.addButton(withTitle: "Continue")
         a.addButton(withTitle: "Quit")
         if a.runModal() != .alertFirstButtonReturn { NSApp.terminate(nil); return }
         panelWV.loadHTMLString(setupHTML("Setting things up…",
-            "Installing the local stack into <code>~/Harness</code>.<br>This can take several minutes — progress is logged to<br><code>~/Harness/data/logs/firstrun.log</code>.<br><br>This screen continues automatically when the harness is ready."), baseURL: nil)
+            "Installing the local stack into <code>~/Library/Application Support/MOT Deck</code>.<br>This can take several minutes — progress is logged to<br><code>…/data/logs/firstrun.log</code>.<br><br>This screen continues automatically when MOT Deck is ready."), baseURL: nil)
         DispatchQueue.global().async { self.doFirstRun() }
     }
 
     func doFirstRun() {
         let fm = FileManager.default
-        let dest = homeHarness()
-        let seed = (Bundle.main.resourcePath ?? "") + "/harness-seed.tar.gz"
+        let dest = appSupportMOTDeck()
+        let seed = (Bundle.main.resourcePath ?? "") + "/motdeck-seed.tar.gz"
         try? fm.createDirectory(atPath: dest, withIntermediateDirectories: true)
 
         let untar = Process()
@@ -1789,7 +1831,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             if ok { self.resolvedRoot = dest; self.ensureBridgeThenLoad(attempt: 0) }
             else {
                 self.panelWV.loadHTMLString(self.setupHTML("Setup didn’t finish",
-                    "See <code>~/Harness/data/logs/firstrun.log</code>. Common causes: Homebrew or Xcode Command Line Tools missing, or no internet. Fix, then reopen Harness.<br><br><pre style='white-space:pre-wrap;color:#6f6a80;font:11px ui-monospace,Menlo,monospace'>\(self.esc(self.tail(logFile, 30)))</pre>"), baseURL: nil)
+                    "See <code>~/Library/Application Support/MOT Deck/data/logs/firstrun.log</code>. Common causes: Homebrew or Xcode Command Line Tools missing, or no internet. Fix, then reopen MOT Deck.<br><br><pre style='white-space:pre-wrap;color:#6f6a80;font:11px ui-monospace,Menlo,monospace'>\(self.esc(self.tail(logFile, 30)))</pre>"), baseURL: nil)
             }
         }
     }
@@ -1799,7 +1841,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // load the panel where §E starts each component. Dormant unless fatBuild (dev unchanged).
     func runFirstRunFat() {
         let res = Bundle.main.resourcePath ?? ""
-        let seed = res + "/harness-seed-fat.tar.gz"
+        let seed = res + "/motdeck-seed-fat.tar.gz"
         let script = res + "/firstrun_fat.sh"
         if !FileManager.default.fileExists(atPath: seed) || !FileManager.default.fileExists(atPath: script) {
             panelWV.loadHTMLString(setupHTML("Installer payload missing",
@@ -1808,18 +1850,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
         let a = NSAlert()
         a.messageText = "Set up MOT Deck"
-        a.informativeText = "MOT Deck will install its local AI stack into:\n\(appSupportHarness())\n\nNo internet is needed for setup — everything is bundled. This can take a few minutes."
+        a.informativeText = "MOT Deck will install its local AI stack into:\n\(appSupportMOTDeck())\n\nNo internet is needed for setup — everything is bundled. This can take a few minutes."
         a.addButton(withTitle: "Continue")
         a.addButton(withTitle: "Quit")
         if a.runModal() != .alertFirstButtonReturn { NSApp.terminate(nil); return }
         panelWV.loadHTMLString(setupHTML("Setting things up…",
-            "Installing the local stack (offline) into<br><code>~/Library/Application Support/Harness</code>.<br>This can take a few minutes — progress is logged to<br><code>…/data/logs/firstrun.log</code>.<br><br>This screen continues automatically when the harness is ready."), baseURL: nil)
+            "Installing the local stack (offline) into<br><code>~/Library/Application Support/MOT Deck</code>.<br>This can take a few minutes — progress is logged to<br><code>…/data/logs/firstrun.log</code>.<br><br>This screen continues automatically when MOT Deck is ready."), baseURL: nil)
         DispatchQueue.global().async { self.doFirstRunFat() }
     }
 
     func doFirstRunFat() {
         let fm = FileManager.default
-        let dest = appSupportHarness()
+        let dest = appSupportMOTDeck()
         let res = Bundle.main.resourcePath ?? ""
         let script = res + "/firstrun_fat.sh"
         try? fm.createDirectory(atPath: dest, withIntermediateDirectories: true)
@@ -1844,7 +1886,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             if ok { self.resolvedRoot = dest; self.ensureBridgeThenLoad(attempt: 0) }
             else {
                 self.panelWV.loadHTMLString(self.setupHTML("Setup didn’t finish",
-                    "See <code>~/Library/Application Support/Harness/data/logs/firstrun.log</code> (and the per-component <code>firstrun_*.log</code> beside it). Fix the reported component, then reopen Harness.<br><br><pre style='white-space:pre-wrap;color:#6f6a80;font:11px ui-monospace,Menlo,monospace'>\(self.esc(self.tail(logFile, 30)))</pre>"), baseURL: nil)
+                    "See <code>~/Library/Application Support/MOT Deck/data/logs/firstrun.log</code> (and the per-component <code>firstrun_*.log</code> beside it). Fix the reported component, then reopen MOT Deck.<br><br><pre style='white-space:pre-wrap;color:#6f6a80;font:11px ui-monospace,Menlo,monospace'>\(self.esc(self.tail(logFile, 30)))</pre>"), baseURL: nil)
             }
         }
     }
@@ -1987,7 +2029,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     // Which tabs can carry one. It is derived, not listed: a banner belongs to a tab
     // whose id is a COMPONENT the bridge answers for, so adding a component to
-    // harness.yaml (and NEEDS_SOFT) gives its tab a banner with no edit here — the
+    // motdeck.yaml (and NEEDS_SOFT) gives its tab a banner with no edit here — the
     // standing "nothing hardcodes the tab list" rule. `mc` is excluded by construction:
     // it is where the user goes to FIX these, so it must never carry one.
     func bannerCapable(_ idx: Int) -> Bool {
@@ -2160,20 +2202,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let np = (splitOn && rightPane.superview === splitView) ? p : 0
         if np != focusedPane { slog("focus -> \(np)") }
         focusedPane = np
-        UserDefaults.standard.set(np, forKey: "harness.split.focus")
+        UserDefaults.standard.set(np, forKey: "motdeck.split.focus")
         updateFocusStrips()
         syncStrip()
     }
 
     func persistTabs() {
         let ud = UserDefaults.standard
-        ud.set(currentTab, forKey: "harness.split.left")
-        ud.set(rightTab, forKey: "harness.split.right")
+        ud.set(currentTab, forKey: "motdeck.split.left")
+        ud.set(rightTab, forKey: "motdeck.split.right")
         // PHASE 2: the indices only mean anything against the strip that was on screen
         // when they were written, and the strip is the user's now — so the ID is the
         // real record and the ints are kept only as the upgrade path.
-        ud.set(tabId(currentTab), forKey: "harness.split.leftId")
-        ud.set(tabId(rightTab), forKey: "harness.split.rightId")
+        ud.set(tabId(currentTab), forKey: "motdeck.split.leftId")
+        ud.set(tabId(rightTab), forKey: "motdeck.split.rightId")
     }
 
     // THE v2 routing rule. If the OTHER pane already holds the requested tab, the two
@@ -2293,7 +2335,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // The ⋯ menu is "the registry minus the strip", which since the 9+3 ruling means
     // minus the pins AND minus the window — an entry that fell out of the window comes
     // back here, which is the other half of the swap being honest.
-    func hiddenTabs() -> [HarnessTab] {
+    func hiddenTabs() -> [MOTDeckTab] {
         return tabRegistry.filter { r in !tabs.contains(where: { $0.id == r.id }) }
     }
     // ⚠️ v1.5.26 — THE ⋯ BUTTON IS NOW ALWAYS PRESENT. It used to vanish whenever no tab
@@ -2367,7 +2409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
     @objc func toggleTabBar(_ sender: Any?) {
         tabBarHidden.toggle()
-        UserDefaults.standard.set(tabBarHidden, forKey: "harness.tabbar.hidden")
+        UserDefaults.standard.set(tabBarHidden, forKey: "motdeck.tabbar.hidden")
         applyTabBar()
         setTabBarPeekMonitor(tabBarHidden)
         slog("tab bar \(tabBarHidden ? "hidden" : "shown")")
@@ -2504,7 +2546,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // from disk and reloads on its own), so a title we do not have is a normal, benign
     // state, not an error to surface.
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "harness",
+        guard message.name == "motdeck",
               let body = message.body as? [String: Any],
               let cmd = body["cmd"] as? String else { return }
         switch cmd {
@@ -2909,8 +2951,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     // Permanent split diagnostics. Visible with
-    //   log stream --predicate 'process == "Harness"'
-    // or by running /Applications/Harness.app/Contents/MacOS/Harness from a terminal.
+    //   log stream --predicate 'process == "MOT Deck"'
+    // or by running /Applications/MOT Deck.app/Contents/MacOS/MOTDeck from a terminal.
     // NSString cast, not a bare String, so the %@ CVarArg is unambiguous.
     func slog(_ s: String) { NSLog("%@", ("[split] " + s) as NSString) }
 
@@ -2966,10 +3008,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                 rightPane.removeFromSuperview()   // removeArrangedSubview alone keeps it a subview
             }
             focusedPane = 0
-            UserDefaults.standard.set(0, forKey: "harness.split.focus")
+            UserDefaults.standard.set(0, forKey: "motdeck.split.focus")
         }
         splitButton.state = on ? .on : .off
-        if persist { UserDefaults.standard.set(on, forKey: "harness.split.on") }
+        if persist { UserDefaults.standard.set(on, forKey: "motdeck.split.on") }
         persistTabs()
         if on && rightTab != currentTab { ensureLoaded(rightTab) }
         applyPanes()
@@ -3199,7 +3241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             }
         }
 
-        // Permanent diagnostics: `log stream --predicate 'process == "Harness"'`, or just
+        // Permanent diagnostics: `log stream --predicate 'process == "MOT Deck"'`, or just
         // run the binary from a terminal, and one click tells you exactly what fired and
         // what widths came out of it. Cheap; keeps this class of bug one paste away.
         slog("applyPanes left=\(leftIdx) right=\(rightTab) focus=\(focusedPane) borrows=\(rightBorrows) ghosts=\(leftIsGhost ? "L" : "-")\(rightIsGhost ? "R" : "-")(\(secondInstances.count)) parkHidden=\(park.isHidden) panes \(Int(leftPane.frame.width))/\(Int(rightPane.frame.width))")
@@ -3398,7 +3440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                         "<body style='background:#0b0a10;color:#c9c4d4;font-family:-apple-system;" +
                         "display:flex;align-items:center;justify-content:center;height:100vh'>" +
                         "<div><h2 style='color:#efe7d7'>Bridge failed to start</h2>" +
-                        "<p>Check data/logs/bridge.log in the harness folder.</p></div></body>",
+                        "<p>Check data/logs/bridge.log in MOT Deck folder.</p></div></body>",
                         baseURL: nil)
                 }
             }
@@ -3506,7 +3548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // .grant is safe here because the only page allowed to ask is our own panel on
     // 127.0.0.1:8700, and macOS still shows its own TCC prompt the first time (which
     // needs NSMicrophoneUsageDescription in Info.plist — added in build_app.sh).
-    // Camera is refused: nothing in the harness uses it, so a request would only ever
+    // Camera is refused: nothing in MOT Deck uses it, so a request would only ever
     // be something we did not ship.
     @available(macOS 12.0, *)
     func webView(_ webView: WKWebView,
@@ -3519,7 +3561,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     // ══ QUIT EVERYTHING (U55 — Debi's ruling, 2026-09-02) ════════════════════
     //
-    // BOTH DOORS. ⌘Q ("Quit M.O.T") is UNCHANGED and stays the default: since
+    // BOTH DOORS. ⌘Q ("Quit MOT Deck") stays the default: since
     // v1.5.69 the bridge and every component are setsid'd out of the app's process
     // group on purpose, so closing the window leaves the stack serving and reopening
     // the app reuses it. ⌥⌘Q is the second door — the one Debi asked for — and it means
@@ -3572,18 +3614,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         guard let running = running else {
             // No bridge to ask. Nothing of ours is being supervised, so this is just a
             // quit — said plainly rather than pretending a stop happened.
-            a.messageText = "Quit M.O.T?"
+            a.messageText = "Quit MOT Deck?"
             a.informativeText = "The bridge on 127.0.0.1:8700 is not answering, so there "
-                + "is nothing running for M.O.T to stop. The app will just close."
+                + "is nothing running for MOT Deck to stop. The app will just close."
             a.addButton(withTitle: "Quit")
             a.addButton(withTitle: "Cancel")
             if a.runModal() == .alertFirstButtonReturn { NSApp.terminate(nil) }
             quitAllInFlight = false
             return
         }
-        a.messageText = "Quit M.O.T and stop everything?"
+        a.messageText = "Quit MOT Deck and stop everything?"
         if running.isEmpty {
-            a.informativeText = "Nothing is running right now. M.O.T will stop the "
+            a.informativeText = "Nothing is running right now. MOT Deck will stop the "
                 + "bridge and close.\n\nPlain ⌘Q leaves the bridge running instead."
         } else {
             a.informativeText = "This stops \(running.count) running "
@@ -3688,7 +3730,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                         + "see and stop these from Mission Control."
                 }
                 b.addButton(withTitle: "Stay Open")
-                b.addButton(withTitle: "Quit M.O.T Anyway")
+                b.addButton(withTitle: "Quit MOT Deck Anyway")
                 if b.runModal() != .alertFirstButtonReturn { NSApp.terminate(nil) }
                 // Staying open must leave ⌥⌘Q usable — the user's next move after
                 // reading which component refused is very often to try again.
@@ -3722,7 +3764,7 @@ appMenu.addItem(reloadItem)
 appMenu.addItem(NSMenuItem.separator())
 // ⌘Q — UNCHANGED, and deliberately still the plain quit (v1.5.69 behaviour: the bridge
 // and every component keep serving; reopening the app reuses them).
-appMenu.addItem(withTitle: "Quit M.O.T", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+appMenu.addItem(withTitle: "Quit MOT Deck", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 // ⌥⌘Q — THE SECOND DOOR (U55, Debi 2026-09-02: "i think we should have an option that
 // fully quits everything too"). Right next to the plain quit, because that is where a
 // user looks for it, and one modifier away, because it is the same intent with a bigger

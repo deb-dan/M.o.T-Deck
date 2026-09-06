@@ -80,9 +80,9 @@ Independent generalisations (this is not a CryptPad-only trick):
   a finished Drive app. That is the whole appeal.
 - ❌ **Disqualifier: CryptPad stores end-to-end-encrypted blobs, not files.** There is no `data/office/`
   full of real `.xlsx`. Every document enters and leaves through *its* import/export UI. That breaks: the
-  harness files-on-disk model, `bridge/office.py` containment, the AI side panel's sheet context, agent/tool
+  motdeck files-on-disk model, `bridge/office.py` containment, the AI side panel's sheet context, agent/tool
   access to spreadsheets, and any future "Hermes, edit this sheet". We'd have an office suite the rest of the
-  harness cannot see. **Reject as a component; harvest its asset pipeline instead** — which is §0.
+  motdeck cannot see. **Reject as a component; harvest its asset pipeline instead** — which is §0.
 
 ---
 
@@ -237,10 +237,10 @@ caret. Univer's own docs then cap the ceiling: the import/export that would just
 `Proprietary` and Docker-only. So the choice is not "Univer vs a rewrite" — it is **"keep owning an app
 shell forever, or host a finished one."** The ONLYOFFICE static bundle is the only option that *reduces*
 owned surface: the ribbon, menus, formula bar, pagination and the format converter all arrive as vendored
-artifacts, and our job shrinks to what the harness is already good at — serving `/assets`, listing files
+artifacts, and our job shrinks to what MOT Deck is already good at — serving `/assets`, listing files
 under `data/office/`, and taking POSTed bytes. A component app (CryptPad/Grist class) is the *wrong* trade:
 Grist can't give the file back, and CryptPad — which has exactly the editors we want — keeps everything as
-encrypted blobs the rest of the harness can never read. **The hybrid is real and is the de-risked path:
+encrypted blobs the rest of MOT Deck can never read. **The hybrid is real and is the de-risked path:
 adopt `x2t.wasm` alone first** (a self-contained ~tens-of-MB converter with a clean `FS` JS API, no editor
 UI), keep tier-1's grid, and get ONLYOFFICE-grade `.xlsx`/`.docx` conversion immediately; the full editor
 bundle then becomes a *tier-2 opt-in* that replaces the lazy Univer loader we already built for exactly that

@@ -70,7 +70,7 @@ THE ADVERSARIAL FINDINGS THIS FILE FENCES (all fixed):
 
   A1  ⚠️ THE TRAILING SLASH. Served at `/gooseui`, the vendored document's RELATIVE
       `./assets/index-*.js` resolved to `/assets/…` — a real, OCCUPIED mount in this
-      harness (the panel's vendor tree). The page did not fail into an obvious hole: it
+      motdeck (the panel's vendor tree). The page did not fail into an obvious hole: it
       asked our own asset route for goose's bundle, got 404s, and rendered a black
       rectangle. Fixed with a 308 to `/gooseui/`. LIE-TO-USER class by outcome: the
       surface looked like "goose is broken".
@@ -123,11 +123,11 @@ def test_entry_document():
            '<script type="module" crossorigin src="./assets/index-x.js"></script>'
            '<link rel="stylesheet" href="./assets/index-x.css">'
            '</head><body><div id="root"></div></body></html>')
-    out = G.page_html(doc, "/gooseui/harness-preload.js")
-    ok(out.index("harness-preload.js") < out.index('type="module"'),
+    out = G.page_html(doc, "/gooseui/motdeck-preload.js")
+    ok(out.index("motdeck-preload.js") < out.index('type="module"'),
        "the shim tag precedes the module script (a module is deferred by definition, so "
        "a classic tag above it is the only guaranteed ordering)")
-    ok('type="module"' not in out.split("harness-preload.js")[0],
+    ok('type="module"' not in out.split("motdeck-preload.js")[0],
        "the shim is NOT a module — that would defer it into the same queue and make the "
        "ordering depend on fetch timing")
     ok("./assets/index-x.js" in out,
@@ -146,7 +146,7 @@ def test_entry_document():
 
 def test_route_shapes_are_registered():
     for needle in ("/gooseui", "/api/gooseui/status", "/api/gooseui/start",
-                   "/api/gooseui/stop", "harness-preload.js"):
+                   "/api/gooseui/stop", "motdeck-preload.js"):
         ok(needle in _APP_SOURCE, f"{needle} is in the app-layer source view")
     ok("status_code=308" in _APP_SOURCE,
        "A1: the slashless URL redirects rather than serving a document whose relative "
@@ -245,7 +245,7 @@ def test_env_fence_survives_a_hostile_environment():
 
 def test_endpoint_composition():
     """The /v1/v1 trap: goose composes OPENAI_HOST + '/' + OPENAI_BASE_PATH, while
-    harness.yaml's runner.endpoint is the OpenAI BASE (…:6767/v1)."""
+    motdeck.yaml's runner.endpoint is the OpenAI BASE (…:6767/v1)."""
     ok(G._openai_host("http://127.0.0.1:6767/v1") == "http://127.0.0.1:6767", "strips /v1")
     ok(G._openai_host("http://127.0.0.1:6767/v1/") == "http://127.0.0.1:6767", "…and a slash")
     for junk in (None, 17, [], "", "   ", "not a url"):
@@ -611,11 +611,11 @@ def test_the_lane_is_REACHABLE():
        "…and its URL carries the trailing slash the vendored bundle needs (A1)")
 
     sw = (ROOT / "app" / "main.swift").read_text()
-    ok('HarnessTab(id: "gooseui", title: "Goose UI"' in sw, "the shell has the tab row")
+    ok('MOTDeckTab(id: "gooseui", title: "Goose UI"' in sw, "the shell has the tab row")
     ok("http://127.0.0.1:8700/gooseui/" in sw,
        "…pointing at the bridge page, trailing slash included (A1)")
     ok('t.id == "gooseui"' in sw,
-       "…and it is served from OUR origin with OUR preload, so it gets the `harness` "
+       "…and it is served from OUR origin with OUR preload, so it gets the `motdeck` "
        "script handler and the sidebar row can switch to it")
     m = re.search(r'let navDefaultTopbar = \[([^\]]+)\]', sw)
     ok(m and "gooseui" not in m.group(1),
@@ -629,7 +629,7 @@ def test_the_lane_is_REACHABLE():
        "the terminal lane's own page wears the new name in its title and its header")
     ok("document.title = 'Goose CLI" in goose_page,
        "…including the title its boot script sets once the scripts have run")
-    ok('HarnessTab(id: "goose", title: "Goose CLI"' in sw
+    ok('MOTDeckTab(id: "goose", title: "Goose CLI"' in sw
        and "http://127.0.0.1:8700/goose\"" in sw,
        "the shell titles it Goose CLI while its ROUTE is untouched")
     ok("/api/pty/goose" in goose_page,
@@ -733,7 +733,7 @@ def test_the_sidebar_delete_is_wired_and_fenced():
     ok("gooseSidebarDeleteScript" in swift and 'if t.id == "gooseui"' in swift,
        "the user script is attached to the gooseui tab and nowhere else")
     ok("goosePin()" in swift and "goose_pin:" in swift,
-       "FENCE 1: the pin is read from harness.yaml, and an unreadable pin means no "
+       "FENCE 1: the pin is read from motdeck.yaml, and an unreadable pin means no "
        "injection at all")
     ok(r'goose_pin:\s*"?v?[0-9][0-9A-Za-z.\-]*"?' in swift,
        "…with the quotes OPTIONAL — ship.sh's pyyaml merge writes the snapshot's copy "

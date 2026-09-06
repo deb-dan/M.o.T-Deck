@@ -43,7 +43,7 @@ PANEL = open(os.path.join(ROOT, "bridge", "panel", "index.html"),
              encoding="utf-8", errors="replace").read()
 SWIFT = open(os.path.join(ROOT, "app", "main.swift"),
              encoding="utf-8", errors="replace").read()
-MANIFEST = yaml.safe_load(open(os.path.join(ROOT, "harness.yaml"),
+MANIFEST = yaml.safe_load(open(os.path.join(ROOT, "motdeck.yaml"),
                                encoding="utf-8").read())
 
 
@@ -167,7 +167,7 @@ def test_the_floor_arithmetic_is_exposed_and_correct():
 def test_the_installer_is_found_by_the_conventional_name():
     """The bridge's flip fence derives {component: installer} from the FILESYSTEM as
     install_<component>.sh — so the name is a contract, not a label. (This slice's
-    first draft was install_deepseek_harness.sh and was invisible to that derivation.)"""
+    first draft was install_deepseek_motdeck.sh and was invisible to that derivation.)"""
     stems = {os.path.basename(p)[len("install_"):-len(".sh")]
              for p in glob.glob(os.path.join(ROOT, "scripts", "install_*.sh"))}
     assert "deepseek" in stems
@@ -342,7 +342,7 @@ def test_start_picks_a_python_that_actually_has_pyyaml():
     assert 'import yaml' in b and "DS_PY" in b
     assert "bridge-venv/bin/python" in b, (
         "the bridge venv always has PyYAML — it is in bridge/requirements.txt")
-    assert "Application Support/Harness/data/bridge-venv" in b, (
+    assert "Application Support/MOT Deck/data/bridge-venv" in b, (
         "…and a repo checkout on a machine whose venv lives only in the fat app must "
         "still be able to seed")
     assert '"$DS_PY" scripts/seed_deepseek_config.py' in b, (
@@ -363,13 +363,13 @@ def test_start_calls_the_seed_script_and_never_a_heredoc_copy_of_it():
                   "openai-completions"):
         assert field not in _acts(b), (
             f"{field} is a field of the provider block; the shell must not compose it")
-    for var in ("DS_SETTINGS", "DS_BASE", "DS_KEY_ENV", "DS_MODEL", "HARNESS_ROOT"):
+    for var in ("DS_SETTINGS", "DS_BASE", "DS_KEY_ENV", "DS_MODEL", "MOT_DECK_ROOT"):
         assert var + "=" in b, f"the seeder reads {var}; the arm must set it"
 
 
 def test_the_key_env_var_name_is_derived_once_and_never_typed_twice():
     """Two hand-picked names is how the goose lane ended up exporting a
-    HARNESS_RUNNER_API_KEY that nothing read."""
+    MOT_DECK_RUNNER_API_KEY that nothing read."""
     b = branch()
     assert "key_env_name()" in b, "the name comes FROM the seeder's pure function"
     assert '"$DS_KEY_ENV"="$DS_KEY"' in b, (
@@ -490,7 +490,7 @@ def test_the_notes_row_exists_and_names_the_port_and_the_friction():
 
 
 def test_the_runner_down_signal_is_wired():
-    """harness.yaml says depends_on: [] (so a Start never drags the runner up) AND the
+    """motdeck.yaml says depends_on: [] (so a Start never drags the runner up) AND the
     SOFT table is what puts 'the Runner is down' on the card. Both halves, or the
     signal and the start closure disagree in the wrong direction."""
     from bridge.routers.components import NEEDS_SOFT, _NEEDS_TITLES
@@ -500,7 +500,7 @@ def test_the_runner_down_signal_is_wired():
     # ⚠️ THE TITLE MUST EQUAL THE SWIFT TAB TITLE, BYTE FOR BYTE. main.swift keys the
     # banner as depNeeds[tabs[idx].id], and the sentence is built from this table — a
     # mismatch is a banner that either never appears or names an internal id.
-    m = re.search(r'HarnessTab\(id: "deepseek", title: "([^"]+)"', SWIFT)
+    m = re.search(r'MOTDeckTab\(id: "deepseek", title: "([^"]+)"', SWIFT)
     assert m and m.group(1) == _NEEDS_TITLES["deepseek"]
 
 
@@ -663,7 +663,7 @@ def _run_seed(models, want="", pre=None, base="http://127.0.0.1:6767/v1"):
         with open(sp, "w", encoding="utf-8") as fh:
             yaml.safe_dump(pre, fh, default_flow_style=False, sort_keys=False)
     env = dict(os.environ, DS_SETTINGS=sp, DS_BASE=base,
-               DS_KEY_ENV="MOT_DECK_LOCAL_API_KEY", DS_MODEL=want, HARNESS_ROOT=d)
+               DS_KEY_ENV="MOT_DECK_LOCAL_API_KEY", DS_MODEL=want, MOT_DECK_ROOT=d)
     p = subprocess.run([sys.executable, SEED_SCRIPT], cwd=ROOT, env=env,
                        capture_output=True, text=True, timeout=60)
     assert p.returncode == 0, p.stderr
@@ -697,7 +697,7 @@ def test_the_key_is_a_reference_and_the_secret_is_never_in_the_file():
     r = _route(doc)
     assert r["apiKeyEnv"] == "MOT_DECK_LOCAL_API_KEY"
     dumped = yaml.safe_dump(doc)
-    assert "harness-local" not in dumped and "apiKey:" not in dumped, (
+    assert "motdeck-local" not in dumped and "apiKey:" not in dumped, (
         "F3: apiKeyEnv names an env var resolved per request; a literal key here would "
         "put the secret in a file we rewrite on every Start")
     assert "the secret is NOT in this file" in out
@@ -813,7 +813,7 @@ def test_an_unparseable_document_is_refused_not_overwritten():
     with open(sp, "w", encoding="utf-8") as fh:
         fh.write(broken)
     env = dict(os.environ, DS_SETTINGS=sp, DS_BASE="http://x/v1",
-               DS_KEY_ENV="K", DS_MODEL="", HARNESS_ROOT=d)
+               DS_KEY_ENV="K", DS_MODEL="", MOT_DECK_ROOT=d)
     p = subprocess.run([sys.executable, SEED_SCRIPT], cwd=ROOT, env=env,
                        capture_output=True, text=True, timeout=60)
     assert p.returncode == 0, "a Start must not fail because of this"
@@ -837,7 +837,7 @@ def test_the_default_is_seeded_replaced_or_honoured_and_never_dangling():
     pre = {"agent-default-model": {"provider": "mot-deck", "model": "Qwen3-9B-Q4_0"}}
     doc, out = _run_seed([GGUF, MLX], want=_MLX_PATH, pre=pre)
     assert doc["agent-default-model"]["model"] == "Qwen3-9B-Q4_0", (
-        "the user's own valid pick outranks harness.yaml's intent")
+        "the user's own valid pick outranks motdeck.yaml's intent")
     assert "REPAIRED" not in out
 
 
@@ -887,16 +887,16 @@ def test_the_marker_records_only_what_we_wrote_and_never_a_key():
         json.dump({"models": [GGUF]}, fh)
     sp = os.path.join(d, "settings.yaml")
     env = dict(os.environ, DS_SETTINGS=sp, DS_BASE="http://127.0.0.1:6767/v1",
-               DS_KEY_ENV="MOT_DECK_LOCAL_API_KEY", DS_MODEL="", HARNESS_ROOT=d)
+               DS_KEY_ENV="MOT_DECK_LOCAL_API_KEY", DS_MODEL="", MOT_DECK_ROOT=d)
     subprocess.run([sys.executable, SEED_SCRIPT], cwd=ROOT, env=env,
                    capture_output=True, text=True, timeout=60)
-    mk = os.path.join(d, "harness_seed_state.json")
+    mk = os.path.join(d, "motdeck_seed_state.json")
     assert os.path.isfile(mk)
     st = json.load(open(mk, encoding="utf-8"))
     assert st["provider_id"] == "mot-deck"
     assert st["api_key_env"] == "MOT_DECK_LOCAL_API_KEY"
     assert st["model_ids"] == ["Qwen3-9B-Q4_0"]
-    assert "harness-local" not in json.dumps(st), "a marker may never carry a secret"
+    assert "motdeck-local" not in json.dumps(st), "a marker may never carry a secret"
 
 
 def test_the_settings_file_is_owner_only():
@@ -908,7 +908,7 @@ def test_the_settings_file_is_owner_only():
         json.dump({"models": [GGUF]}, fh)
     sp = os.path.join(d, "settings.yaml")
     env = dict(os.environ, DS_SETTINGS=sp, DS_BASE="http://127.0.0.1:6767/v1",
-               DS_KEY_ENV="K", DS_MODEL="", HARNESS_ROOT=d)
+               DS_KEY_ENV="K", DS_MODEL="", MOT_DECK_ROOT=d)
     subprocess.run([sys.executable, SEED_SCRIPT], cwd=ROOT, env=env,
                    capture_output=True, text=True, timeout=60)
     assert (os.stat(sp).st_mode & 0o077) == 0, "no group or other bits"
@@ -944,7 +944,7 @@ def test_nav_registry_agrees_across_the_three_tables():
         "the panel's `tab` must match main.swift's TITLE exactly, or the sidebar row "
         "silently stops switching tabs")
     assert "'deepseek'" in flat, "…and it is in the panel's default layouts"
-    assert 'HarnessTab(id: "deepseek", title: "DeepSeek"' in SWIFT
+    assert 'MOTDeckTab(id: "deepseek", title: "DeepSeek"' in SWIFT
     # ⚠️ LOWERCASE-ALPHA ID. test_nav_model.py harvests the panel with
     # `\{ id:'([a-z]+)',` — a digit, hyphen or underscore would not be captured and the
     # suite would report the panel as MISSING an entry it plainly has.
@@ -957,7 +957,7 @@ def test_the_tab_points_straight_at_the_port_and_gets_no_privileges():
     # root document IS the app), so a /deepseek route would be a second hop, a second
     # failure mode and a second place the port is written down, for nothing.
     assert "8700/deepseek" not in SWIFT
-    # It is a THIRD-PARTY page: no `harness` script-message handler, no shellScript.
+    # It is a THIRD-PARTY page: no `motdeck` script-message handler, no shellScript.
     # Being absent from that branch is the assertion.
     i = SWIFT.index('t.id == "loffice"')
     branch_src = SWIFT[i:i + 400]

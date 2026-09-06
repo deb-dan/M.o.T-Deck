@@ -254,7 +254,10 @@ APP = _APP_SOURCE
 check("/api/voice/tts consults the replay cache before rendering",
       "entry_cache_key(entry, text)" in APP and "cache_get(ckey)" in APP)
 check("a cache hit is labelled in the response header",
-      '"X-Harness-Voice-Cached": "1"' in APP)
+      '"X-MOT-Deck-Voice-Cached": "1"' in APP)
+check("voice response header names remain valid HTTP field-name tokens",
+      '"X-MOT-Deck-Voice-Model"' in APP
+      and '"X-MOT Deck-' not in APP)
 check("a completed render is stored in the cache",
       "cache_put(ckey, wav)" in APP)
 check("the render is TIMED and the breakdown logged",

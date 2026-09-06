@@ -69,7 +69,7 @@ def _run_seed(token):
     cmd = ["python3", "scripts/seed_registry.py", "--json"]
     if token:
         cmd.extend(["--confirm-missing-token", token])
-    env = dict(os.environ, HARNESS_PROTECT_MODELS="\n".join(_protect_ids()))
+    env = dict(os.environ, MOT_DECK_PROTECT_MODELS="\n".join(_protect_ids()))
     return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=120,
                           check=False, env=env)
 

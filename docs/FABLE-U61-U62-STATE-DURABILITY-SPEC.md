@@ -6,7 +6,7 @@ app-layer registration and reporting doctrines.
 
 ## Destination
 
-A reader of `harness.yaml` sees either the complete old document or complete new one,
+A reader of `motdeck.yaml` sees either the complete old document or complete new one,
 never a truncated intermediate. Concurrent writers cannot silently erase each other's
 key changes. `data/bridge.pid` names a live owning bridge and is removed on every clean
 shutdown path without deleting a newer bridge's claim.
@@ -27,7 +27,7 @@ In `bridge/core/yamlset.py`, add one private transaction helper used by
    bytes untouched. Release locks in `finally`.
 6. Byte-identical transformations do not replace the inode or alter mtime.
 
-Do not use a shared fixed `harness.yaml.tmp`, which makes concurrent writers collide.
+Do not use a shared fixed `motdeck.yaml.tmp`, which makes concurrent writers collide.
 Do not lock readers: atomic replacement is what makes shell `awk` and `cfg()` safe.
 Writer serialization is required because atomic individual writes alone still permit
 lost updates when two routes read the same old document.
@@ -38,7 +38,7 @@ missing block/key; simulated write/fsync/replace failures preserve original; mod
 preserved; no temp leak; no-op byte/mtime stable; two subprocess writers retain both
 changes.
 
-Echo-sweep every `harness.yaml` writer in Python/shell. Either route each legitimate
+Echo-sweep every `motdeck.yaml` writer in Python/shell. Either route each legitimate
 writer through this helper/its equivalent transaction or prove it already uses a safe
 targeted atomic writer. Whole-file repo→snapshot copies remain forbidden.
 

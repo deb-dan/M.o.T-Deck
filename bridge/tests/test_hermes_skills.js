@@ -229,7 +229,7 @@ check('the group carries the Hermes-page staleness warning',
 // where a poll (updateHermesGenTimer) does the work no tab switch could. The one case it
 // cannot reach is a Hermes dashboard open outside this app, and the copy names it.
 check('...and now promises the automatic reload, split view included',
-      /the harness reloads that tab for you/i.test(out) && /split view/i.test(out));
+      /MOT Deck reloads that tab for you/i.test(out) && /split view/i.test(out));
 check('...and still names the one case ⌘R is on the user',
       /outside<\/i> this app/i.test(out) && out.indexOf('⌘R') > 0);
 check('the shown count is rendered', out.indexOf('4 shown') > 0);

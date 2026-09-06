@@ -162,9 +162,9 @@ standing sentences.
    (`mlx-community/OmniVoice-bfloat16 · code Apache-2.0 · weights CC-BY-NC (upstream
    README)`) — the license-chip-with-hover pattern exists forty lines up the same page
    and is not used here. Also the section intro narrates plumbing ("Downloads land in
-   the harness's own models folder and appear above when they finish. Progress is in
+   MOT Deck's own models folder and appear above when they finish. Progress is in
    Downloads below.", :10522) and the SEARCH HF expander carries a standing caveat
-   paragraph ("Tags lie about frameworks — click a result and the harness reads its
+   paragraph ("Tags lie about frameworks — click a result and MOT Deck reads its
    config.json before offering a Get.", index.html:2432) — one-tap layer, so charged at
    half price, but it is still a paragraph where a chip + hover would do.
 
@@ -187,7 +187,7 @@ Charged anyway:
    (index.html:5582): two full paragraphs at rest, including "Fewer toolsets = a smaller
    system prompt = faster turns on a local model" and the entire cross-check essay
    ("Cross-checking Hermes's own *Skills → TOOLSETS* page? It loads its list once when
-   it opens and never refreshes itself — so **the harness reloads that tab for you** …
+   it opens and never refreshes itself — so **MOT Deck reloads that tab for you** …
    press ⌘R there. The **Check** button below is the live answer either way."), plus a
    third paragraph explaining "Minimal" vs "Hermes's defaults". **This is duplicated
    Help on the canvas, literally:** Help's TOC already carries "Hermes tools — what
@@ -346,7 +346,7 @@ Top to bottom, what a user reads before acting:
      converted afterwards from the library.")
    - Generate + SAVE AS TEMPLATE.
 6. **LIBRARY** — header + count + "saving to:
-   `/Users/debik/Library/Application Support/Harness/data/music` CHANGE"
+   `/Users/debik/Library/Application Support/MOT Deck/data/music` CHANGE"
    (index.html:14218) — the absolute output path in mono at rest, §1 failure 3
    verbatim (comfy printed its output dir the same way). Then per track: raw filename
    as title (`minimax-20260820-235921.wav`), engine + format chips, a metadata line

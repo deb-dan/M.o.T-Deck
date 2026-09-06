@@ -49,9 +49,9 @@ def check(name, cond):
         FAILS.append(name)
 
 
-MB = "/opt/harness/data/mlx-venv/bin/mlx_whisper"
-MP = "/opt/harness/data/mlx-venv/bin/python"
-FF = "/opt/harness/data/ffmpeg/bin/ffmpeg"
+MB = "/opt/motdeck/data/mlx-venv/bin/mlx_whisper"
+MP = "/opt/motdeck/data/mlx-venv/bin/python"
+FF = "/opt/motdeck/data/ffmpeg/bin/ffmpeg"
 
 STT = {"id": "whisper-base-mlx", "kind": "audio", "format": "stt-mlx",
        "path": "/M/whisper-base", "size_bytes": 145_000_000}
@@ -243,7 +243,7 @@ finally:
 # a missing engine is reported BEFORE the lock is taken (never queue behind a render
 # only to fail on a missing binary)
 try:
-    voice.stt_transcribe(STT, b"RIFFxxxx", "wav", Path("/nonexistent-harness-root"))
+    voice.stt_transcribe(STT, b"RIFFxxxx", "wav", Path("/nonexistent-motdeck-root"))
     check("a missing MLX runtime is reported without touching the lock", False)
 except voice.VoiceBusy:
     check("a missing MLX runtime is reported without touching the lock", False)
@@ -283,9 +283,9 @@ check("ship.sh copies every bridge/*.py (voice.py must reach the snapshot)",
 IM = (ROOT / "scripts" / "install_mlx.sh").read_text()
 check("install_mlx.sh installs mlx-whisper at the pin",
       'mlx-whisper==${MLX_WHISPER_PIN}' in IM)
-check("install_mlx.sh reads the pin from harness.yaml", "_yb mlx_whisper_pin" in IM)
-HY = (ROOT / "harness.yaml").read_text()
-check("harness.yaml pins mlx-whisper 0.4.3 (spec §6)", 'mlx_whisper_pin: "0.4.3"' in HY)
+check("install_mlx.sh reads the pin from motdeck.yaml", "_yb mlx_whisper_pin" in IM)
+HY = (ROOT / "motdeck.yaml").read_text()
+check("motdeck.yaml pins mlx-whisper 0.4.3 (spec §6)", 'mlx_whisper_pin: "0.4.3"' in HY)
 SW = (ROOT / "app" / "main.swift").read_text()
 check("the shell grants the webview's media-capture request",
       "requestMediaCapturePermissionFor" in SW and "decisionHandler(type == .camera ? .deny : .grant)" in SW)

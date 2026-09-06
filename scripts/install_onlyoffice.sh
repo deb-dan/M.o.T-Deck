@@ -16,7 +16,7 @@
 #      it records SOURCES.txt + INSTALLED inside data/onlyoffice/ so the provenance
 #      travels with the bundle.
 #   2. Arm's length: its own directory, its own route, no intermixing with our code.
-#   3. If the harness is ever distributed, About must name ONLYOFFICE + AGPL-3.0 and
+#   3. If MOT Deck is ever distributed, About must name ONLYOFFICE + AGPL-3.0 and
 #      link these exact tags (bridge/panel/oo.html footer + the LOffice About sheet).
 #   4. fernfei/OnlyofficePersonal (the probe's Track A) is NEVER shipped. Its bundle
 #      is a PATCHED web-apps build of unverified provenance; this script cannot even
@@ -273,7 +273,7 @@ say "landed: ${files} files, ${size}"
 cat > "${SOURCES}.tmp" <<SRC
 ONLYOFFICE static editors — vendored for LOffice tier 2.
 
-LICENCE: AGPL-3.0. This bundle is UNMODIFIED upstream. Nothing in the harness
+LICENCE: AGPL-3.0. This bundle is UNMODIFIED upstream. Nothing in MOT Deck
 patches, minifies, re-bundles or otherwise derives from these files; the bridge
 serves them read-only at /oo/* and our own glue page (bridge/panel/oo.html) drives
 them through their published DocsAPI/connectMockServer surface.
@@ -302,7 +302,7 @@ upstream (the editors themselves)
   https://github.com/ONLYOFFICE/sdkjs
   https://github.com/ONLYOFFICE/core           (x2t)
 
-If this harness is ever distributed to anyone else, the About surface must name
+If this MOT Deck build is ever distributed to anyone else, the About surface must name
 ONLYOFFICE + AGPL-3.0 and link these tags, and any modification made to the bundle
 must be published. See docs/handoff/ONLYOFFICE-PROBE-RUNBOOK.md, AGPL ruling #3.
 SRC

@@ -128,7 +128,7 @@ ATTRIBUTION = {
     "licence": "AGPL-3.0",
     "licence_url": "https://www.gnu.org/licenses/agpl-3.0.html",
     "note": ("The in-ribbon AI tab is unmodified upstream ONLYOFFICE, vendored from "
-             "their own deploy archive and served read-only. The harness configures it "
+             "their own deploy archive and served read-only. MOT Deck configures it "
              "through its published settings storage and points it at this machine's "
              "own runner; no request leaves the machine."),
     "sources": [
@@ -232,13 +232,13 @@ def install_state(root) -> dict:
 def runner_state(cfg_fn, probe_fn) -> dict:
     """{ok, reason, base_url, key, model} for the local runner.
 
-    Both dependencies are INJECTED — `cfg_fn()` returns the parsed harness.yaml and
+    Both dependencies are INJECTED — `cfg_fn()` returns the parsed motdeck.yaml and
     `probe_fn(port)` answers with the model id the runner reports (or None). That is
     not ceremony: it is what lets test_oo_ai_lane.py exercise "runner down", "runner
     up with nothing loaded" and "runner up" without a runner, and it keeps this file
     from importing the model lane (which imports the world).
 
-    ⚠️ THE MODEL ID IS THE ONE THE RUNNER REPORTS, NOT harness.yaml's. `runner.model`
+    ⚠️ THE MODEL ID IS THE ONE THE RUNNER REPORTS, NOT motdeck.yaml's. `runner.model`
     records INTENT — the same distinction core/modelid.py was written for. Putting the
     intended id on the wire is how you get a 404 from a runner that is serving
     something else, and the plugin would surface that as an opaque failure inside a
@@ -256,7 +256,7 @@ def runner_state(cfg_fn, probe_fn) -> dict:
     key = str(rc.get("api_key") or "")
     if not port:
         return {"ok": False, "base_url": "", "key": "", "model": "",
-                "reason": "harness.yaml does not give the runner a port"}
+                "reason": "motdeck.yaml does not give the runner a port"}
     base_url = f"http://127.0.0.1:{port}/v1"
     try:
         model = probe_fn(port)
@@ -289,7 +289,7 @@ def max_input_tokens(runner: dict) -> int:
     halving is the honest part: `ctx_size` is the WHOLE window, shared by the prompt
     AND the completion, while this number is what the plugin will happily fill with
     input alone. Declaring the full window would make a long "Summarize" request
-    overflow instead of chunking. With harness.yaml's 65536 this lands on 32768, which
+    overflow instead of chunking. With motdeck.yaml's 65536 this lands on 32768, which
     is also the plugin's own default — so today it changes nothing and it stops being
     a lie the moment the runner is started with a different window.
     """

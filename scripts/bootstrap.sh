@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Harness bootstrap — macOS. Idempotent; safe to re-run.
+# MOT Deck bootstrap — macOS. Idempotent; safe to re-run.
 # Sets up: prerequisites (with consent), git repo + pinned submodules, bridge venv.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-HARNESS_ROOT="$(pwd)"
+MOT_DECK_ROOT="$(pwd)"
 YES=0; [[ "${1:-}" == "--yes" || "${1:-}" == "-y" ]] && YES=1
 
-say()  { printf "\033[1;36m[harness]\033[0m %s\n" "$*"; }
-fail() { printf "\033[1;31m[harness]\033[0m %s\n" "$*" >&2; exit 1; }
+say()  { printf "\033[1;36m[motdeck]\033[0m %s\n" "$*"; }
+fail() { printf "\033[1;31m[motdeck]\033[0m %s\n" "$*" >&2; exit 1; }
 
 ask() { # ask "question" -> returns 0 on yes; --yes answers everything
   [[ $YES -eq 1 ]] && { say "$1 -> yes (--yes)"; return 0; }
@@ -57,11 +57,11 @@ if [[ ! -d .git ]]; then
   git init -b main
 fi
 
-pin_for() { # pin_for <component>  — reads harness.yaml (grep-based, no yq dependency)
-  awk "/^  $1:/{f=1} f && /pin:/{print \$2; exit}" harness.yaml
+pin_for() { # pin_for <component>  — reads motdeck.yaml (grep-based, no yq dependency)
+  awk "/^  $1:/{f=1} f && /pin:/{print \$2; exit}" motdeck.yaml
 }
 repo_for() {
-  awk "/^  $1:/{f=1} f && /repo:/{print \$2; exit}" harness.yaml
+  awk "/^  $1:/{f=1} f && /repo:/{print \$2; exit}" motdeck.yaml
 }
 
 add_submodule() { # add_submodule <name>
@@ -92,12 +92,12 @@ uv pip install -q -r bridge/requirements.txt
 deactivate
 # Generate launch/admin credentials before any component installer can consume them.
 # Values stay in data/.env.local (0600) and are never printed.
-data/bridge-venv/bin/python scripts/local_secrets.py ensure "$HARNESS_ROOT" --fresh
+data/bridge-venv/bin/python scripts/local_secrets.py ensure "$MOT_DECK_ROOT" --fresh
 
 # ---------- 4. first commit ----------
 if ! git rev-parse HEAD >/dev/null 2>&1; then
   git add -A
-  git commit -q -m "harness: initial scaffold (hermes=$(pin_for hermes), odysseus=$(pin_for odysseus))"
+  git commit -q -m "motdeck: initial scaffold (hermes=$(pin_for hermes), odysseus=$(pin_for odysseus))"
   say "Initial commit created."
 fi
 

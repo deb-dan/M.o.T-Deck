@@ -1,4 +1,4 @@
-"""Harness-native MUSIC lane (FABLE-MUSIC-LANE-SPEC, 2026-08-20).
+"""MOT Deck-native MUSIC lane (FABLE-MUSIC-LANE-SPEC, 2026-08-20).
 
 Same shape as the voice capability and deliberately NOT a component: no port, no
 manifest entry, no daemon, no Swift change. A render is a ONE-SHOT SUBPROCESS run
@@ -234,7 +234,7 @@ def validate_output_dir(root, path) -> tuple:
     inside = (p == home or p.startswith(home + os.sep)
               or p == rroot or p.startswith(rroot + os.sep))
     if not inside:
-        return None, "refused: pick a folder inside your home folder or the harness"
+        return None, "refused: pick a folder inside your home folder or MOT Deck"
     if os.path.exists(p) and not os.path.isdir(p):
         return None, "that path is a file, not a folder"
     try:
@@ -501,7 +501,7 @@ def validate_generate(body, installed_engines) -> tuple:
 
     raw_seed = body.get("seed")
     if raw_seed in (None, ""):
-        # A render with no seed is unreproducible, so the harness picks one and
+        # A render with no seed is unreproducible, so MOT Deck picks one and
         # RECORDS it in the sidecar rather than leaving the engine's default unknown.
         seed = random.randint(0, SEED_MAX)
         seed_given = False
@@ -1836,7 +1836,7 @@ def kill_process_group(proc, grace=CANCEL_GRACE_S, sleep=time.sleep) -> str:
 
     Returns what actually ended it ('term' | 'kill' | 'gone' | 'error') so the log can
     say. ⚠️ PLATFORM: `os.killpg`/`os.getpgid` are POSIX. macOS is the only platform
-    this harness runs on, but the fallback to proc.terminate()/kill() is kept so a
+    this MOT Deck build runs on, but the fallback to proc.terminate()/kill() is kept so a
     hypothetical Windows host degrades to killing the direct child rather than raising.
     """
     if proc is None or proc.poll() is not None:
@@ -2076,7 +2076,7 @@ def run_job(root, params, job, snapshot="", render=None, log=print):
         os.makedirs(tmp_root, exist_ok=True)
     except OSError:
         tmp_root = None
-    workdir = tempfile.mkdtemp(prefix="harness-music-", dir=tmp_root)
+    workdir = tempfile.mkdtemp(prefix="motdeck-music-", dir=tmp_root)
     name = track_name(params["engine"], fmt=params.get("format", ""))
     out_path = os.path.join(music_dir(root), name)
     # The engines' own output goes to a per-job file so the panel can watch it move.

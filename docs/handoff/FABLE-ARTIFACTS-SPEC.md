@@ -6,7 +6,7 @@ Date 2026-07-31. Authority: Fable orchestrator (this is UI + a security surface 
 ## Goal
 When a chat produces a file (HTML, React/JSX, JS, SVG, Markdown, code, PDF, image), show it as a **card** in the transcript; clicking it opens a **live/interactive viewer** (HTML renders as a page, React/JS runs, code is highlighted + optionally runnable, md rendered). Plus: make the **Chat workspace roomier** (LM-Studio-like) so there's space for the viewer side-by-side or full-page. Existing `/api/open` path-allowlist stays as the "open in system app / show in folder" escape hatch.
 
-Files in scope: `bridge/app.py`, `bridge/panel/index.html`, possibly a new `bridge/panel/assets/vendor/` for self-hosted libs, `scripts/` (an installer step to fetch the vendor JS once), `harness.yaml` if a version/asset pin is needed. NO Swift change required (all inside the existing Mission Control WKWebView) — if a Swift change seems needed, STOP and flag it.
+Files in scope: `bridge/app.py`, `bridge/panel/index.html`, possibly a new `bridge/panel/assets/vendor/` for self-hosted libs, `scripts/` (an installer step to fetch the vendor JS once), `motdeck.yaml` if a version/asset pin is needed. NO Swift change required (all inside the existing Mission Control WKWebView) — if a Swift change seems needed, STOP and flag it.
 
 Build in 3 phases; each independently Mac-verifiable (panel+bridge only, no app rebuild). Validate per phase: `python3 -c ast.parse` on app.py; `node --check` on EACH `<script>` block in index.html separately; CSS brace balance; small unit tests for pure logic (type-detection, path-allowlist).
 
@@ -14,9 +14,9 @@ Build in 3 phases; each independently Mac-verifiable (panel+bridge only, no app 
 
 ## PHASE 1 — Roomier Chat workspace (layout only; LM-Studio-like)
 Fable decisions — implement exactly:
-1. **Collapse the left rail on the Chat view.** When the Chat view is active, add a root class (e.g. `body.chat-mode` or on the panel container) that CSS uses to collapse the left `aside` (WORKSPACE + COMPONENTS nav) to a **slim icon rail** (~56px): show only the glyphs, hide the text labels. Other views keep the full sidebar. A small toggle (chevron) lets the user expand it back manually; default = collapsed on Chat, full elsewhere. Persist the manual choice in `localStorage['harness-chat-rail']`.
+1. **Collapse the left rail on the Chat view.** When the Chat view is active, add a root class (e.g. `body.chat-mode` or on the panel container) that CSS uses to collapse the left `aside` (WORKSPACE + COMPONENTS nav) to a **slim icon rail** (~56px): show only the glyphs, hide the text labels. Other views keep the full sidebar. A small toggle (chevron) lets the user expand it back manually; default = collapsed on Chat, full elsewhere. Persist the manual choice in `localStorage['motdeck-chat-rail']`.
 2. **Hover tooltips everywhere (Debi request).** Every icon-only / glyph control in the panel (the collapsed rail items AND existing icon buttons) gets a native `title=""` (and `aria-label`) so hovering shows what it does ("Mission Control", "Models", "Eject", "Set aux", etc.). This is the "show the word on hover" ask — apply it broadly, not just the rail.
-3. **Widen the chat column.** On Chat view, drop the narrow centered max-width; let the chat use the reclaimed width. Keep the session rail, but give it a collapse chevron too (`localStorage['harness-sessions-rail']`).
+3. **Widen the chat column.** On Chat view, drop the narrow centered max-width; let the chat use the reclaimed width. Keep the session rail, but give it a collapse chevron too (`localStorage['motdeck-sessions-rail']`).
 4. No functional change to chat behavior — layout/affordance only. Reuse existing tokens; leave `<!-- FABLE: style pass -->` on new structural bits.
 Mac-verify: open Chat → left rail is slim icons (hover shows labels), chat is wider; other tabs unchanged; toggles persist across reloads.
 
@@ -43,7 +43,7 @@ Mac-verify: feed the viewer a sample of each type (a static HTML, a small React 
 ---
 
 ## PHASE 3 — File/artifact cards in the transcript
-- Detect artifacts to card: (a) files the assistant writes into the harness output/workspace dir during a turn, and/or (b) fenced code blocks the model emits that are artifact-worthy (html/jsx/svg/full code files). Fable decision: start with **(a) real files on disk produced this turn** (reliable) + **(b) large fenced blocks** rendered as an inline "Open as artifact" affordance; keep it best-effort, never break the chat stream.
+- Detect artifacts to card: (a) files the assistant writes into MOT Deck output/workspace dir during a turn, and/or (b) fenced code blocks the model emits that are artifact-worthy (html/jsx/svg/full code files). Fable decision: start with **(a) real files on disk produced this turn** (reliable) + **(b) large fenced blocks** rendered as an inline "Open as artifact" affordance; keep it best-effort, never break the chat stream.
 - Card UI (reuse existing card/token primitives; `<!-- FABLE: style pass -->`): type icon + filename + type + size + actions: **Open** (→ Phase-2 viewer, split by default), **Open in app** / **Show in Folder** (→ `/api/open` with the existing path-allowlist: realpath must exist AND be under `$HOME`; `action: "open"|"reveal"`; never accept `file://` in the url field; log rejections).
 - Cards render inline in the chat transcript at the point the file was produced.
 Mac-verify: a turn that writes an .html and a .py file shows two cards; Open renders in the split viewer; "Show in Folder" reveals it in Finder; a path outside $HOME is rejected.

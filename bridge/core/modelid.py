@@ -46,7 +46,7 @@ def _runner_engine(rc: dict) -> str:
 
 
 # ── Wire identifier vs registry id (Fable, 2026-08-06 — MLX "runner 400" fix) ─
-# Our REGISTRY ID is the internal key everywhere (harness.yaml runner.model, the
+# Our REGISTRY ID is the internal key everywhere (motdeck.yaml runner.model, the
 # RAM ledger, panel labels/selects). But the identifier that goes ON THE WIRE to
 # the runner is engine-dependent:
 #   • llama.cpp — start_component.sh launches with `--alias <registry id>`, so the
@@ -135,7 +135,7 @@ def _display_model(name):
 
 
 # ── Single source of truth for "live" (Fable ISSUE C) ────────────────────────
-# harness.yaml's runner.model records INTENT, not reality — which is why MC could
+# motdeck.yaml's runner.model records INTENT, not reality — which is why MC could
 # show a runner "green + model" while nothing was actually loaded. The authoritative
 # signal is the runner ITSELF: ask what it is serving (GET :port/v1/models). Both
 # MC (/api/status) and the Models pane (/api/models) key off this so they agree.
@@ -198,7 +198,7 @@ def _reconcile_live(probed: "str | None", registry_ids: set, intent_model: "str 
       otherwise              → the runner reports something we can't map (MLX's
                                /v1/models enumerates the whole HuggingFace CACHE, so
                                data[0] is often an unrelated repo id) → fall back to
-                               the model we intended to launch (harness.yaml
+                               the model we intended to launch (motdeck.yaml
                                runner.model). NEVER trust an unmappable probe."""
     if not probed:
         return None

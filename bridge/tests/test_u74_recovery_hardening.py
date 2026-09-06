@@ -61,7 +61,7 @@ def _runner_fixture(tmp_path, model):
     server = foreign / "llama-server"
     server.write_text("#!/bin/sh\necho 'llama.cpp build 0'\n")
     server.chmod(server.stat().st_mode | stat.S_IXUSR)
-    (root / "harness.yaml").write_text(
+    (root / "motdeck.yaml").write_text(
         "runner:\n"
         "  adapter: llamacpp\n"
         "  port: 6767\n"
@@ -87,7 +87,7 @@ def test_runner_model_null_refuses_as_unset_not_model_named_null(tmp_path):
     got = subprocess.run(["bash", "scripts/start_component.sh", "runner"], cwd=root,
                          env=env, capture_output=True, text=True, timeout=30)
     assert got.returncode != 0
-    assert "runner.model not set in harness.yaml" in got.stdout
+    assert "runner.model not set in motdeck.yaml" in got.stdout
     assert "model 'null'" not in got.stdout + got.stderr
 
 

@@ -8,7 +8,7 @@ revamps everything when clicked" — classic stays the default.
 
 ## A. The toggle
 A `✦ Studio view` chip at the top of #view-music (and `▤ Classic` to come back).
-`#view-music` gains `data-mview="studio"`; persisted `localStorage['harness-music-view']`
+`#view-music` gains `data-mview="studio"`; persisted `localStorage['motdeck-music-view']`
 ('classic' default). ALL new CSS lives in ONE contiguous sanctioned block, every
 selector prefixed `#view-music[data-mview="studio"]` (the studio-chrome discipline:
 block appears once, depth 0, counted in the test). Tokens namespaced `--mv-*`.

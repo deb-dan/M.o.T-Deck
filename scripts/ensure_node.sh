@@ -9,7 +9,7 @@
 # machine without node would have installed the component and then failed to start it
 # with an error nobody could act on. ensure_bun.sh is the repo's established answer to
 # "an external runtime we need but must not assume": three-step resolution, the user's
-# own tool always wins, the pin lives in harness.yaml, the download lands in data/.
+# own tool always wins, the pin lives in motdeck.yaml, the download lands in data/.
 # This is that pattern applied to node. It does not exist for any other component.
 #
 # CONTRACT (identical to ensure_bun.sh, deliberately — one idiom, one set of surprises):
@@ -37,12 +37,12 @@
 # accepting a node BELOW the floor would hand the user a component that installs and
 # then dies on `dsh --version`. So: her node if it is new enough, ours if it is not.
 #
-# The pin lives in harness.yaml under build.node_pin (single source of truth, same
+# The pin lives in motdeck.yaml under build.node_pin (single source of truth, same
 # idiom as build.bun_pin / build.opencode_pin / runner.llamacpp_pin).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
-say() { echo "[harness] $*" >&2; }
+say() { echo "[motdeck] $*" >&2; }
 
 DEST="$ROOT/data/node"
 BINPATH="$DEST/bin/node"
@@ -56,9 +56,9 @@ FLOOR_MAJOR=22
 FLOOR_MINOR=19        # only applies when major == 22
 FLOOR_NEXT_MAJOR=24   # 23 is an odd/unsupported line; the range skips it on purpose
 
-# Pin from harness.yaml build.node_pin (e.g. "v24.20.0"). Same awk reader as
+# Pin from motdeck.yaml build.node_pin (e.g. "v24.20.0"). Same awk reader as
 # ensure_bun.sh / install_mlx.sh so there is exactly one way to read a build.* key.
-_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' harness.yaml; }
+_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' motdeck.yaml; }
 
 # "v24.20.0" → 24 20 0, on stdout, space separated. Empty on anything unparsable.
 _semver() {   # <version string, with or without a leading v>
@@ -97,7 +97,7 @@ fi
 
 PIN="${NODE_PIN:-$(_yb node_pin)}"
 [[ -n "$PIN" ]] || {
-  say "ERROR: build.node_pin missing from $(pwd)/harness.yaml"
+  say "ERROR: build.node_pin missing from $(pwd)/motdeck.yaml"
   say "  (if this is the FAT app's snapshot: ship.sh's manifest merge is ADDITIVE, so a"
   say "   newly added build.* key does arrive — but only on the next ship. Add"
   say "   'node_pin: \"vNN.NN.N\"' under build:, or export NODE_PIN=vNN.NN.N and re-run.)"

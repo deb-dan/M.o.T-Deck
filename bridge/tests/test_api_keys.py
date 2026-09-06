@@ -184,7 +184,7 @@ with TempRoot() as R:
     ok(listed["builtin"] in (True, False),
        "the built-in is reported as a BOOLEAN — present or not")
     ok(not isinstance(listed["builtin"], str),
-       "A-2: …never as a value and never as a prefix; it lives in harness.yaml and "
+       "A-2: …never as a value and never as a prefix; it lives in motdeck.yaml and "
        "cannot be revoked from here, which is the only thing the page needs to say")
 # the app layer as a whole: /api/status must not learn about keys, and nothing prints one
 src = _APP_SOURCE

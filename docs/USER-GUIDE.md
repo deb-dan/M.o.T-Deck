@@ -1,8 +1,8 @@
 # The MOT Deck Guide
 
 > The app is **MOT Deck** — *Mixture of Tools*. Its home screen is **MOT Main**.
-> (Both were renamed on 2026-08-21; older text may still say "the harness" and
-> "Mission Control" — same thing.)
+> (Both were renamed on 2026-08-21; older text may still use the retired pre-MOT
+> product name and "Mission Control" — same thing.)
 
 > **⟳ STALE (as of v1.5.72, 2026-09-02):** the "one window with three tabs" tour below
 > describes an early state. The app now runs nine components on Mission Control (Bridge,
@@ -21,11 +21,11 @@ two sections and you can use the app; the rest is there when you need it.
 
 ## The one-minute tour
 
-Harness is one window with three tabs at the top:
+MOT Deck is one window with three tabs at the top:
 
 **Mission Control** is home. Chat, models, settings, health, logs — you can live here.
 
-**Odysseus** and **Hermes** are the two engines Harness is built around, each with its
+**Odysseus** and **Hermes** are the two engines MOT Deck is built around, each with its
 own full interface. Odysseus is a web workspace (documents, research, memory);
 Hermes is an agent platform (tools, skills, scheduled jobs). Mission Control drives
 both of them for you, so think of these tabs as the engine rooms: you visit when you
@@ -40,12 +40,12 @@ that jumps anywhere and runs most actions by name — when in doubt, ⌘K and ty
 
 ## Getting to green
 
-Everything in Harness is a component with a card on the dashboard: the **Runner**
+Everything in MOT Deck is a component with a card on the dashboard: the **Runner**
 (the process that actually serves your model), **Hermes**, **Odysseus**, and
 **SearXNG** (your private search engine). Green dot = running.
 
 You almost never have to sequence anything yourself. Components know what they need —
-start Odysseus and Harness will show you a short plan ("this will also start: runner,
+start Odysseus and MOT Deck will show you a short plan ("this will also start: runner,
 searxng"), wait for your approval, and bring the chain up in order while the cards
 animate through *starting… → online*.
 
@@ -146,7 +146,7 @@ Two rules cover every "why isn't this working":
    simply can't see. Vision-capable models are marked in the library too, so you know
    before you load.
 2. **Only Chat mode takes images.** Agent and Hermes route through machinery that has
-   no image path. Harness reminds you: with a vision model loaded in another mode the
+   no image path. MOT Deck reminds you: with a vision model loaded in another mode the
    pill reads `vision · chat mode`, and dropping an image there explains instead of
    silently ignoring you.
 
@@ -154,7 +154,7 @@ Two rules cover every "why isn't this working":
 
 ## Letting it act
 
-Hermes mode is where conversation turns into work — and where Harness is deliberately
+Hermes mode is where conversation turns into work — and where MOT Deck is deliberately
 strict, because an agent that can write files and run commands should have to look
 you in the eye first.
 
@@ -208,7 +208,7 @@ appear in the library selected and ready to load.
 button shows *Loading…* with progress, and the dashboard shows the runner amber
 until it's up.
 
-**The RAM budget.** The library stamps something like `RAM 18 / 48 GB`. Harness
+**The RAM budget.** The library stamps something like `RAM 18 / 48 GB`. MOT Deck
 counts what's loaded and refuses a load that would blow the budget, telling you to
 eject something first — better than watching your Mac grind into swap.
 
@@ -238,7 +238,7 @@ and code gets highlighting and a Copy button.
 From the viewer you can drag the divider to resize (remembered), expand to full
 window, or hit **✎ Edit** for a live canvas — editor above, preview below, re-rendering
 as you type — with Copy, Revert, and **Save to file** (files land in
-`Downloads/harness-artifacts`, never overwriting an existing one).
+`Downloads/motdeck-artifacts`, never overwriting an existing one).
 
 Artifacts follow the conversation: open a different chat and the panel closes — unless
 you **⌖ pin** it, in which case it stays put while you move around. Open buttons
@@ -278,7 +278,7 @@ company. Every service binds to the machine itself — nothing listens for the o
 world. With Wi-Fi off, everything except web search and downloads keeps working.
 
 When you want receipts, the **Logs** view has them: the bridge, every component, the
-runner, and the guard log, each with Copy, Export (to `Downloads/harness-logs`), and
+runner, and the guard log, each with Copy, Export (to `Downloads/motdeck-logs`), and
 Clear. The guard log in particular is the audit trail for "what did the agent touch
 outside its lane" — readable rows, not stack traces.
 
@@ -311,7 +311,7 @@ chores stop queueing against your conversation.
 
 **A download "disappeared"** → it didn't; it's still running in the Models view.
 
-**Hermes offers "Update now"** → decline. Harness pins the version it ships and
+**Hermes offers "Update now"** → decline. MOT Deck pins the version it ships and
 manages updates itself; updating from inside would desynchronize the pair.
 
 ---
@@ -319,5 +319,5 @@ manages updates itself; updating from inside would desynchronize the pair.
 ## Going deeper
 
 The engineering reference — architecture, ports, APIs, registries, the guard's
-internals, the test suite — is `docs/HARNESS-INTERNALS.md`. This guide tells you how
+internals, the test suite — is `docs/MOT-DECK-INTERNALS.md`. This guide tells you how
 to drive; that one tells you how the engine is built.

@@ -18,8 +18,8 @@
 #   (b) data/bun/bin/bun we provisioned    → reuse it (re-provisioned if the pin moved)
 #   (c) download the PINNED release        → data/bun/bin/bun
 #
-# The pin lives in harness.yaml under build.bun_pin (single source of truth, same
-# idiom as build.mlx_lm_pin / runner.llamacpp_pin). Bump = edit harness.yaml, re-run
+# The pin lives in motdeck.yaml under build.bun_pin (single source of truth, same
+# idiom as build.mlx_lm_pin / runner.llamacpp_pin). Bump = edit motdeck.yaml, re-run
 # an install of the component; this script notices the version drift and refetches.
 #
 # Mirrors scripts/install_llamacpp.sh: staging dir → find the binary anywhere inside
@@ -27,7 +27,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
-say() { echo "[harness] $*" >&2; }
+say() { echo "[motdeck] $*" >&2; }
 
 DEST="${BUN_DEST:-$ROOT/data/bun}"
 BINPATH="$DEST/bin/bun"
@@ -41,14 +41,14 @@ if [[ "${BUN_IGNORE_PATH:-0}" != "1" ]] && command -v bun >/dev/null 2>&1; then
   exit 0
 fi
 
-# Pin from harness.yaml build.bun_pin (e.g. "bun-v1.3.14"). Same awk reader as
+# Pin from motdeck.yaml build.bun_pin (e.g. "bun-v1.3.14"). Same awk reader as
 # install_mlx.sh so there is exactly one way to read a build.* key.
-_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' harness.yaml; }
+_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' motdeck.yaml; }
 PIN="${BUN_PIN:-$(_yb bun_pin)}"
 [[ -n "$PIN" ]] || {
-  say "ERROR: build.bun_pin missing from $(pwd)/harness.yaml"
+  say "ERROR: build.bun_pin missing from $(pwd)/motdeck.yaml"
   say "  (if this is the FAT app's snapshot: ship.sh deliberately never overwrites"
-  say "   harness.yaml, so a newly added build.* key only arrives with a --fat rebuild."
+  say "   motdeck.yaml, so a newly added build.* key only arrives with a --fat rebuild."
   say "   Add 'bun_pin: \"bun-v…\"' under build:, or export BUN_PIN=bun-v… and re-run.)"
   exit 1; }
 # "bun-v1.3.14" → "1.3.14" (what `bun --version` prints)

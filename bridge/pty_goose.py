@@ -66,9 +66,9 @@ WHAT IS LOAD-BEARING IN HERE:
    removed on close, so the row exists exactly while goose does — never a ghost. This
    is also what makes `./scripts/stop.sh` stop goose, which is correct.
 
-⚠️ GUARDRAIL, said out loud: the harness path-guard fence does NOT cover goose (that is
+⚠️ GUARDRAIL, said out loud: MOT Deck path-guard fence does NOT cover goose (that is
 a Hermes plugin on Hermes's own pre_tool_call hook). The WORKSPACE DIRECTORY is the
-entire boundary — which is why it is never $HOME and never the harness repo.
+entire boundary — which is why it is never $HOME and never MOT Deck repo.
 
 Everything decision-shaped is a PURE function so it can be table-tested; the session
 manager is exercised for real against /bin/cat in bridge/tests/test_goose_lane.py.
@@ -253,12 +253,12 @@ def tools_warning(entry) -> str:
 # ── pure: the runner's endpoint → goose's two halves ─────────────────────────
 def openai_host(endpoint, port=6767) -> str:
     """PURE. goose composes its URL as OPENAI_HOST + '/' + OPENAI_BASE_PATH, so it wants
-    the ORIGIN, while runner.endpoint in harness.yaml is the OpenAI-compatible BASE
+    the ORIGIN, while runner.endpoint in motdeck.yaml is the OpenAI-compatible BASE
     (…:6767/v1). Handing goose the base verbatim would produce /v1/v1/chat/completions —
     a 404 that looks exactly like "the model is broken".
 
     Total: anything unusable falls back to the loopback origin on the runner's port,
-    which is the only thing this harness ever points at."""
+    which is the only thing MOT Deck ever points at."""
     # TOTAL: this reads a manifest a human edits, so a number, a list or None must cost
     # the VALUE and never the launch.
     s = (endpoint if isinstance(endpoint, str) else "").strip().rstrip("/")
@@ -320,7 +320,7 @@ def goose_argv(root, resume_id: str = "") -> list:
                           working and the feature merely being implemented.
 
     ⚠️ AND `--name` IS DELIBERATELY *NOT* HERE. Measured on the same binary: `--name`
-    sets the DISPLAY NAME and the id stays goose's own timestamp (`--name harness-probe-A`
+    sets the DISPLAY NAME and the id stays goose's own timestamp (`--name motdeck-probe-A`
     → id `20260829_1`). Naming every session ourselves would overwrite the only field a
     user can meaningfully set from inside goose, to buy a handle we already have.
     """
@@ -770,7 +770,7 @@ def previews(root, ids) -> dict:
     strip falls back to the session name. It opens `mode=ro` and never writes.
 
     goose prepends a `<turn-context>` block to the user's text as its own message; those
-    are skipped, because showing the harness's scaffolding as 'what you asked' is a lie
+    are skipped, because showing MOT Deck's scaffolding as 'what you asked' is a lie
     about the user's own history.
     """
     want = {str(i) for i in (ids or []) if str(i)}

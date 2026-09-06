@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Harness portable first-run. Run from the extracted ~/Harness (main.swift does this
+# MOT Deck portable first-run. Run from the extracted Application Support root (main.swift does this
 # on a fresh Mac). Checks prerequisites with actionable messages, installs uv if needed,
 # then hands off to bootstrap.sh (which git-inits, adds the pinned public submodules, and
 # builds the bridge venv). The §E setup checklist in the panel guides per-component installs.
@@ -10,11 +10,11 @@ ROOT="$(pwd)"
 say()  { printf "\033[1;36m[firstrun]\033[0m %s\n" "$*"; }
 fail() { printf "\033[1;31m[firstrun]\033[0m %s\n" "$*" >&2; exit 1; }
 
-say "Harness first-run in: $ROOT"
+say "MOT Deck first-run in: $ROOT"
 
 # ---------- prerequisites (actionable failures) ----------
 command -v git  >/dev/null || fail "git not found — install Xcode Command Line Tools:  xcode-select --install"
-command -v brew >/dev/null || fail "Homebrew not found — install it from https://brew.sh then reopen Harness. (bootstrap uses brew to add any missing tools.)"
+command -v brew >/dev/null || fail "Homebrew not found — install it from https://brew.sh then reopen MOT Deck. (bootstrap uses brew to add any missing tools.)"
 
 PY=""
 for c in python3.13 python3.12 python3.11 python3; do
@@ -50,8 +50,8 @@ else
   # and UV_UNMANAGED_INSTALL=<dir> is the documented way to (a) choose the install
   # directory, (b) stop the installer editing shell profiles and (c) disable
   # self-update — exactly the no-writes-outside-our-tree rule ensure_bun.sh follows.
-  # Pin lives in harness.yaml build.uv_pin; same awk reader as ensure_bun.sh.
-  _yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' harness.yaml; }
+  # Pin lives in motdeck.yaml build.uv_pin; same awk reader as ensure_bun.sh.
+  _yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' motdeck.yaml; }
   UV_PIN="${UV_PIN:-$(_yb uv_pin)}"
   UV_SHA256="$(_yb uv_installer_sha256)"
   [[ -n "$UV_PIN" ]] || fail "build.uv_pin is missing; refusing an unpinned installer"
@@ -82,8 +82,8 @@ export PATH="$(dirname "$UV_BIN"):$PATH"
 # ---------- git identity fallback (fresh Macs often have none; bootstrap commits) ----------
 if ! git config --get user.email >/dev/null 2>&1; then
   say "No git identity configured — using a local fallback for the initial commit."
-  export GIT_AUTHOR_NAME="Harness" GIT_AUTHOR_EMAIL="harness@localhost"
-  export GIT_COMMITTER_NAME="Harness" GIT_COMMITTER_EMAIL="harness@localhost"
+  export GIT_AUTHOR_NAME="MOT Deck" GIT_AUTHOR_EMAIL="motdeck@localhost"
+  export GIT_COMMITTER_NAME="MOT Deck" GIT_COMMITTER_EMAIL="motdeck@localhost"
 fi
 
 say "Handing off to bootstrap…"

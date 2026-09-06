@@ -57,9 +57,9 @@ What is load-bearing in here, and why:
    ON, because git is the only undo aider has. `--yes-always` is NEVER passed: aider's
    per-edit confirmation prompt IS the approval flow, and it renders in the PTY.
 
-⚠️ GUARDRAIL, said out loud: the harness path-guard fence does NOT cover aider (that is
+⚠️ GUARDRAIL, said out loud: MOT Deck path-guard fence does NOT cover aider (that is
 a Hermes plugin on Hermes's own pre_tool_call hook). The WORKSPACE DIRECTORY is the
-entire boundary — which is why it is never $HOME and never the harness repo.
+entire boundary — which is why it is never $HOME and never MOT Deck repo.
 
 Everything decision-shaped is a PURE function so it can be table-tested; the session
 manager is exercised for real against /bin/cat in bridge/tests/test_aider_lane.py.
@@ -100,7 +100,7 @@ KILL_GRACE_S = 3.0
 # case is not a ⌘R (sub-second) — it is the user closing the tab, doing something else,
 # and re-opening it. Too short and the fix does not fix the complaint; too long and a
 # forgotten tab leaves an agent holding the workspace all afternoon. Ten minutes is the
-# stated default and it is CONFIGURABLE per lane (harness.yaml `goose.detach_grace_s`),
+# stated default and it is CONFIGURABLE per lane (motdeck.yaml `goose.detach_grace_s`),
 # clamped by the two bounds below so a typo cannot mean "forever" or "immediately".
 DETACH_GRACE_S = 600.0
 MIN_GRACE_S, MAX_GRACE_S = 5.0, 3600.0

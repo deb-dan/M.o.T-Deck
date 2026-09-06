@@ -3,10 +3,10 @@
 ## ⟳ STATE UPDATE — 2026-08-07 (supersedes sections below where they conflict)
 
 The architecture below is the 2026-07 design. The built system differs in the runner and in what
-the Bridge grew into. Authoritative today: `docs/HARNESS-INTERNALS.md` (code-derived); decisions
+the Bridge grew into. Authoritative today: `docs/MOT-DECK-INTERNALS.md` (code-derived); decisions
 and history in `CLAUDE.md`.
 
-**Current component / port map** (all loopback, ports from `harness.yaml`):
+**Current component / port map** (all loopback, ports from `motdeck.yaml`):
 
 | Piece | Port | Notes |
 |---|---|---|
@@ -21,18 +21,18 @@ and history in `CLAUDE.md`.
 - **Jan is gone** (July 2026). Wherever this doc says "Jan runner", read "our own runner on :6767".
   The Odysseus endpoint id `local-jan` is a historical identifier only.
 - **One-switch provisioning shipped** (dependency closure, single approval, live per-step progress,
-  degraded detection) and the runner endpoint in `harness.yaml` is the single source of truth that
+  degraded detection) and the runner endpoint in `motdeck.yaml` is the single source of truth that
   fans out to Hermes's `~/.hermes/config.yaml` and Odysseus's seeded endpoint on every start.
 - **Two builds now exist:** a lean dev app that serves the repo live, and a **fat/offline app**
-  that serves a provisioned snapshot at `~/Library/Application Support/Harness`. Read
-  HARNESS-INTERNALS §3 (the snapshot rule) before changing any code — and ship with `./scripts/ship.sh`.
+  that serves a provisioned snapshot at `~/Library/Application Support/MOT Deck`. Read
+  MOT-DECK-INTERNALS §3 (the snapshot rule) before changing any code — and ship with `./scripts/ship.sh`.
 - **New subsystems not in this doc:** model registry + download manager, RAM ledger, the four chat
   lanes with a shared SSE frame protocol, the Hermes path-guard plugin fence + audit log, the
   artifacts/canvas renderer, and the Capabilities panel over Odysseus's settings stores.
 ---
 
 
-*Part of the Harness handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Why this shape: [01_Vision_and_Decision.md](01_Vision_and_Decision.md). Licenses per layer: [03_Licensing.md](03_Licensing.md).*
+*Part of the MOT Deck handoff set. Index: [00_START_HERE.md](00_START_HERE.md). Why this shape: [01_Vision_and_Decision.md](01_Vision_and_Decision.md). Licenses per layer: [03_Licensing.md](03_Licensing.md).*
 
 ---
 
@@ -81,7 +81,7 @@ Two layers of yours (Mission Control, Bridge) orchestrate four managed component
 | :6767 | Jan headless (`jan serve`) | `/v1` prefix; **DECIDED: the Bridge-managed canonical runner endpoint (primary).** |
 | :1337 | Jan desktop API server | Settings → Local API Server → Start Server; **optional dual-mode "desktop tap"** the adapter can point at when headless is down or when Debi wants the desktop GUI (see §Runner slot → Dual-mode). Health-probed, not Bridge-managed. |
 | :1234 | LM Studio server | Fallback runner. |
-| :7860 | Odysseus (FastAPI: UI + API, single app) | `APP_PORT`/`APP_BIND` to override; binds 127.0.0.1 by default. Native Python — no Docker (decided). **Changed from :7000 (2026-07-20): macOS AirPlay Receiver squats :7000 — conflict caught in harness v1 (`harness.yaml` used 7860 for this reason).** |
+| :7860 | Odysseus (FastAPI: UI + API, single app) | `APP_PORT`/`APP_BIND` to override; binds 127.0.0.1 by default. Native Python — no Docker (decided). **Changed from :7000 (2026-07-20): macOS AirPlay Receiver squats :7000 — conflict caught in motdeck v1 (`motdeck.yaml` used 7860 for this reason).** |
 | :8080 | SearXNG (shared) | One instance for Odysseus AND MCP search. Native from-source install — no Docker (decided). |
 | :8091 | ntfy (Odysseus notifications) | Bundled with Odysseus. |
 | :8100 | ChromaDB (Odysseus vector store) | Bundled with Odysseus. |
@@ -115,7 +115,7 @@ install:
   - pip: [pyyaml, msgspec, typing-extensions, pybind11]
   - pip: ["--use-pep517", "--no-build-isolation", "-e", "."]
 config:
-  path: <harness>/searxng/settings.yml
+  path: <motdeck>/searxng/settings.yml
   template: { server.port: 8080, server.secret_key: "{{ random }}",
               limiter: false, search.formats: [html, json] }
 depends_on: []
@@ -168,7 +168,7 @@ name: hermes
 source: { type: git, repo: https://github.com/NousResearch/hermes-agent, pin: <tag> }
 install:
   - venv: create
-  - pip: install (as the harness already does today)
+  - pip: install (as MOT Deck already does today)
 config:
   path: ~/.hermes/config.yaml        # written DIRECTLY — the setup wizard is never run (verified below)
   template:
@@ -179,7 +179,7 @@ depends_on: [jan-runner]             # model loaded ⇒ transitively model-prima
 start: hermes daemon (as today)
 health: daemon process alive + hermes config check exits 0
 verify: dispatch one trivial smoke task that must complete ≥1 tool call
-        through the endpoint (tool-calling is the harness-wide mandate —
+        through the endpoint (tool-calling is MOT Deck-wide mandate —
         a Hermes that can't tool-call is NOT connected)
 ```
 
@@ -273,7 +273,7 @@ You wanted the *option* for the runner to tap the running desktop Jan (:1337) in
 *Why tap the desktop endpoint sometimes:*
 - The desktop app is already open, so the model is already loaded in RAM — spawning a second headless server would double the memory footprint for the same weights.
 - Per-model settings, MLX tuning, and the `router.preset.ini` are authored in the desktop GUI; tapping :1337 uses those live rather than relying on headless inheriting them.
-- You want to *watch* a conversation happen in Jan's own chat window while the harness drives it — useful for debugging tool-call formatting.
+- You want to *watch* a conversation happen in Jan's own chat window while MOT Deck drives it — useful for debugging tool-call formatting.
 
 *How the Bridge picks (one small resolution function, evaluated at endpoint-resolve time and on health-loss):*
 1. **`runner.mode` config toggle** with three values: `headless` (always :6767, spawn if needed — the default), `desktop` (always :1337, never spawn — user override for "use what's on my screen"), and `auto`.
@@ -304,12 +304,12 @@ The fan-out writers still emit one URL (`runner.resolved_endpoint`) into Hermes'
 - Synchronous workspace + **DeepResearch** via SearXNG, using an adapted Tongyi DeepResearch pipeline (Apache-2.0 origin).
 - Verified run details: plain Python (3.11+): `pip install -r requirements.txt; python setup.py; python -m uvicorn app:app --host 127.0.0.1 --port 7860`. (Upstream also offers docker compose — **not used here**; see decision below.) Single FastAPI app serves UI and API on :7860. ([odysseus docs/setup.md](https://github.com/pewdiepie-archdaemon/odysseus/blob/main/docs/setup.md))
 - **`SEARXNG_INSTANCE` env var** points it at an external SearXNG (default `http://localhost:8080`) — this is what makes the shared-SearXNG plan officially supported, not a hack. Model endpoint via `LLM_HOST` / `LLM_HOSTS` (discovery list), plus `RESEARCH_LLM_ENDPOINT`, `EMBEDDING_URL`/`EMBEDDING_MODEL`; most provider config is done in its in-app Settings UI. ([.env.example](https://github.com/pewdiepie-archdaemon/odysseus/blob/main/.env.example))
-- **DECIDED (2026-07-19): native Python via the Bridge's existing venv machinery — no Docker.** Debi has ruled Docker out harness-wide. Bridge writes its `.env` from central config. UI embedded as a Mission Control webview tab. Note: Odysseus's docker-compose bundle would have brought its own SearXNG/ntfy/ChromaDB containers; running native means the Bridge (not compose) is responsible for the sidecars — SearXNG is covered below; ntfy/ChromaDB install natively via pip/binary and are already 127.0.0.1-only.
+- **DECIDED (2026-07-19): native Python via the Bridge's existing venv machinery — no Docker.** Debi has ruled Docker out MOT Deck-wide. Bridge writes its `.env` from central config. UI embedded as a Mission Control webview tab. Note: Odysseus's docker-compose bundle would have brought its own SearXNG/ntfy/ChromaDB containers; running native means the Bridge (not compose) is responsible for the sidecars — SearXNG is covered below; ntfy/ChromaDB install natively via pip/binary and are already 127.0.0.1-only.
 
 ### Hermes (managed component, MIT)
 - NousResearch's async, self-directed coding-agent daemon: reads codebases, edits files, runs commands, plans multi-step tasks, writes reusable SKILL.md skills it remembers.
 - Verified config details: `hermes model` is the interactive provider wizard; "Custom endpoint" supports any OpenAI-compatible base URL. `~/.hermes/config.yaml` is the single source of truth (`model: { provider: custom, base_url: http://localhost:6767/v1, ... }`); the old `OPENAI_BASE_URL`/`LLM_MODEL` env vars were removed. LM Studio is a named provider; **Jan at :1337/v1 is explicitly in its compatibility table**. ([hermes-agent providers doc](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/integrations/providers.md))
-- **Tool calling is required — now a locked harness-wide rule:** the primary model MUST support tool calling (Hermes and every MCP tool depend on it); non-tool-calling models are disqualified as primary. Wire-format notes: vLLM needs `--enable-auto-tool-choice --tool-call-parser hermes`, llama-server needs `--jinja`, LM Studio 0.3.6+ — otherwise tool calls come back as raw text. ([04_Roadmap.md](04_Roadmap.md) §Decisions.)
+- **Tool calling is required — now a locked MOT Deck-wide rule:** the primary model MUST support tool calling (Hermes and every MCP tool depend on it); non-tool-calling models are disqualified as primary. Wire-format notes: vLLM needs `--enable-auto-tool-choice --tool-call-parser hermes`, llama-server needs `--jinja`, LM Studio 0.3.6+ — otherwise tool calls come back as raw text. ([04_Roadmap.md](04_Roadmap.md) §Decisions.)
 - Being MIT, Hermes is the one component whose *patterns and code* you may freely lift into your own layers — notably the SKILL.md conventions.
 
 ### SearXNG (shared infrastructure, AGPL)

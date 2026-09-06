@@ -1,4 +1,4 @@
-"""CORE — the surgical harness.yaml writers (line-level, comment-preserving)."""
+"""CORE — the surgical motdeck.yaml writers (line-level, comment-preserving)."""
 from __future__ import annotations
 
 from .appctx import ROOT
@@ -7,9 +7,9 @@ from ..yamlfile import transform_file
 
 # ── Models pane (M2) — list installed from OUR registry, switch the runner ──
 def _set_yaml_model(block: str, new_id: str) -> None:
-    """Rewrite <block>.model in harness.yaml (line-scan, preserves everything else)."""
+    """Rewrite <block>.model in motdeck.yaml (line-scan, preserves everything else)."""
     import re
-    p = ROOT / "harness.yaml"
+    p = ROOT / "motdeck.yaml"
     def edit(text):
         lines = text.split("\n")
         inside = False
@@ -30,14 +30,14 @@ def _set_runner_model(new_id: str) -> None:
 
 
 def _set_yaml_scalar(block: str, key: str, value: str) -> None:
-    """Rewrite <block>.<key> in harness.yaml IN PLACE (same line-scan idiom as
+    """Rewrite <block>.<key> in motdeck.yaml IN PLACE (same line-scan idiom as
     _set_yaml_model, so every comment / ordering in the file survives — a full yaml
     round-trip would strip them, which we only ever accept for ~/.hermes/config.yaml).
     An empty value writes a bare `key:` (= null = off). If the block or the key is
     missing (e.g. an older snapshot manifest that ship.sh's merge hasn't touched yet)
     they are appended rather than silently dropped."""
     import re
-    p = ROOT / "harness.yaml"
+    p = ROOT / "motdeck.yaml"
     def edit(text):
         lines = text.split("\n")
         inside, block_at, last_in_block = False, -1, -1

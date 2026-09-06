@@ -349,7 +349,7 @@ LICENSE_NC_REASON = "non-commercial licence"
 # the honest thing is to SAY the weights term, not to hide the model behind a
 # button we turn off. Same verdict shape as the recorded unknown-licence and
 # OpenRAIL calls — honesty over gatekeeping. Flipping this to "nc" would disable
-# Get on a model the harness already ships as its recommended TTS.
+# Get on a model MOT Deck already ships as its recommended TTS.
 OMNIVOICE_LICENSE_REASON = ("weights CC-BY-NC per upstream README; code Apache-2.0")
 
 # MiniMax-Music3: the SECOND confirmed instance of the same defect class, on a new
@@ -557,7 +557,7 @@ def audio_probe_verdict(repo: object, cfg: object, files: object,
     """PURE: classify one HF repo for the Audio tab. Never raises.
 
     Returns {format, warn, file, mmproj, can_get, block_reason} where format ∈
-      tts-mlx | stt-mlx | tts-gguf   → a lane the harness can actually drive
+      tts-mlx | stt-mlx | tts-gguf   → a lane MOT Deck can actually drive
       transformers                   → the whisper-medium class: LOOKS right, is not
       unknown                        → we could not tell; Get stays off
 
@@ -590,7 +590,7 @@ def audio_probe_verdict(repo: object, cfg: object, files: object,
                                     "safetensors/npz weights + config.json")
         blocked = {"transformers": "transformers checkpoint — not an MLX conversion; "
                                    "mlx_whisper cannot load it",
-                   "unknown": "the harness could not identify an engine for this repo"}
+                   "unknown": "MOT Deck could not identify an engine for this repo"}
         reason = blocked.get(fmt, "")
         if fmt == "unknown" and warn:
             reason = warn                      # the specific miss beats the generic one

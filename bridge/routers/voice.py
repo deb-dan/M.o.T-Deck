@@ -1,4 +1,4 @@
-"""ROUTER — the harness-native VOICE capability: config, refs, library, TTS, STT."""
+"""ROUTER — MOT Deck-native VOICE capability: config, refs, library, TTS, STT."""
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +17,7 @@ from .downloads import _registry_update
 from .models import _is_hidden, _split_audio, _voice_cfg, _voice_spawn_guard
 
 
-# ── Harness-native VOICE capability (FABLE-VOICE-CAPABILITY-SPEC, Phase B) ───────
+# ── MOT Deck-native VOICE capability (FABLE-VOICE-CAPABILITY-SPEC, Phase B) ───────
 # Distinct from /api/voice/status|toggle above (those register the two OPTIONAL
 # voice COMPONENTS' MCP servers). These three own the all-MIT agents-can-speak path:
 # one-shot llama-tts / mlx-audio subprocesses, no port, no card.
@@ -107,7 +107,7 @@ async def voice_config_set(req: Request) -> JSONResponse:
 async def voice_entry_voice(req: Request) -> JSONResponse:
     """{id, voice} → pin a NAMED VOICE onto one audio registry entry.
 
-    The voice lives ON the registry entry, not in harness.yaml: a voice is a
+    The voice lives ON the registry entry, not in motdeck.yaml: a voice is a
     property of a model choice (Chelsie only means anything for Qwen3-TTS), so
     two installed TTS models can each remember their own. tts_argv already reads
     `entry["voice"]` and emits `--voice` only when it is set — this endpoint is
@@ -142,7 +142,7 @@ async def voice_entry_voice(req: Request) -> JSONResponse:
 
 
 async def _transcribe_clip(path: str, audio: list) -> str:
-    """Transcribe ONE reference clip with the harness's own default STT model, or ''.
+    """Transcribe ONE reference clip with MOT Deck's own default STT model, or ''.
 
     THE POINT (root-caused 2026-08-13 from Debi's 30s-per-render report): mlx-audio's
     `generate_audio`, handed a ref_audio with NO ref_text, loads
@@ -307,7 +307,7 @@ async def voice_entry_ref(req: Request) -> JSONResponse:
         # Debi's 30s-per-render report): mlx-audio's generate_audio, handed a clip
         # with NO ref_text, loads whisper-large-v3-turbo (~1.6GB) to transcribe the
         # clip on EVERY render, then discards it (generate.py: "Ref_text not found.
-        # Transcribing ref_audio..."). Transcribing once HERE with the harness's own
+        # Transcribing ref_audio..."). Transcribing once HERE with MOT Deck's own
         # default STT (whisper-base, sub-second — Gate-2 measured) and storing the
         # text makes every render skip that path. Best-effort: no STT default or a
         # failed transcription just leaves ref_text empty (slow but working). ONE
@@ -826,7 +826,7 @@ async def voice_library_save(req: Request) -> JSONResponse:
     # recording behind the user's back would be a worse surprise than a slow render —
     # so this only REFUSES the case we could neither use nor shorten (over-long AND no
     # ffmpeg anywhere), and otherwise reports the estimate so the pin can say what it
-    # is about to do. The file is removed again on refusal: a clip the harness has just
+    # is about to do. The file is removed again on refusal: a clip MOT Deck has just
     # told the user it will not accept must not be left sitting in the library.
     note = ""
     if _voice is not None:
@@ -932,8 +932,8 @@ async def voice_tts(req: Request) -> Response:
         return Response(content=hit, media_type="audio/wav", headers={
             "Cache-Control": "no-store",
             "Content-Disposition": 'inline; filename="speech.wav"',
-            "X-Harness-Voice-Model": mid,
-            "X-Harness-Voice-Cached": "1",
+            "X-MOT-Deck-Voice-Model": mid,
+            "X-MOT-Deck-Voice-Cached": "1",
         })
 
     stats, t0 = {}, time.time()
@@ -968,8 +968,8 @@ async def voice_tts(req: Request) -> Response:
     return Response(content=wav, media_type="audio/wav", headers={
         "Cache-Control": "no-store",
         "Content-Disposition": 'inline; filename="speech.wav"',
-        "X-Harness-Voice-Model": mid,
-        "X-Harness-Voice-Cached": "0",
+        "X-MOT-Deck-Voice-Model": mid,
+        "X-MOT-Deck-Voice-Cached": "0",
     })
 
 

@@ -5,7 +5,7 @@ and for the same reasons; read bridge/pty_goose.py's header for what is load-bea
 
 A terminal program in a pseudo-terminal, for exactly as long as the Goose tab holds its
 websocket open. No port of its own, no daemon — so nothing here belongs in
-harness.yaml's `components`, and there is no Mission Control card. It DOES appear in
+motdeck.yaml's `components`, and there is no Mission Control card. It DOES appear in
 the memory ledger by name, because the session writes data/goose.pid for its lifetime
 and bridge/core/memory.py builds one row per pidfile.
 

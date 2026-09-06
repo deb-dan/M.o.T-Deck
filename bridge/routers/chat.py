@@ -76,7 +76,7 @@ def _runner_error_sentence(status, model: str = "") -> str:
                 f"Re-pick the model in the composer. {tail}")
     if code in (401, 403):
         return (f"the model runner rejected our credentials ({code}) — its api_key "
-                f"in harness.yaml no longer matches the one it was started with. "
+                f"in motdeck.yaml no longer matches the one it was started with. "
                 f"{tail}")
     if code == 404:
         return (f"the model runner has no such model loaded (404){who} — pick a "
@@ -110,7 +110,7 @@ async def direct_events(body: dict):
     key = rc.get("api_key", "")
     # ══ U18 CLOSED HERE. THE LINE THIS REPLACES WAS `model = rc.get("model", "")` ══
     #
-    # That read harness.yaml's PIN — INTENT, not reality — and the post-switch coherence
+    # That read motdeck.yaml's PIN — INTENT, not reality — and the post-switch coherence
     # audit measured what it cost: on 2026-08-29 the pin named a 27B whose file had been
     # deleted while the runner served Parable-Qwen3-4B. The composer chip above the box
     # said Parable (it reads live); this lane wired the 27B, llama.cpp silently
@@ -120,7 +120,7 @@ async def direct_events(body: dict):
     # itself, with the wrong half written into the record.
     #
     # PRECEDENCE, matching the hermes arm (v1.5.56) and aider's `_live_model_id` lane:
-    # what the runner IS SERVING outranks harness.yaml; the pin is the fallback for the
+    # what the runner IS SERVING outranks motdeck.yaml; the pin is the fallback for the
     # one case a probe cannot answer — the runner is down, where naming the model we
     # intend to load is the most honest thing available and the turn is going to fail
     # with a connection error anyway.
@@ -143,7 +143,7 @@ async def direct_events(body: dict):
     wire = wire_model_id(model, _reg)
     # Per-model sampling, engine-translated. Read here (once per turn) rather than
     # cached so an edit in the Models pane lands on the NEXT message with no reload.
-    # An unknown model still gets the harness defaults — which is what guarantees an
+    # An unknown model still gets MOT Deck defaults — which is what guarantees an
     # explicit max_tokens on every single turn (see SAMPLING_DEFAULTS).
     sampling = sampling_merge(next((m for m in _reg if m.get("id") == model), None) or {})
 

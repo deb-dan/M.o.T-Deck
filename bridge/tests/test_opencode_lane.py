@@ -40,7 +40,7 @@ PANEL = open(os.path.join(ROOT, "bridge", "panel", "index.html"),
              encoding="utf-8", errors="replace").read()
 SWIFT = open(os.path.join(ROOT, "app", "main.swift"),
              encoding="utf-8", errors="replace").read()
-MANIFEST = yaml.safe_load(open(os.path.join(ROOT, "harness.yaml"),
+MANIFEST = yaml.safe_load(open(os.path.join(ROOT, "motdeck.yaml"),
                                encoding="utf-8").read())
 
 
@@ -356,7 +356,7 @@ def test_nav_registry_agrees_across_the_three_tables():
         "silently stops switching tabs")
     assert "'opencode'];" in flat.replace("\n", "") or "'opencode'," in flat, (
         "opencode is in the panel's default layouts")
-    assert 'HarnessTab(id: "opencode", title: "OpenCode"' in SWIFT
+    assert 'MOTDeckTab(id: "opencode", title: "OpenCode"' in SWIFT
     # v1.5.26: the strip was REORDERED (Debi), so this can no longer pin the pair of
     # neighbours it used to. What actually matters here is membership — that the shell's
     # default strip carries opencode at all — and the ORDER is fenced in exactly one
@@ -403,12 +403,13 @@ def test_the_workspace_is_made_a_real_git_project_at_install():
 
 
 def test_the_tab_lands_on_a_session_not_on_the_empty_home():
+    import base64
     from bridge.app import opencode_landing_url
-    url = opencode_landing_url("/Users/x/Library/Application Support/Harness", 4096)
+    workspace = "/Users/x/Library/Application Support/MOT Deck/data/opencode-workspace"
+    url = opencode_landing_url("/Users/x/Library/Application Support/MOT Deck", 4096)
     # base64url, unpadded — upstream's own encoder (core/src/util/encode.ts:1-5).
-    assert url == ("http://127.0.0.1:4096/"
-                   "L1VzZXJzL3gvTGlicmFyeS9BcHBsaWNhdGlvbiBTdXBwb3J0L0hhcm5lc3MvZGF0YS9vcGVuY29kZS13b3Jrc3BhY2U"
-                   "/session"), url
+    encoded = base64.urlsafe_b64encode(workspace.encode()).decode().rstrip("=")
+    assert url == f"http://127.0.0.1:4096/{encoded}/session", url
     assert "=" not in url.split("/")[3], "padding is stripped, as upstream strips it"
     assert "+" not in url and " " not in url, "url-safe alphabet, and no raw space"
     # A junk port can never produce a URL pointing at something else.
@@ -431,8 +432,8 @@ def test_the_landing_route_is_a_redirect_and_the_shell_points_at_it():
         "the URL is built in ONE place, so the test above is the whole guard")
     # The shell asks the bridge rather than baking a URL: only the bridge knows ROOT
     # (repo vs snapshot) and the configured port.
-    assert 'HarnessTab(id: "opencode", title: "OpenCode",' in SWIFT
-    tab = SWIFT[SWIFT.index('HarnessTab(id: "opencode"'):]
+    assert 'MOTDeckTab(id: "opencode", title: "OpenCode",' in SWIFT
+    tab = SWIFT[SWIFT.index('MOTDeckTab(id: "opencode"'):]
     tab = tab[:tab.index("\n    //", 10) if "\n    //" in tab[10:] else 400]
     assert "127.0.0.1:8700/opencode" in tab, (
         "the OpenCode tab must open the bridge's landing redirect, not :4096 directly "
@@ -519,8 +520,8 @@ def _run_seed(models, want="", extra_global=None, extra_project=None):
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(seed, fh)
     env = dict(os.environ, OC_CFG=gp, OC_PCFG=pp, OC_MODEL=want,
-               OC_BASE="http://127.0.0.1:6767/v1", OC_KEY="harness-key",
-               HARNESS_ROOT=d)
+               OC_BASE="http://127.0.0.1:6767/v1", OC_KEY="motdeck-key",
+               MOT_DECK_ROOT=d)
     p = subprocess.run([sys.executable, SEED_SCRIPT], cwd=d, env=env,
                        capture_output=True, text=True, timeout=60)
     assert p.returncode == 0, p.stderr
@@ -556,7 +557,7 @@ def test_seeded_provider_has_every_key_upstream_requires():
         "without npm, opencode has no client for a provider it has never heard of")
     assert p["options"]["baseURL"] == "http://127.0.0.1:6767/v1", (
         "options.baseURL is what provider.ts:1731 prefers over the derived api url")
-    assert p["options"]["apiKey"] == "harness-key"
+    assert p["options"]["apiKey"] == "motdeck-key"
     assert p["name"], "the display name shown in Settings -> Providers"
     assert p["models"], (
         "a provider whose models map is empty is DELETED by provider.ts:1684-1687 — "
@@ -718,7 +719,7 @@ def test_a_broken_config_file_is_replaced_not_inherited():
     with open(gp, "w", encoding="utf-8") as fh:
         fh.write("{ this is not json")
     env = dict(os.environ, OC_CFG=gp, OC_PCFG=os.path.join(d, "p.json"), OC_MODEL="",
-               OC_BASE="http://127.0.0.1:6767/v1", OC_KEY="k", HARNESS_ROOT=d)
+               OC_BASE="http://127.0.0.1:6767/v1", OC_KEY="k", MOT_DECK_ROOT=d)
     p = subprocess.run([sys.executable, SEED_SCRIPT], cwd=d, env=env,
                        capture_output=True, text=True, timeout=60)
     assert p.returncode == 0, p.stderr
@@ -811,7 +812,7 @@ def _default_key(cfg):
 
 
 def test_a_default_model_is_never_written_dangling():
-    """THE "Big Pickle" PATH. harness.yaml's runner.model is an INTENT — it can easily
+    """THE "Big Pickle" PATH. motdeck.yaml's runner.model is an INTENT — it can easily
     name something the registry does not carry. `defaultModel()` returns
     `parseModel(cfg.model)` UNVALIDATED when the key is set (provider.ts:1980-1981), so a
     dangling id is passed on as if it were real, and the desktop's own fallback ordering

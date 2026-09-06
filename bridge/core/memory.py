@@ -43,10 +43,12 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
+import plistlib
 import struct
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 from .appctx import ROOT
 
@@ -69,7 +71,7 @@ except OSError:
 
 # `responsibility_get_pid_responsible_for_pid` is PRIVATE-but-stable (it is the
 # mechanism Activity Monitor and exelban/stats both use to group an app's XPC
-# helpers under the app). Feature-detected, never assumed: without it, Harness.app's
+# helpers under the app). Feature-detected, never assumed: without it, MOT Deck.app's
 # WebKit helpers — whose ppid is launchd, so no ppid walk can find them — would go
 # missing, and the measured gap is 20× (shell 36 MB, its main WebContent 730 MB).
 _RESPONSIBLE = None
@@ -342,7 +344,25 @@ def system_view() -> dict:
 # ── our stack: which pid is which component ──────────────────────────────────
 # Every supervised component writes data/<name>.pid; the runner is the headline. The
 # bridge is us. The app shell (and its WebKit helpers) is found by responsibility.
-APP_BUNDLE_HINT = "/Harness.app/Contents/MacOS/"
+APP_EXECUTABLE_SUFFIX = "/Contents/MacOS/MOTDeck"
+APP_BUNDLE_ID = "local.motdeck.app"
+
+
+def _is_motdeck_shell(path: str) -> bool:
+    """Recognize the shell by bundle metadata, independent of Finder renames."""
+    if not path.endswith(APP_EXECUTABLE_SUFFIX):
+        return False
+    bundle = Path(path[:-len(APP_EXECUTABLE_SUFFIX)])
+    plist = bundle / "Contents/Info.plist"
+    try:
+        if plist.is_symlink() or not plist.is_file():
+            return False
+        with plist.open("rb") as handle:
+            info = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return False
+    return (info.get("CFBundleIdentifier") == APP_BUNDLE_ID
+            and info.get("CFBundleExecutable") == "MOTDeck")
 
 
 def _pidfile_pids() -> dict:
@@ -427,7 +447,7 @@ def _rescan_tree(force: bool = False) -> None:
     pids = all_pids()
     shell = None
     for pid in pids:
-        if APP_BUNDLE_HINT in proc_path(pid):
+        if _is_motdeck_shell(proc_path(pid)):
             shell = pid
             break
     kids = {}

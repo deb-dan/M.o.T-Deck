@@ -581,14 +581,14 @@ def test_wiring():
     # shell's registry answers is "does this build know that tab at all", which is
     # exactly `can_tab`. Under the old spelling this fence would have demanded the shell
     # DELETE the Classic tab — taking the surface away to satisfy a test.
-    swift_ids = re.findall(r'HarnessTab\(id: "([^"]+)"', SWIFT)
+    swift_ids = re.findall(r'MOTDeckTab\(id: "([^"]+)"', SWIFT)
     ok(sorted(swift_ids) == sorted(e["id"] for e in nav.NAV_ENTRIES if nav.can_tab(e["id"])),
        f"the shell's tab registry == the tab-able ids ({swift_ids})")
     ok("music" not in swift_ids and "compose" in swift_ids,
        "…and ONE music surface has a tab (v1.5.60: the Classic shell tab is gone — "
        "Classic rides the Music tab in place)")
-    ok('HarnessTab(id: "music"' not in SWIFT
-       and 'HarnessTab(id: "compose", title: "Music"' in SWIFT,
+    ok('MOTDeckTab(id: "music"' not in SWIFT
+       and 'MOTDeckTab(id: "compose", title: "Music"' in SWIFT,
        "…titled as Debi named it, id unmoved")
     mm = re.search(r'let navDefaultMru = \[([^\]]+)\]', SWIFT)
     shell_mru = re.findall(r'"([^"]+)"', mm.group(1)) if mm else []
@@ -761,7 +761,7 @@ def test_routes_live():
 
         finally:
             A.ROOT = old
-    # /api/status reads harness.yaml, so it runs against the REAL root (read-only).
+    # /api/status reads motdeck.yaml, so it runs against the REAL root (read-only).
     st = client.get("/api/status")
     ok(st.status_code == 200 and "nav_gen" in st.json(),
        "/api/status carries nav_gen for the shell to poll")

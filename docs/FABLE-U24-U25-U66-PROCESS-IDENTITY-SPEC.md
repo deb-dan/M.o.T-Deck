@@ -6,7 +6,7 @@ Status: implementation candidate; not shipped or versioned.
 
 The first draft said a command path or process CWD beneath the project could prove
 ownership. It cannot: a user can manually start a server from that directory. It also
-preserved `HARNESS_PORT_TAKEOVER=1`, which let a configured port override the process
+preserved `MOT_DECK_PORT_TAKEOVER=1`, which let a configured port override the process
 kill doctrine. Both decisions are rejected.
 
 ## Binding rule
@@ -47,7 +47,7 @@ not a signal. An unreadable or legacy record fails closed.
   reports the collision and asks the user to stop that application explicitly.
 - Runner readiness verifies that the sole listener is the exact child already recorded.
   It no longer rewrites the PID file from a path/name-based port observation.
-- `HARNESS_PORT_TAKEOVER` is removed from production and tests. There is no hidden
+- `MOT_DECK_PORT_TAKEOVER` is removed from production and tests. There is no hidden
   override that means “kill the stranger anyway.”
 - Force changes only TERM to KILL after ownership succeeds; it never weakens identity.
 

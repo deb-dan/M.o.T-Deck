@@ -67,7 +67,7 @@ async def api_models_hide(req: Request) -> JSONResponse:
                                   f"hiding it (hiding is for read-only imports)"},
             status_code=400)
     # A model that is IN USE must not be hidden: it would vanish from every picker
-    # while still being the thing the harness runs, which is the one state a user
+    # while still being the thing MOT Deck runs, which is the one state a user
     # cannot reason about. Call the legacy normalizer at use time: importing it at
     # module scope would invert the visibility -> models ownership seam.
     if want:

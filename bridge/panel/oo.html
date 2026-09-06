@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="harness-build" content="oo-2026-08-29b">
+<meta name="motdeck-build" content="oo-2026-08-29b">
 <title>LOffice — editor</title>
+<script src="/assets/identity-migration.js"></script>
 <!--
   ═══════════════════════════════════════════════════════════════════════════════
   LOffice — OUR OWN first-party integration of the vendored ONLYOFFICE editors.
@@ -216,7 +217,7 @@
      is the editor's own full-frame block overlay, which lives in the child document.
      Explicit light colours, deliberately, for the same reason `body.embed` above sets
      white — the editor is pinned to `default-light` and a spreadsheet is a white page
-     under EVERY harness design, so a chip following our dark tokens would be the one
+     under EVERY motdeck design, so a chip following our dark tokens would be the one
      dark object on a white sheet. Verified under Editorial and Studio, light + dark. */
   /* ⚠️ BOTTOM, NOT TOP, AND THAT IS A SCREENSHOT FINDING. The first draft sat at
      top:12px and landed square across the ONLYOFFICE ribbon's tab row — it covered
@@ -694,7 +695,7 @@ async function exportPdf() {
 }
 
 // ⚠️ THE DOWNLOAD MECHANISM, AND IT IS THE ONE THE SHELL DOCUMENTS AS WORKING.
-// A WKWebView saves nothing by itself. The harness shell answers two delegates
+// A WKWebView saves nothing by itself. MOT Deck shell answers two delegates
 // (app/main.swift, "download routing"):
 //   · `decidePolicyFor navigationResponse` → .download when it CANNOT show the MIME.
 //     That is what makes the existing "Download .xlsx" work — a navigation to
@@ -706,7 +707,7 @@ async function exportPdf() {
 //     synthetic anchor click. The shell then saves into ~/Downloads with never-clobber
 //     " (n)" suffixing and reveals the file in Finder — no bridge round trip, no temp
 //     file on disk, and nothing to clean up if the user cancels.
-// Proven in a real WKWebView with a download delegate wired into the probe harness.
+// Proven in a real WKWebView with a download delegate wired into the probe motdeck.
 function saveBlob(bytes, filename) {
   const url = URL.createObjectURL(new Blob([bytes], {type: 'application/pdf'}));
   const a = document.createElement('a');
@@ -768,10 +769,10 @@ function mockServer() {
       // Two entries, one of them a fake, because that is what CryptPad ships and
       // some sdkjs paths behave oddly for a genuinely lone participant.
       list: [
-        {id: 'harness', idOriginal: 'harness', username: 'You', indexUser: 1,
-         connectionId: 'harness-1', isCloseCoAuthoring: false, view: false},
+        {id: 'motdeck', idOriginal: 'motdeck', username: 'You', indexUser: 1,
+         connectionId: 'motdeck-1', isCloseCoAuthoring: false, view: false},
         {id: 'history', idOriginal: 'history', username: 'History', indexUser: 1,
-         connectionId: 'harness-h', isCloseCoAuthoring: true, view: true}
+         connectionId: 'motdeck-h', isCloseCoAuthoring: true, view: true}
       ]
     }),
     getInitialChanges: () => [],
@@ -783,7 +784,7 @@ function mockServer() {
         editor.sendMessageToOO({type: 'saveLock', saveLock: false});
       } else if (t === 'getLock') {
         editor.sendMessageToOO({type: 'getLock', locks: [
-          {time: Date.now(), user: 'harness', block: m.block && m.block[0]}]});
+          {time: Date.now(), user: 'motdeck', block: m.block && m.block[0]}]});
       } else if (t === 'getMessages') {
         editor.sendMessageToOO({type: 'message'});
       } else if (t === 'saveChanges') {
@@ -1811,7 +1812,7 @@ function aiStreamModal() {
 // It lives in OUR page, over the editor iframe, because the thing it has to be
 // visible ON TOP OF is the editor's own full-frame block overlay. It is styled for a
 // LIGHT surface with explicit colours for the same reason `body.embed` is: the editor
-// is pinned to `default-light` and the sheet is a white page under every harness
+// is pinned to `default-light` and the sheet is a white page under every motdeck
 // design, so a chip that followed the panel's dark tokens would be the one dark object
 // on a white sheet. Verified under Editorial and Studio, light and dark.
 let aiStreamTick = null;
@@ -2123,7 +2124,7 @@ function openDoc(name) {
       editor = new DocsAPI.DocEditor('editor', {
         document: {
           fileType: ext,
-          key: 'harness-' + Date.now(),
+          key: 'motdeck-' + Date.now(),
           title: want,
           // ⚠️ THE Editor.bin URL, AND IT IS WHAT MAKES THE WHOLE PAGE WORK. api.js's
           // handleAuth hands this straight to the editor as the document to open; a
@@ -2144,7 +2145,7 @@ function openDoc(name) {
         editorConfig: Object.assign({
           lang: 'en',
           mode: 'edit',
-          user: {id: 'harness', name: 'You'},
+          user: {id: 'motdeck', name: 'You'},
           customization: {
             about: false, feedback: false, chat: false, comments: false,
             // ⚠️ `plugins` IS THE MASTER SWITCH, and it is computed rather than

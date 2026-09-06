@@ -20,7 +20,7 @@ ENV (all read here, nothing implicit):
   OC_PCFG   the project copy (<workspace>/opencode.json) — provider ONLY, no `model`
   OC_BASE   the runner's base url            OC_KEY  its api key
   OC_MODEL  the model to seed a default from (a CANDIDATE, never an answer — see below)
-  HARNESS_ROOT  where data/models.json lives (default: cwd)
+  MOT_DECK_ROOT  where data/models.json lives (default: cwd)
 
 stdlib only.
 """
@@ -101,7 +101,7 @@ def catalog(registry):
             ctx = 0
         if ctx > 0:
             # ⚠️ builder numbers: context is the registry's, output mirrors the
-            # harness's own 4096 max_tokens default. Omitted entirely when ctx is
+            # MOT Deck's own 4096 max_tokens default. Omitted entirely when ctx is
             # unknown, because a limit of 0 is worse than no limit.
             entry["limit"] = {"context": ctx, "output": min(4096, ctx)}
         models[key] = entry
@@ -118,8 +118,8 @@ def provider_block(models, base, key):
         "npm": "@ai-sdk/openai-compatible",
         "name": "MOT Deck (local)",
         "options": {"baseURL": base, "apiKey": key},
-        "models": models or {"harness-runner": {"name": "harness runner",
-                                                "id": "harness-runner"}},
+        "models": models or {"motdeck-runner": {"name": "MOT Deck runner",
+                                                "id": "motdeck-runner"}},
     }
 
 
@@ -192,13 +192,13 @@ def migrate_saved_default(cur, key_of, model_keys):
 
 
 def main() -> int:
-    root = os.environ.get("HARNESS_ROOT") or os.getcwd()
+    root = os.environ.get("MOT_DECK_ROOT") or os.getcwd()
     base = os.environ.get("OC_BASE") or ""
     key = os.environ.get("OC_KEY") or ""
     cfg_path = os.environ.get("OC_CFG") or ""
     pcfg_path = os.environ.get("OC_PCFG") or ""
     if not cfg_path:
-        print("[harness] opencode config: OC_CFG not set — nothing written")
+        print("[motdeck] opencode config: OC_CFG not set — nothing written")
         return 1
     registry = (MR.load_registry(root) if MR is not None
                 else (load(os.path.join(root, "data", "models.json")).get("models") or []))
@@ -218,7 +218,7 @@ def main() -> int:
     cfg["provider"] = provider
     cfg["$schema"] = "https://opencode.ai/config.json"
     # THE PIN RULE, in the file as well as in the env: upstream's auto-update is ON by
-    # default and would move the binary out from under harness.yaml.
+    # default and would move the binary out from under motdeck.yaml.
     cfg["autoupdate"] = False
 
     # ── UN-DISABLE OURSELVES. Measured against the real server at the pin: with
@@ -230,7 +230,7 @@ def main() -> int:
     # because our merge only ever replaces the keys we own, it would otherwise survive
     # every restart forever — an unrecoverable dead lane with no visible cause.
     # ⚠️ this DOES overrule a disable the user may have made deliberately. The trade is
-    # deliberate: pointing this lane at the harness runner is the entire job, a
+    # deliberate: pointing this lane at MOT Deck runner is the entire job, a
     # stuck-disabled provider has no other cure, and the line below says out loud that
     # we did it (so a user who really wants it off can disable it and not Start).
     repairs = []
@@ -249,13 +249,13 @@ def main() -> int:
     # ⚠️ an EMPTY list is deliberately NOT touched: `cfg.enabled_providers ? new Set()`
     # reads an empty array as truthy in JS, which would mean "allow nothing", but that
     # reading is inferred and was never measured — and if it is wrong, writing one entry
-    # would turn "no allowlist" into "only the harness", disabling everything else.
+    # would turn "no allowlist" into "only MOT Deck", disabling everything else.
     en = cfg.get("enabled_providers")
     if isinstance(en, list) and en and not any(str(x) == PID for x in en):
         cfg["enabled_providers"] = list(en) + [PID]
         repairs.append("added %s to enabled_providers" % PID)
 
-    # harness.yaml's runner.model is an INTENT and can easily name something the
+    # motdeck.yaml's runner.model is an INTENT and can easily name something the
     # registry does not carry (the runner is stopped, the model was deleted, the id
     # differs), so it is a candidate, never an answer. When the bridge calls this from
     # the switch/rescan fan-out it passes the LIVE wire id instead (U18's rule).
@@ -277,7 +277,7 @@ def main() -> int:
         cfg["model"] = new
     save(cfg_path, cfg)
     for r in repairs:
-        print("[harness]   REPAIRED: %s" % r)
+        print("[motdeck]   REPAIRED: %s" % r)
 
     # ── the PROJECT config: the provider only ────────────────────────────────
     # config.ts:406-409 loads `opencode.json` walking up from the instance directory and
@@ -299,16 +299,16 @@ def main() -> int:
         # the global migration. Ambiguity is cleared visibly, never assigned by order.
         pnew, pnote = migrate_saved_default(pcfg.get("model"), key_of, MODEL_KEYS)
         if pnote:
-            print("[harness]   REPAIRED: project %s" % pnote)
+            print("[motdeck]   REPAIRED: project %s" % pnote)
         if pnew is None:
             pcfg.pop("model", None)
         elif pnew is not KEEP:
             pcfg["model"] = pnew
         save(pcfg_path, pcfg)
-        print("[harness] opencode config -> %s (project copy, provider only)" % pcfg_path)
-    print("[harness] opencode config -> %s" % cfg_path)
+        print("[motdeck] opencode config -> %s (project copy, provider only)" % pcfg_path)
+    print("[motdeck] opencode config -> %s" % cfg_path)
     dropped = before - len(models)
-    print("[harness]   provider llama.cpp -> %s · %d model(s)%s · default %s"
+    print("[motdeck]   provider llama.cpp -> %s · %d model(s)%s · default %s"
           % (base, len(models),
              (" (%d dropped — gone from the registry or from disk)" % dropped)
              if dropped > 0 else "",

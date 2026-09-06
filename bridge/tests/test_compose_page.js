@@ -255,8 +255,8 @@ const absent = (e, over) => Object.assign({}, e, { installed: false,
   reason: 'not on disk' }, over || {});
 const ST = (over) => Object.assign({
   ok: true, engines: [MINIMAX, ACESTEP], busy: false, job: null,
-  dir: '/Users/x/Library/Application Support/Harness/data/music',
-  default_dir: '/Users/x/Library/Application Support/Harness/data/music',
+  dir: '/Users/x/Library/Application Support/MOT Deck/data/music',
+  default_dir: '/Users/x/Library/Application Support/MOT Deck/data/music',
   seconds_min: 10, seconds_max: 300, seconds_default: 60, prompt_max: 8000,
   seed_max: 2147483647,
   seed_help: 'Any whole number from 0 to 2147483647. The same seed + the same settings '
@@ -535,8 +535,8 @@ ok(!/data-act="convert" data-name="[^"]*" data-fmt="mp3"/.test(converted.markup)
 // The tracks-folder editor is STATE, so a redraw cannot close it under the user.
 {
   const res = runPage(ST(), LIB, (S) => { S.sheet = 'engines'; S.dirEdit = true;
-                                          S.dirValue = '/Users/x/Music/Harness'; });
-  ok(/id="dir-inp"/.test(res.markup) && /\/Users\/x\/Music\/Harness/.test(res.markup),
+                                          S.dirValue = '/Users/x/Music/MOT Deck'; });
+  ok(/id="dir-inp"/.test(res.markup) && /\/Users\/x\/Music\/MOT Deck/.test(res.markup),
      'the folder editor and what is typed in it live in state, not in the DOM alone');
   ok(/data-act="cancel-dir"/.test(res.markup), '…and it has a way out as well as a Set');
   ok(/function blurCommitted\(/.test(html) &&
@@ -610,10 +610,10 @@ const cssBody = css.split('* { box-sizing')[1] || '';
 const hexes = (cssBody.match(/#[0-9a-fA-F]{3,8}\b/g) || []);
 ok(hexes.length === 0, `no hard-coded colour in any layout rule (found ${hexes.join(', ') || 'none'})`);
 ok((cssBody.match(/rgba?\(/g) || []).length === 0, 'no hard-coded rgba() either');
-ok(!/localStorage\.setItem\(\s*['"]harness-(theme|chrome|design)/.test(html),
+ok(!/localStorage\.setItem\(\s*['"]motdeck-(theme|chrome|design)/.test(html),
    'the page NEVER writes the panel’s three appearance keys');
-ok(/getItem\('harness-theme'\)/.test(html) && /getItem\('harness-chrome'\)/.test(html)
-   && /getItem\('harness-design'\)/.test(html), '…it only reads all three');
+ok(/getItem\('motdeck-theme'\)/.test(html) && /getItem\('motdeck-chrome'\)/.test(html)
+   && /getItem\('motdeck-design'\)/.test(html), '…it only reads all three');
 ok(html.indexOf('function skin()') < html.indexOf('<style>'),
    'the skin is applied in the HEAD, before the stylesheet — no dark-then-flip flash');
 ok(/addEventListener\('storage', skin\)/.test(html),

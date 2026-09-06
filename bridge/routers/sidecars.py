@@ -257,7 +257,7 @@ def _attachment_get(aid: int):
 
 def _attachment_delete(aid: int) -> bool:
     """Remove one stored image ('remove from the app'). NEVER touches any source
-    file on disk — this store is the only copy the harness owns. Never raises."""
+    file on disk — this store is the only copy MOT Deck owns. Never raises."""
     try:
         with _attach_lock:
             c = _attach_conn()

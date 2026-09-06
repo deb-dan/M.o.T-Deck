@@ -43,7 +43,7 @@ usage() {
 }
 
 # ── pin readers (same awk shape as install_mlx.sh: comments live ABOVE keys) ──
-_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' harness.yaml; }
+_yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' motdeck.yaml; }
 
 MINIMAX_REPO="PocketAiHub/MiniMax-Music3-MLX"
 ACESTEP_REPO="https://github.com/ServeurpersoCom/acestep.cpp.git"
@@ -139,7 +139,7 @@ do_minimax() {
   preflight
   local rev
   rev="$(_yb music_minimax_pin)"
-  [[ -n "$rev" ]] || die "build.music_minimax_pin missing from harness.yaml"
+  [[ -n "$rev" ]] || die "build.music_minimax_pin missing from motdeck.yaml"
   say "pin: ${MINIMAX_REPO} @ ${rev:0:12}"
 
   ensure_venv
@@ -185,7 +185,7 @@ do_acestep() {
 
   local sha gguf_pin
   sha="$(_yb acestep_pin)"
-  [[ -n "$sha" ]] || die "build.acestep_pin missing from harness.yaml"
+  [[ -n "$sha" ]] || die "build.acestep_pin missing from motdeck.yaml"
   gguf_pin="$(_yb music_acestep_gguf_pin)"
   [[ "$gguf_pin" =~ ^[0-9a-f]{40}$ ]] \
     || die "build.music_acestep_gguf_pin must be an exact 40-character snapshot SHA"

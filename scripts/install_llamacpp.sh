@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Install the harness's OWN pinned llama-server (llama.cpp) binary into data/llamacpp/.
+# Install MOT Deck's OWN pinned llama-server (llama.cpp) binary into data/llamacpp/.
 # Replaces borrowing Jan's / LM Studio's backends — determinism + pin+bump control.
 #
-# Reads runner.llamacpp_pin + runner.llamacpp_sha256 from harness.yaml, downloads the
+# Reads runner.llamacpp_pin + runner.llamacpp_sha256 from motdeck.yaml, downloads the
 # macOS arm64 release archive from ggml-org/llama.cpp, and lands llama-server at
 #   data/llamacpp/build/bin/llama-server
 # (the canonical path the shared binary-discovery order looks for).
@@ -19,9 +19,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PIN=$(awk '/^runner:/{f=1} f && /^  llamacpp_pin:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*llamacpp_pin:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
-[[ -n "$PIN" ]] || { echo "ERROR: runner.llamacpp_pin not set in harness.yaml"; exit 1; }
-SHA256=$(awk '/^runner:/{f=1} f && /^  llamacpp_sha256:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*llamacpp_sha256:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+PIN=$(awk '/^runner:/{f=1} f && /^  llamacpp_pin:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*llamacpp_pin:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' motdeck.yaml)
+[[ -n "$PIN" ]] || { echo "ERROR: runner.llamacpp_pin not set in motdeck.yaml"; exit 1; }
+SHA256=$(awk '/^runner:/{f=1} f && /^  llamacpp_sha256:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*llamacpp_sha256:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' motdeck.yaml)
 [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]] || {
   echo "ERROR: runner.llamacpp_sha256 must be a recorded 64-character digest"; exit 1; }
 
@@ -30,9 +30,9 @@ BINPATH="$DEST/build/bin/llama-server"
 ASSET="llama-${PIN}-bin-macos-arm64.tar.gz"
 URL="https://github.com/ggml-org/llama.cpp/releases/download/${PIN}/${ASSET}"
 
-echo "[harness] installing llama.cpp pin ${PIN}"
-echo "[harness]   asset : ${ASSET}"
-echo "[harness]   url   : ${URL}"
+echo "[motdeck] installing llama.cpp pin ${PIN}"
+echo "[motdeck]   asset : ${ASSET}"
+echo "[motdeck]   url   : ${URL}"
 
 mkdir -p "$DEST"
 STAGE="$DEST/.staging"
@@ -56,9 +56,9 @@ if [[ "$GOT_SHA256" != "$SHA256" ]]; then
   rm -rf "$STAGE" "$TARBALL"
   exit 1
 fi
-echo "[harness] sha256 verified: ${SHA256}"
+echo "[motdeck] sha256 verified: ${SHA256}"
 
-echo "[harness] extracting…"
+echo "[motdeck] extracting…"
 if ! tar xzf "$TARBALL" -C "$STAGE"; then
   echo "ERROR: extraction failed — archive may not be a gzip tar. Downloaded from:"
   echo "  $URL"
@@ -90,12 +90,12 @@ rm -rf "$STAGE" "$TARBALL"
 [[ -f "$BINPATH" ]] || { echo "ERROR: relocation failed — $BINPATH missing after install"; exit 1; }
 chmod +x "$BINPATH"
 
-echo "[harness] installed: $BINPATH"
+echo "[motdeck] installed: $BINPATH"
 # Print the version if the binary supports it (loads no model; cheap). Fall back to pin.
 if "$BINPATH" --version >/tmp/llama-ver.txt 2>&1; then
-  sed 's/^/[harness]   /' /tmp/llama-ver.txt | head -4
+  sed 's/^/[motdeck]   /' /tmp/llama-ver.txt | head -4
 else
-  echo "[harness]   version flag unsupported by this build — pinned tag: ${PIN}"
+  echo "[motdeck]   version flag unsupported by this build — pinned tag: ${PIN}"
 fi
 rm -f /tmp/llama-ver.txt
-echo "[harness] done — runner will auto-discover this binary (pin has priority over Jan/LM Studio)."
+echo "[motdeck] done — runner will auto-discover this binary (pin has priority over Jan/LM Studio)."

@@ -55,17 +55,17 @@ button did nothing at all. `bridge/tests/test_script_hygiene.py` will fail (and 
 `ship.sh` will refuse) until this is run:
 
 ```
-cd ~/"Claude Proj Rootz/New Harness/harness" && chmod +x scripts/probe_onlyoffice.sh
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck" && chmod +x scripts/probe_onlyoffice.sh
 ```
 
 ## Step 2 — fetch both tracks
 
 ```
-cd ~/"Claude Proj Rootz/New Harness/harness" && ./scripts/probe_onlyoffice.sh personal
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck" && ./scripts/probe_onlyoffice.sh personal
 ```
 
 ```
-cd ~/"Claude Proj Rootz/New Harness/harness" && ./scripts/probe_onlyoffice.sh cryptpad
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck" && ./scripts/probe_onlyoffice.sh cryptpad
 ```
 
 **Track A — `personal`** clones [`fernfei/OnlyofficePersonal`](https://github.com/fernfei/OnlyofficePersonal),
@@ -84,12 +84,12 @@ Either command can be re-run; both skip work already done.
 ## Step 3 — serve it
 
 ```
-cd ~/"Claude Proj Rootz/New Harness/harness" && ./scripts/probe_onlyoffice.sh serve
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck" && ./scripts/probe_onlyoffice.sh serve
 ```
 
 Then open **<http://127.0.0.1:8787/>** in **Safari**.
 
-> **Why Safari and not Chrome.** Safari and the harness's tabs are both WebKit. Every single
+> **Why Safari and not Chrome.** Safari and MOT Deck's tabs are both WebKit. Every single
 > bug in six sessions of office-lane pain has lived in WebKit and in nothing else. A pass in
 > Chrome would decide nothing.
 >
@@ -103,7 +103,7 @@ If the console asks for `SharedArrayBuffer`, stop the server and start it with c
 isolation on:
 
 ```
-cd ~/"Claude Proj Rootz/New Harness/harness" && OO_ISOLATE=1 ./scripts/probe_onlyoffice.sh serve
+cd "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck" && OO_ISOLATE=1 ./scripts/probe_onlyoffice.sh serve
 ```
 
 The probe ships **its own** static server (`data/office-probe/serve.py`) rather than
@@ -132,7 +132,7 @@ of evidence.
 Your own spreadsheets, made by LOffice, are here — use a real one, not a fresh blank:
 
 ```
-open ~/"Library/Application Support/Harness/data/office"
+open ~/"Library/Application Support/MOT Deck/data/office"
 ```
 
 ⚠️ **Copy a file before importing it.** Nothing in this probe writes to `data/office/`, but
@@ -198,7 +198,7 @@ Two things worth doing regardless of the verdict, both cheap:
 ## Cleanup
 
 ```
-rm -rf ~/"Claude Proj Rootz/New Harness/harness/data/office-probe"
+rm -rf "/Users/debik/GemiAntigravity/September 3rd new check harness/New Harness/MOT Deck/data/office-probe"
 ```
 
 or `./scripts/probe_onlyoffice.sh clean`. That removes every byte: the clone, both zips,
@@ -244,9 +244,9 @@ touched — no component, no port, no manifest key, no venv, no `vendor/`, and n
 
 ## ✅ RESULTS — 2026-08-27, run by Fable 5 in a REAL WKWebView (stronger instrument than Safari)
 
-**Instrument:** not Safari — a purpose-built headless `WKWebView` harness (1440×900, console-error
+**Instrument:** not Safari — a purpose-built headless `WKWebView` motdeck (1440×900, console-error
 hook injected at documentStart, JS checks, PNG snapshots). This is literally the engine the
-harness's tabs use, so the go/no-go is measured on the real thing. Snapshots reviewed by Fable.
+MOT Deck's tabs use, so the go/no-go is measured on the real thing. Snapshots reviewed by Fable.
 
 **THE HEADLINE FINDING — `OO_ISOLATE=1` is REQUIRED, not optional.** Without COOP/COEP the
 spreadsheet editor renders its full frame and then hangs at "Loading spreadsheet" forever
@@ -261,7 +261,7 @@ WKWebView honors all of it (`crossOriginIsolated === true` measured in-page).
 |---|---|---|
 | 1 | Real ribbon renders | **PASS** — File/Home/Insert/Draw/Layout/Formula/Data/Collaboration/Protection/View, formula bar, name box, styles gallery, sheet tabs, zoom |
 | 2 | Formulas calculate | **PASS** — `=SUM(B2:B5)`/`=SUM(C2:C5)` in the imported file computed to 22200/13100 on open |
-| 3 | Save/export .xlsx | **NOT PROVEN headless** — the probe harness has no download delegate (same gap our tabs already solved for VoiceStudio); queue for the adoption slice or a 2-min Safari click |
+| 3 | Save/export .xlsx | **NOT PROVEN headless** — the probe motdeck has no download delegate (same gap our tabs already solved for VoiceStudio); queue for the adoption slice or a 2-min Safari click |
 | 4 | Import a real .xlsx | **PASS, high fidelity** — bold+gold-fill header, `#,##0.00` number formats, italic, merged+centered A8:C8, column width, BOTH sheets (Budget/Notes), all values. Served via `docConfig.document.url`; x2t.wasm did the conversion client-side |
 | 5 | .docx editor | **PASS** — Word editor loads: full ribbon, page canvas, rulers, styles gallery, page/word count. (Slides untested, same bundle.) |
 | 6 | x2t instantiates | **PASS de facto** — check 4 IS x2t doing a real xlsx→editor conversion (stronger than the discovery page) |
@@ -289,7 +289,7 @@ AGPL-3.0-served-from-our-page ruling — Fable call, NOT yet made; (b) save-back
 
 ONLYOFFICE's editors and x2t are AGPL-3.0. The AGPL's obligations attach to **conveying**
 the software or offering it as a **network service to others** — neither of which a
-loopback-only personal harness does. Serving the unmodified bundle from the bridge to the
+loopback-only personal motdeck does. Serving the unmodified bundle from the bridge to the
 same machine's own user is private use; running it is unconditionally permitted.
 
 **Ruling: GO for LOffice tier-2 adoption, on four standing conditions:**
@@ -297,7 +297,7 @@ same machine's own user is private use; running it is unconditionally permitted.
    upstream source URLs kept beside them — the hashes in CHECKSUMS.txt are the provenance.
 2. **Arm's length**: served as its own static bundle under its own route; no intermixing of
    its code with ours (the SearXNG conveyance posture, one step closer but same shape).
-3. **If the harness is ever distributed** (the fat dmg to anyone else): the About/Help
+3. **If MOT Deck is ever distributed** (the fat dmg to anyone else): the About/Help
    surface must name ONLYOFFICE + AGPL-3.0 and link the exact source of the vendored
    version; any modification we ever make to the bundle must be published. This line item
    goes into the fat-installer checklist NOW so it cannot be forgotten later.
@@ -333,7 +333,7 @@ works — would NOT download a PDF: the shell's delegate turns a response into a
 when `!canShowMIMEType`, and WebKit CAN show `application/pdf`, so the editor would be
 replaced by a PDF viewer. The route that works is an `<a download>` click on a blob of our
 own bytes (`shouldPerformDownload`, which the shell also answers, "including the blob: URLs
-a SPA builds client-side"). PROVEN by teaching the probe harness the same three download
+a SPA builds client-side"). PROVEN by teaching the probe motdeck the same three download
 delegate methods the app has: a click produced `Monthly budget.pdf`, 32,846 bytes, on disk.
 
 **It is the LIVE document, not the saved file** — proven with a marker typed into a workbook
@@ -345,7 +345,7 @@ and never saved: it is in the PDF, and the `.xlsx` on disk stayed byte-identical
 
 **The rule this obeys:** any pin move requires a fresh WKWebView probe pass, because our
 pin *is* the measured hash. It got one — the full journey set below, on the real bridge,
-old bundle first and new bundle second, same documents, same harness.
+old bundle first and new bundle second, same documents, same motdeck.
 
 ### The pin, and why THIS pair
 
@@ -402,7 +402,7 @@ that did not move. What did change:
 
 ### The probe pass — old vs new, same documents, same rig
 
-Instrument: the same headless `WKWebView` harness (1440×900, console-error hook at
+Instrument: the same headless `WKWebView` motdeck (1440×900, console-error hook at
 documentStart, JS checks, download delegate, `WKP_FRESH=1` for an empty HTTP cache),
 driving the REAL bridge at `/oo-edit?doc=…` — not the probe server. Journeys per document:
 boot → read the ribbon/API/format-table/serialiser → Download-as-PDF → edit → Save →
@@ -455,7 +455,7 @@ CryptPad's own installer, and `scripts/install_onlyoffice.sh` verifies both befo
 unzips a byte.
 
 **Rollback, if it is ever wanted:** the previous bundle is on disk at
-`~/Library/Application Support/Harness/data/onlyoffice.bak-v9.2.0.119+3` (1.0 GB, stamp
+`~/Library/Application Support/MOT Deck/data/onlyoffice.bak-v9.2.0.119+3` (1.0 GB, stamp
 included) and the +3 zip is at `data/office-probe/zips/onlyoffice-editor.zip`
 (sha256 `68ae8f0f…30f`). Restore = `rm -rf data/onlyoffice && mv` the backup back.
 

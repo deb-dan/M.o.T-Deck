@@ -19,7 +19,7 @@ tests the SEAM, which no other suite is looking at.
      has to change what the code under test CALLS. `from ..core.procs import _script`
      binds a name in each importing lane, so a write has to reach all of them. If this
      ever regresses, the affected tests do not error — they run against the REAL
-     _script and the REAL ROOT, i.e. they run the harness for real against the user's
+     _script and the REAL ROOT, i.e. they run MOT Deck for real against the user's
      tree while reporting a pass. That is the worst failure shape in this file.
 
   3. THE DEPENDENCY DIRECTION HOLDS. core never imports a router; nothing imports
@@ -109,7 +109,7 @@ check("the FastAPI instance is a real attribute of bridge.app (uvicorn loads "
 check("…and it is the same object the lanes decorated",
       A.app is sys.modules["bridge.core.appctx"].app)
 check("a name no lane defines still raises AttributeError rather than returning None",
-      not hasattr(A, "definitely_not_a_symbol_in_this_harness"))
+      not hasattr(A, "definitely_not_a_symbol_in_this_motdeck"))
 
 # ── 2. writes land where the code reads them ─────────────────────────────────
 print("\n── 2. a monkeypatch through the facade reaches every reader ──")
@@ -121,7 +121,7 @@ PATCHED = ["ROOT", "_script", "_set_runner_model", "_proc_cmdline",
 # bridge/voice.py has a ROOT of its own, and `A.ROOT = tmpdir` never touched it when
 # app.py was one file either: the satellites are separate modules that resolve their
 # own paths (office_mcp.configure(ROOT) is the explicit hand-off, and it exists exactly
-# because "two ideas of where the harness lives" is a known bug shape here). Widening
+# because "two ideas of where MOT Deck lives" is a known bug shape here). Widening
 # the proxy to the satellites would be a behaviour CHANGE dressed as thoroughness, so
 # the fence below asserts the satellites are left alone.
 LANE_MODS = {"bridge." + f[:-3].replace("/", ".") for f in appsrc.FILES}
@@ -148,7 +148,7 @@ for nm in PATCHED:
                 else list(saved.values())[0])
     check(f"…and it is restored", getattr(A, nm) is not sentinel)
 
-# ROOT is the one whose blast radius is the whole harness — spell out that the
+# ROOT is the one whose blast radius is the whole motdeck — spell out that the
 # rebinding really is wide, because a partial rebind is the silent-danger case.
 _root_holders = [m for m in sys.modules.values()
                  if getattr(m, "__name__", "") in LANE_MODS and "ROOT" in vars(m)]
@@ -248,7 +248,7 @@ for r in A.app.routes:
 check(f"the {len(seq)} lane-owned routes are in non-decreasing lane order", not bad)
 if bad:
     print("       out of order:", bad[:5])
-check("…and there really are the routes this harness serves (141 at the split)",
+check("…and there really are the routes this motdeck serves (141 at the split)",
       len(A.app.routes) >= 140)
 _hint_errors = []
 for _route in A.app.routes:

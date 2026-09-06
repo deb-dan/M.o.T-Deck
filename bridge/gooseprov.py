@@ -42,7 +42,7 @@ THE FOUR FACTS THAT KILLED THE THREE EARLIER GUESSES, in the order they matter:
       ⚠️ MEASURED PRECEDENCE: the PROCESS ENVIRONMENT WINS over `secrets.yaml` — a
       correct key in secrets.yaml with a wrong one in the env produced
       `401 Invalid API Key`. So we hand the key to the child in its env and NEVER
-      write the user's secret store. `HARNESS_RUNNER_API_KEY` (gooseui.py's older
+      write the user's secret store. `MOT_DECK_RUNNER_API_KEY` (gooseui.py's older
       guess at this name) is kept in the env as well, but it is NOT what goose reads.
   F4  `base_url` IS THE ORIGIN AND `base_path` STAYS NULL. goose composes
       `http://127.0.0.1:6767` + its openai default path; the request that actually
