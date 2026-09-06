@@ -551,9 +551,14 @@
                  font-weight:600; }
   .btn.arm { border-color:var(--bad); color:var(--bad); }
   .btn:disabled { opacity:.55; cursor:default; }
-  .btn.dotted { position:relative; }
+  /* S24: the dirty dot reads currentColor from the BUTTON because WebKit leaves a
+     pseudo-element's var(--gold) paint stale after a live palette flip. The label is
+     wrapped solely so its original dim/cream colors remain byte-for-byte visible. */
+  .btn.dotted { position:relative; color:var(--gold); }
+  .btn.dotted > .btn-label { color:var(--dim); }
+  .btn.dotted:hover > .btn-label { color:var(--cream); }
   .btn.dotted::after { content:""; position:absolute; top:3px; right:3px; width:5px;
-                       height:5px; border-radius:50%; background:var(--gold); }
+                       height:5px; border-radius:50%; background:currentColor; }
   :focus-visible { outline:2px solid var(--h7); outline-offset:-2px; border-radius:2px; }
 
   /* ── the sheets (engines · track · presets) ─────────────────────────────────── */
@@ -1729,8 +1734,8 @@ function renderComposer() {
 
     '<div class="sgroup"><span class="caps">Advanced</span>' +
       '<div class="chips" style="padding-bottom:4px">' +
-        '<button class="btn' + (dirty ? ' dotted' : '') + '" data-act="more">More ' +
-          (S.more ? '▾' : '▸') + '</button>' +
+        '<button class="btn' + (dirty ? ' dotted' : '') + '" data-act="more">' +
+          '<span class="btn-label">More ' + (S.more ? '▾' : '▸') + '</span></button>' +
         '<span class="chip act" data-act="presets"' + tipRef({ chip:'presets',
           line:'Ready-made captions in the structured style both engines read best.',
           hedge:'Clicking one fills the fields; it never renders by itself. Your own can be '

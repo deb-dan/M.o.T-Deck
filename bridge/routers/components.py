@@ -560,6 +560,14 @@ def needs_message(comp: str, dep: str, state: str, detail: dict) -> dict:
                         f"Restart {who} to load the current model list.",
                 "action": "restart", "target": comp,
                 "action_label": f"Restart {who}"}
+    if state == "substituted":
+        return {"dep": dep, "state": state,
+                "text": f"{who} requests “{detail.get('bound') or '?'}”, but the "
+                        f"single-model runner serves “{detail.get('live') or '?'}”. "
+                        "llama.cpp will answer as the loaded model — load the requested "
+                        "one in Models, or select the loaded one.",
+                "action": "open", "target": "models",
+                "action_label": "Open Models"}
     if state == "moved":
         return {"dep": dep, "state": state,
                 "text": f"{who} is still wired to {detail.get('bound') or '?'} — "
@@ -644,7 +652,9 @@ def needs_derive(comps: dict, hard: dict, soft: dict, bindings: dict) -> dict:
                     continue
                 bound, live = b.get("model"), b.get("live_model")
                 if bound and live and bound != live:
-                    needs.append(needs_message(name, dep, "swapped",
+                    state = ("substituted" if b.get("mismatch") == "substituted"
+                             else "swapped")
+                    needs.append(needs_message(name, dep, state,
                                                {"bound": bound, "live": live}))
                     continue
                 ep, live_ep = b.get("endpoint"), b.get("live_endpoint")
@@ -688,6 +698,7 @@ def _hermes_binding(c: dict, live_model: "str | None") -> dict:
     return {
         "model": str(m.get("default") or "") or None,
         "live_model": live_wire or None,
+        "mismatch": "substituted",
         "endpoint": str(m.get("base_url") or "") or None,
         "live_endpoint": (f"http://127.0.0.1:{rc.get('port')}/v1"
                           if rc.get("port") else None),
@@ -765,23 +776,14 @@ def _bind_track(name: str, b: dict) -> dict:
 # `swapped`'s single action is "Restart X to rebind"; if X's Start would HONOUR the
 # value we are complaining about, the banner is permanent and the button provably does
 # nothing (S20's dead-button defect, and this slice nearly shipped three of them).
-# So each reader is gated by what that component's Start actually rewrites:
-#   hermes    — its arm overwrites `model.default` from the live probe → always clears.
-#   odysseus  — its seeder repairs a DANGLING default and refreshes OUR OWN last write
-#               (marker); a value it has decided to honour is exempted, above.
-#   gooseui   — `providers.<slug>.model` is goose's own key and we repair it only when
-#               it DANGLES, so only a dangling value may be reported.
-#   opencode  — its live `/provider` catalog is recorded after Start and compared to
-#               the current offerable registry; Restart necessarily refreshes it.
-def _dangling_only(cur: str, live_wire: str) -> bool:
-    """Is `cur` a name that points at nothing real (so a rebind may repair it)?
-    ONE definition, shared with the seeders: bridge/gooseprov.dangles."""
-    from .. import gooseprov as _p
-    try:
-        offered = [m["name"] for m in _p.model_entries(_registry_models())]
-    except Exception:                                                # noqa: BLE001
-        return False
-    return _p.dangles(cur, offered, live_wire)
+# A valid picker choice that Start honours is different: it gets a `substituted`
+# sentence with an Open Models action, never the dead-end Restart action.
+# Here the three persistent pickers are requests, not wiring that a restart repairs:
+#   odysseus  — the seeder deliberately honours an existing default.
+#   gooseui   — `providers.<slug>.model` is goose's user-owned selection.
+#   opencode  — `/config` is the running child's current default selection.
+# Their mismatch is therefore `substituted`, never `swapped`. OpenCode's separate
+# `/provider` catalogue can still be stale; that state really is repaired by Restart.
 
 
 def _ody_binding(live_wire: str) -> dict:
@@ -801,18 +803,10 @@ def _ody_binding(live_wire: str) -> dict:
     if str(s.get("default_endpoint_id") or "").strip() != "local-jan":
         return {}
     cur = str(s.get("default_model") or "").strip()
-    # ⚠️ NO CLAIM ABOUT A VALUE THE SEEDER HAS DECIDED TO HONOUR. seed_odysseus_jan
-    # records, in its own marker, the default it deliberately left alone (never-clobber
-    # rule 2). Deriving `swapped` for that value would offer "Restart Odysseus to
-    # rebind" — and the restart re-runs the seeder, which honours it again. Found in
-    # the S28 live walk; it is the S20 dead-button defect wearing this slice's hat.
-    try:
-        st = _json.loads((ROOT / "data" / "ody_seed_state.json").read_text())
-        if cur and (st.get("local-jan") or {}).get("default_model_honoured") == cur:
-            return {}
-    except Exception:                                                # noqa: BLE001
-        pass
-    return {"model": cur or None, "live_model": live_wire or None}
+    # The seeder may deliberately honour this value. That means Restart cannot repair
+    # a mismatch; it does NOT mean llama.cpp stops substituting the resident model.
+    return {"model": cur or None, "live_model": live_wire or None,
+            "mismatch": "substituted"}
 
 
 def _goose_binding(live_wire: str) -> dict:
@@ -832,15 +826,49 @@ def _goose_binding(live_wire: str) -> dict:
     if active not in (_p.PROVIDER_NAME, _p.LEGACY_PROVIDER):
         return {}
     cur = _p.provider_model(text, active)
-    # DANGLING ONLY — see the invariant above. A stale-but-VALID pick is goose's own
-    # honoured value: its picker shows it, llama.cpp substitutes, Restart would not
-    # change it, and nagging about it forever is furniture, not a signal.
-    if not _dangling_only(cur, live_wire):
+    if not cur:
         return {}
-    return {"model": cur or None, "live_model": live_wire or None}
+    return {"model": cur, "live_model": live_wire or None,
+            "mismatch": "substituted"}
 
 
-def _opencode_binding(live_wire: str) -> dict:
+def _opencode_model_from_config(data) -> str:
+    """PURE: return OpenCode's default only when it belongs to our provider."""
+    if not isinstance(data, dict):
+        return ""
+    value = str(data.get("model") or "").strip()
+    prefix = "llama.cpp/"
+    return value[len(prefix):] if value.startswith(prefix) else ""
+
+
+def _opencode_runtime_model(port: int) -> str:
+    """Read the running child's own /config, bound to its launch provenance.
+
+    The file on disk is not authority for an already-running OpenCode. Ownership is
+    rechecked after the response so a process replacement cannot turn a foreign
+    listener's JSON into a claim shown by this app.
+    """
+    from urllib.request import Request, urlopen
+    owner = _read_ownership("opencode")
+    if not owner or not _ownership_matches(owner[0], "opencode"):
+        return ""
+    try:
+        import json as _json
+        req = Request(f"http://127.0.0.1:{int(port)}/config",
+                      headers={"Accept": "application/json"})
+        with urlopen(req, timeout=1.5) as response:
+            if getattr(response, "status", 200) != 200:
+                return ""
+            data = _json.loads(response.read(1024 * 1024).decode("utf-8"))
+    except Exception:                                                # noqa: BLE001
+        return ""
+    after = _read_ownership("opencode")
+    if after != owner or not _ownership_matches(owner[0], "opencode"):
+        return ""
+    return _opencode_model_from_config(data)
+
+
+def _opencode_binding(live_wire: str, requested_model: str = "") -> dict:
     """OpenCode's live catalog, bound to the exact child that reported it.
 
     The config on disk may already be fresh while an older process still holds its
@@ -871,25 +899,31 @@ def _opencode_binding(live_wire: str) -> dict:
         expected = ["harness-runner"]
     actual = sorted(set(d["models"]))
     connected = d.get("connected") is True
-    if connected and actual == expected:
-        return {}
-    missing = sorted(set(expected) - set(actual))
-    stale = sorted(set(actual) - set(expected))
-    return {
-        "catalog": "OpenCode runtime " + ("connected" if connected else "disconnected")
-                   + f" · {len(actual)} model(s)",
-        "live_catalog": f"M.O.T registry · {len(expected)} model(s)",
-        "catalog_missing": missing[:3], "catalog_stale": stale[:3],
-    }
+    out = {}
+    if not connected or actual != expected:
+        missing = sorted(set(expected) - set(actual))
+        stale = sorted(set(actual) - set(expected))
+        out.update({
+            "catalog": "OpenCode runtime " + ("connected" if connected else "disconnected")
+                       + f" · {len(actual)} model(s)",
+            "live_catalog": f"M.O.T registry · {len(expected)} model(s)",
+            "catalog_missing": missing[:3], "catalog_stale": stale[:3],
+        })
+    if requested_model:
+        out.update({"model": requested_model, "live_model": live_wire or None,
+                    "mismatch": "substituted"})
+    return out
 
 
 @app.get("/api/deps")
 async def deps() -> dict:
     """The dependency signal: per-component UNMET needs, derived from /api/status.
 
-    One request, no new probing: it calls status() and reads its answer. The Swift
-    shell polls this only while a tab that CAN carry a banner is on screen, at the
-    same slow cadence as its other polls (app/main.swift's depsPoll).
+    It calls status(), then performs one provenance-bound loopback read from a running
+    OpenCode child's `/config`; an on-disk config cannot describe an already-running
+    process. The read runs off the event loop and fails to silence. The Swift shell
+    polls this only while a tab that CAN carry a banner is on screen, at the same slow
+    cadence as its other polls (app/main.swift's depsPoll).
 
     `components` is empty in the healthy state — that is the whole contract the shell
     needs, and an older shell that has never heard of this route is unaffected."""
@@ -908,9 +942,10 @@ async def deps() -> dict:
     hb = _hermes_binding(c, live if loaded else None)
     if hb:
         bindings["hermes"] = hb
-    # The other three, S28/U38. Odysseus and Goose read their own persisted bindings;
-    # OpenCode reads its exact-child `/provider` observation. Each is two-strike gated
-    # and returns {} rather than guessing when its evidence cannot be validated.
+    # The other three, S28/U38/U13-U20. Odysseus and Goose read their own persisted
+    # bindings; OpenCode reads its exact-child `/provider` catalogue plus `/config`
+    # default. Each is two-strike gated and returns {} rather than guessing when its
+    # evidence cannot be validated.
     live_wire = ""
     if loaded and live:
         from ..core.modelid import wire_model_id
@@ -918,8 +953,13 @@ async def deps() -> dict:
             live_wire = wire_model_id(live, _registry_models())
         except Exception:                                            # noqa: BLE001
             live_wire = live
+    opencode_port = int(((c.get("components") or {}).get("opencode") or {})
+                        .get("port") or 0)
+    opencode_model = (await asyncio.to_thread(_opencode_runtime_model, opencode_port)
+                      if opencode_port and (comps.get("opencode") or {}).get("running")
+                      else "")
     for _name, _read in (("odysseus", _ody_binding), ("gooseui", _goose_binding),
-                         ("opencode", _opencode_binding)):
+                         ("opencode", lambda lm: _opencode_binding(lm, opencode_model))):
         try:
             b = _read(live_wire)
         except Exception:                                            # noqa: BLE001

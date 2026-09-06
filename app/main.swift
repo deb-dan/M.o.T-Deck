@@ -2087,13 +2087,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // makes. Either way the banner is left alone: it disappears when the next poll finds
     // the need MET, which is the only honest moment to remove it — a banner that hides
     // itself on click would be claiming a success it cannot know about yet.
+    func dependencyPanelView(_ target: String) -> String? {
+        // `target` arrives over HTTP. Never interpolate an arbitrary bridge value into
+        // JavaScript: this allow-list is the existing panel view vocabulary, not a
+        // second navigation model. `mc` means the panel's default view and needs no
+        // script at all.
+        switch target {
+        case "chat", "models", "music", "caps", "help", "api":
+            return target
+        default:
+            return nil
+        }
+    }
+
     func depAction(pane: Int) {
         guard let need = depNeed(pane: pane) else { return }
         if need.action == "open" {
             guard let idx = tabs.firstIndex(where: { $0.id == panelId }) else { return }
-            routeTab(idx, toPane: (splitOn && focusedPane == 1) ? 1 : 0)
+            // The button belongs to a pane, so that pane is the destination even if a
+            // stale focus event says otherwise. routeTab's existing swap rule keeps the
+            // one-primary-webview invariant when MOT Deck is open in the other pane.
+            let destination = (splitOn && pane == 1) ? 1 : 0
+            routeTab(idx, toPane: destination)
+            if let view = dependencyPanelView(need.target) {
+                // `view` is allow-listed above, so the interpolated script is not
+                // attacker-controlled. The panel is loaded before banners can poll.
+                webViewFor(idx).evaluateJavaScript(
+                    "if (typeof showView === 'function') { showView('\(view)'); }",
+                    completionHandler: nil)
+            }
             syncStrip()
-            slog("deps -> open MOT Deck")
+            slog("deps -> open MOT Deck\(dependencyPanelView(need.target).map { " / \($0)" } ?? "")")
             return
         }
         let verb = need.action == "restart" ? "restart" : "start"

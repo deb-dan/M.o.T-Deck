@@ -67,10 +67,18 @@ plat_pkg() {
 }
 
 main() {
-  local pin pkg py free_gb tgz sha_expect url want
+  local pin pkg py free_gb tgz sha_recorded integrity_expect url want digest_key
   pin="$(_yb opencode_pin)"
   [[ -n "$pin" ]] || die "build.opencode_pin missing from harness.yaml"
   pkg="$(plat_pkg)"
+  case "$pkg" in
+    opencode-darwin-arm64) digest_key="opencode_darwin_arm64_sha256" ;;
+    opencode-darwin-x64) digest_key="opencode_darwin_x64_sha256" ;;
+    *) die "no recorded digest key for ${pkg}" ;;
+  esac
+  sha_recorded="$(_yb "$digest_key")"
+  [[ "$sha_recorded" =~ ^[0-9a-f]{64}$ ]] \
+    || die "build.${digest_key} must be a recorded 64-character SHA-256"
   py="$(resolve_py)" || die "no python3 found — it is only used to read npm's JSON."
   say "pin: opencode-ai@${pin} (prebuilt: ${pkg})"
 
@@ -109,35 +117,38 @@ PY
   rm -f "$ROOT/data/opencode-ai.json"
   [[ "$want" == "$pin" ]] || die "opencode-ai@${pin} declares ${pkg}@'${want}', not ${pin} — upstream changed how the prebuilts are pinned. Re-check build.opencode_pin."
 
-  # 2. The prebuilt's tarball URL + its published sha1.
+  # 2. The prebuilt's tarball URL + npm's published SHA-512 integrity. The latter is
+  #    checked in addition to our manifest's independently recorded SHA-256; live
+  #    registry metadata is never allowed to authorize changed bytes by itself.
   curl -fsSL "$REGISTRY/$pkg/$pin" -o "$ROOT/data/opencode-plat.json" \
     || die "could not read $REGISTRY/$pkg/$pin"
   url="$("$py" -c 'import json,sys;print(json.load(open(sys.argv[1]))["dist"]["tarball"])' "$ROOT/data/opencode-plat.json")"
-  sha_expect="$("$py" -c 'import json,sys;print(json.load(open(sys.argv[1]))["dist"].get("shasum",""))' "$ROOT/data/opencode-plat.json")"
+  integrity_expect="$("$py" -c 'import json,sys;print(json.load(open(sys.argv[1]))["dist"].get("integrity",""))' "$ROOT/data/opencode-plat.json")"
   rm -f "$ROOT/data/opencode-plat.json"
   [[ -n "$url" ]] || die "no tarball url for ${pkg}@${pin}"
+  [[ "$integrity_expect" == sha512-* ]] \
+    || die "npm published no SHA-512 integrity for ${pkg}@${pin}"
   say "downloading ${pkg}@${pin} (about 46MB)…"
   tgz="$ROOT/data/opencode-${pin}.tgz"
   curl -fL --retry 3 -o "$tgz" "$url" || { rm -f "$tgz"; die "download failed: $url"; }
 
-  # 3. Verify BEFORE extracting. npm publishes sha1 as dist.shasum; a mismatch is a
-  #    corrupt download or a substituted artifact, and either way we stop.
-  if [[ -n "$sha_expect" ]]; then
-    local got
-    got="$("$py" - "$tgz" <<'PY'
-import hashlib, sys
-h = hashlib.sha1()
+  # 3. Verify BOTH authorities BEFORE extracting.
+  local got_sha256 got_integrity
+  got_sha256="$(shasum -a 256 "$tgz" | awk '{print $1}')"
+  [[ "$got_sha256" == "$sha_recorded" ]] \
+    || { rm -f "$tgz"; die "sha256 mismatch: got ${got_sha256}, recorded ${sha_recorded}"; }
+  got_integrity="$("$py" - "$tgz" <<'PY'
+import base64, hashlib, sys
+h = hashlib.sha512()
 with open(sys.argv[1], "rb") as fh:
     for chunk in iter(lambda: fh.read(1 << 20), b""):
         h.update(chunk)
-print(h.hexdigest())
+print("sha512-" + base64.b64encode(h.digest()).decode("ascii"))
 PY
 )"
-    [[ "$got" == "$sha_expect" ]] || { rm -f "$tgz"; die "sha1 mismatch: got ${got}, npm says ${sha_expect}"; }
-    say "sha1 verified (${sha_expect})."
-  else
-    say "WARN: npm published no shasum for this version — extracting unverified."
-  fi
+  [[ "$got_integrity" == "$integrity_expect" ]] \
+    || { rm -f "$tgz"; die "SHA-512 integrity mismatch: downloaded bytes disagree with npm metadata"; }
+  say "recorded SHA-256 and npm SHA-512 verified."
 
   # 4. Extract exactly ONE file. --strip-components drops npm's `package/` wrapper.
   mkdir -p "$DEST/bin"

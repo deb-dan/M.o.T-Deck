@@ -29,13 +29,13 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 say() { echo "[harness] $*" >&2; }
 
-DEST="$ROOT/data/bun"
+DEST="${BUN_DEST:-$ROOT/data/bun}"
 BINPATH="$DEST/bin/bun"
 
 # ── (a) the user's own bun ────────────────────────────────────────────────────
 # Checked BEFORE the pin is read: if the user already has bun, a missing pin is
 # irrelevant and must not turn into an error.
-if command -v bun >/dev/null 2>&1; then
+if [[ "${BUN_IGNORE_PATH:-0}" != "1" ]] && command -v bun >/dev/null 2>&1; then
   say "bun found on PATH: $(command -v bun) ($(bun --version 2>/dev/null || echo 'version?')) — using it, not shadowing it"
   command -v bun
   exit 0
@@ -72,16 +72,20 @@ fi
 # ── (c) download the pinned release ───────────────────────────────────────────
 OS="$(uname -s)"; ARCH="$(uname -m)"
 case "$OS/$ARCH" in
-  Darwin/arm64)          ASSET="bun-darwin-aarch64.zip" ;;
-  Darwin/x86_64)         ASSET="bun-darwin-x64.zip" ;;
-  Linux/aarch64|Linux/arm64) ASSET="bun-linux-aarch64.zip" ;;
-  Linux/x86_64)          ASSET="bun-linux-x64.zip" ;;
+  Darwin/arm64)          ASSET="bun-darwin-aarch64.zip"; SHA256="$(_yb bun_darwin_arm64_sha256)" ;;
+  Darwin/x86_64)         ASSET="bun-darwin-x64.zip"; SHA256="$(_yb bun_darwin_x64_sha256)" ;;
+  Linux/aarch64|Linux/arm64) ASSET="bun-linux-aarch64.zip"; SHA256="$(_yb bun_linux_arm64_sha256)" ;;
+  Linux/x86_64)          ASSET="bun-linux-x64.zip"; SHA256="$(_yb bun_linux_x64_sha256)" ;;
   *)
     say "ERROR: no pinned bun asset for $OS/$ARCH."
     say "  The component still installs; its web UI just won't be built."
     say "  Install bun yourself if you want the UI: https://bun.sh"
     exit 1 ;;
 esac
+[[ "$SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+  say "ERROR: no recorded SHA-256 for ${PIN}/${ASSET}."
+  say "  A pin bump must record every supported platform asset before use."
+  exit 1; }
 URL="https://github.com/oven-sh/bun/releases/download/${PIN}/${ASSET}"
 
 command -v unzip >/dev/null 2>&1 || {
@@ -105,6 +109,16 @@ if ! curl -fL --retry 3 -m 600 -o "$ZIPF" "$URL"; then
   say "  This is NOT fatal — the component installs anyway, only its web UI is skipped."
   rm -rf "$STAGE"; rm -f "$ZIPF"; exit 1
 fi
+
+GOT_SHA256=$(shasum -a 256 "$ZIPF" | awk '{print $1}')
+if [[ "$GOT_SHA256" != "$SHA256" ]]; then
+  say "ERROR: bun sha256 MISMATCH for ${PIN}/${ASSET}."
+  say "  expected: $SHA256"
+  say "  got     : $GOT_SHA256"
+  rm -rf "$STAGE" "$ZIPF"
+  exit 1
+fi
+say "sha256 verified: ${SHA256}"
 
 if ! unzip -q -o "$ZIPF" -d "$STAGE"; then
   say "ERROR: could not unzip the bun archive downloaded from:"

@@ -127,6 +127,29 @@ def test_manifest_merge_preserves_live_bytes_and_adds_only_missing_keys():
     assert parsed["components"]["added"]["enabled"] is False
 
 
+def test_manifest_merge_migrates_only_the_known_floating_searxng_default():
+    pin = "9fea41204fdfa7a5cfa15b0ebd12904c520478ce"
+    source = ("components:\n  searxng:\n    repo: https://github.com/searxng/searxng.git\n"
+              f"    pin: {pin}  # exact source commit\n    installed: true\n"
+              "runner:\n  model: repo-default\n")
+    live = ("# live comment\ncomponents:\n  searxng:\n"
+            "    repo: https://github.com/searxng/searxng.git\n"
+            "    pin: main  # historical floating default\n"
+            "    installed: true # machine state\nrunner:\n  model: user-choice\n")
+    merged, changed = merge_text(source, live)
+    assert f"    pin: {pin}  # exact source commit\n" in merged
+    assert "installed: true # machine state" in merged
+    assert "model: user-choice" in merged and "# live comment" in merged
+    assert changed == [f"components.searxng.pin(main→{pin[:12]})"]
+
+    again, changed_again = merge_text(source, merged)
+    assert again == merged and changed_again == []
+
+    custom = live.replace("pin: main", "pin: operator-branch")
+    untouched, custom_changed = merge_text(source, custom)
+    assert untouched == custom and custom_changed == []
+
+
 def test_release_is_idempotent_and_never_deletes_replaced_claim(tmp_path, monkeypatch):
     data = tmp_path / "data"
     data.mkdir()

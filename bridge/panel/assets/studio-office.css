@@ -197,18 +197,19 @@ html[data-design="studio"][data-dvariant="light"] {
   font-size:14px;
   font-weight:600;
   letter-spacing:.01em;
-  color:var(--cream);
+  color:var(--gold);
   display:inline-flex;
   align-items:center;
   gap:8px;
 }
+:where(html[data-design="studio"]) .name > span { color:var(--cream); }
 /* the one piece of ornament studio allows itself, and it is the panel's: a
    6px accent square that reads as a product mark rather than as decoration. */
 :where(html[data-design="studio"]) .name::before {
   content:'';
   width:6px; height:6px;
   border-radius:2px;
-  background:var(--gold);
+  background:currentColor;
   flex:none;
 }
 :where(html[data-design="studio"]) #doctitle {
@@ -436,11 +437,11 @@ html[data-design="studio"][data-dvariant="light"] {
 :where(html[data-design="studio"]) body.railoff #rail-tab:hover,
 :where(html[data-design="studio"]) body.aioff #ai-tab:hover { color:var(--gold); }
 /* the drag handles' visible bar takes the accent, like the panel's dividers. */
-:where(html[data-design="studio"]) #rail-resize:hover::after,
-:where(html[data-design="studio"]) #ai-resize:hover::after,
-:where(html[data-design="studio"]) body.office-dragging #rail-resize::after,
-:where(html[data-design="studio"]) body.office-dragging #ai-resize::after {
-  background:var(--gold);
+:where(html[data-design="studio"]) #rail-resize:hover,
+:where(html[data-design="studio"]) #ai-resize:hover,
+:where(html[data-design="studio"]) body.office-dragging #rail-resize,
+:where(html[data-design="studio"]) body.office-dragging #ai-resize {
+  color:var(--gold);
 }
 
 /* ---------------------------------------------------------------------------

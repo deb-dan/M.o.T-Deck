@@ -340,9 +340,11 @@ check('the conv end is the BOTTOM position of the switch, and the switch is a ra
 // The live state used to be a gold ● glyph beside the word. It is now the KNOB — its
 // position plus its gold fill — which is a 58px signal instead of a 4px one, and the
 // dot is hidden inside the switch because `● listening` does not fit a zone. Still no
-// new colour: the knob reuses --gold and the engaged label reuses --on-accent.
+// new colour: the real switch owns --gold and the pseudo paints currentColor so a live
+// WebKit theme flip cannot strand the old token value (S24).
 check('the live state is the knob: gold fill, driven by [data-pos], no new colour token',
-  /#chat-audiosw\[data-pos="auto"\]::after,\s*\n?\s*#chat-audiosw\[data-pos="conv"\]::after \{ background:var\(--gold\); \}/.test(html)
+  /#chat-audiosw::after \{[^}]*background:currentColor/.test(html)
+  && /#chat-audiosw\[data-pos="auto"\],\s*\n?\s*#chat-audiosw\[data-pos="conv"\] \{ color:var\(--gold\); \}/.test(html)
   && /#chat-audiosw \.talk-dot \{ display:none; \}/.test(html));
 
 check('there is exactly ONE conversation teardown path',

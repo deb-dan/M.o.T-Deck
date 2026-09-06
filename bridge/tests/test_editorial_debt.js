@@ -139,10 +139,21 @@ console.log('   the accent fills');
 }
 // no ink is painted with a BORDER token (the .cch-sep category error)
 {
+  // S24's three real-element token carriers are not text: their only painted child is
+  // a pseudo-element using currentColor. The audio switch's actual labels carry their
+  // own --dim/--cream ink. Keep this allow-list exact so it cannot excuse a prose rule.
+  const structuralCarriers = new Set([
+    '#chat-audiosw', '#art-divider', '#art-canvas-divider',
+  ]);
   const inkFromLine = ALL.filter(r => /color:\s*var\(--line2?\)\s*[;}]/.test(r.body)
+    && !structuralCarriers.has(r.sel.trim())
     && !/border|scrollbar|outline/.test(r.body.match(/[a-z-]*color:\s*var\(--line2?\)/)[0]));
   eq('no rule paints TEXT with a hairline token (--line / --line2 are borders; '
      + '.cch-sep read 1.40:1 that way)', inkFromLine.map(r => r.sel.slice(0, 50)), []);
+  for (const sel of structuralCarriers) {
+    ok(ALL.some(r => r.sel.trim() === sel && /color:\s*var\(--line2?\)/.test(r.body)),
+       sel + ' remains the real-element carrier for its currentColor affordance');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

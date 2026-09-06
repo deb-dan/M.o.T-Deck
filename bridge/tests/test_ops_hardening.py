@@ -1,6 +1,6 @@
 """Ops-path hardening (2026-08-21 slice). Four rulings, all pinned here:
 
-  1. scripts/verify.sh — THE contract gate; it must be runnable, must report PASS/FAIL,
+  1. scripts/verify.sh — THE repository gate; it must be runnable, must report PASS/FAIL,
      and must EXIT DISTINCTLY when it cannot run at all (0/1/2). ship.sh must call it
      BEFORE copying anything and refuse the ship on 1 OR 2, with SHIP_SKIP_GATE=1 the
      only (loud) way past.  [the 2026-08-15 "No module named pytest" incident]
@@ -54,11 +54,13 @@ START_P = ROOT / "scripts" / "start_component.sh"
 START = START_P.read_text()
 
 
-# ══ 1. verify.sh — the contract gate ══════════════════════════════════════════
+# ══ 1. verify.sh — the repository gate ════════════════════════════════════════
 check("verify.sh exists", VERIFY_P.is_file())
 check("verify.sh is executable", os.access(VERIFY_P, os.X_OK))
-check("verify.sh runs the contract suite, not the unit tests",
-      "pytest bridge/contract_tests/" in VERIFY)
+check("verify.sh runs contracts, repository Python and every JavaScript suite",
+      '"$PY" -m pytest bridge/contract_tests/' in VERIFY
+      and '"$PY" -m pytest bridge/tests/' in VERIFY
+      and 'for _js in bridge/tests/*.js' in VERIFY)
 check("verify.sh resolves ROOT from its OWN location (repo copy verifies the repo, "
       "snapshot copy verifies the snapshot)",
       'ROOT="$(cd "$(dirname "$0")/.." && pwd)"' in VERIFY)
@@ -79,8 +81,9 @@ check("cannot-run message names the uv install one-liner (python -m pip cannot w
       "uv pip install pytest" in VERIFY and "CANNOT RUN" in VERIFY)
 check("cannot-run explains WHY python -m pip is not the answer",
       "no pip module" in VERIFY)
-check("PASS is stated in words", "PASS - the contract gate is green." in VERIFY)
-check("FAIL is stated in words", "FAIL - the contract gate did NOT pass" in VERIFY)
+check("PASS is stated in words",
+      "PASS - contracts, repository Python and JavaScript are green." in VERIFY)
+check("FAIL is stated in words", "FAIL - the repository gate did NOT pass" in VERIFY)
 
 # exit-code table, exercised for real against a scratch tree
 with tempfile.TemporaryDirectory() as td:
@@ -95,12 +98,19 @@ with tempfile.TemporaryDirectory() as td:
     check("no contract suite on disk -> exit 2 (cannot run)", r.returncode == 2)
     check("no-suite message says CANNOT RUN", "CANNOT RUN" in r.stdout)
 
-    # (b) suite present, one passing test, a python WITH pytest -> 0
+    # (b) all three lanes present: one passing test in each Python tree and one
+    # JavaScript program, with interpreters that can actually run them -> 0.
     (fake / "bridge" / "contract_tests").mkdir(parents=True)
     (fake / "bridge" / "contract_tests" / "test_ok.py").write_text("def test_ok():\n    assert True\n")
+    (fake / "bridge" / "tests").mkdir(parents=True)
+    (fake / "bridge" / "tests" / "test_repo_ok.py").write_text(
+        "def test_repo_ok():\n    assert True\n")
+    (fake / "bridge" / "tests" / "test_ok.js").write_text(
+        "console.log('js pass')\n")
     has_pytest = subprocess.run([sys.executable, "-c", "import pytest"],
                                 capture_output=True).returncode == 0
-    if has_pytest:
+    node = ROOT / "data" / "node" / "bin" / "node"
+    if has_pytest and node.is_file():
         # put the chosen interpreter where verify.sh looks first — as a shim that
         # execs the real path, NOT a symlink: a venv python found via a symlink
         # loses its pyvenv.cfg (argv0-relative), so pytest would vanish with it
@@ -108,10 +118,15 @@ with tempfile.TemporaryDirectory() as td:
         shim = fake / "data" / "bridge-venv" / "bin" / "python"
         shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
         os.chmod(shim, 0o755)
+        node_shim = fake / "data" / "node" / "bin" / "node"
+        node_shim.parent.mkdir(parents=True)
+        node_shim.write_text(f'#!/bin/sh\nexec "{node}" "$@"\n')
+        os.chmod(node_shim, 0o755)
         r = subprocess.run(["bash", str(fake / "scripts" / "verify.sh")],
                            capture_output=True, text=True)
         check("passing suite -> exit 0", r.returncode == 0)
-        check("passing suite prints PASS", "PASS - the contract gate is green." in r.stdout)
+        check("passing suite prints PASS",
+              "PASS - contracts, repository Python and JavaScript are green." in r.stdout)
 
         # (c) a failing test -> 1 (FAIL), distinct from 2
         (fake / "bridge" / "contract_tests" / "test_bad.py").write_text(
@@ -119,11 +134,11 @@ with tempfile.TemporaryDirectory() as td:
         r = subprocess.run(["bash", str(fake / "scripts" / "verify.sh")],
                            capture_output=True, text=True)
         check("failing suite -> exit 1", r.returncode == 1)
-        check("failing suite prints FAIL", "FAIL - the contract gate did NOT pass" in r.stdout)
+        check("failing suite prints FAIL", "FAIL - the repository gate did NOT pass" in r.stdout)
         check("fail and cannot-run are DIFFERENT exit codes (ship.sh branches on them)",
               True)
     else:
-        print("  --  pytest absent here: skipping the live pass/fail exit-code runs")
+        print("  --  pytest or pinned node absent: skipping live pass/fail exit-code runs")
 
     # (d) cannot-run: suite present but no interpreter can import pytest
     stub = fake / "nopy"
@@ -136,6 +151,7 @@ with tempfile.TemporaryDirectory() as td:
     (fake2 / "scripts").mkdir(parents=True)
     (fake2 / "scripts" / "verify.sh").write_text(VERIFY)
     (fake2 / "bridge" / "contract_tests").mkdir(parents=True)
+    (fake2 / "bridge" / "tests").mkdir(parents=True)
     r = subprocess.run(["bash", str(fake2 / "scripts" / "verify.sh")],
                        capture_output=True, text=True, env=env)
     check("suite present but NO pytest anywhere -> exit 2, never a silent 0",

@@ -183,10 +183,14 @@ do_acestep() {
   [[ -n "$cmake_bin" ]] || die "cmake not found — run: brew install cmake"
   say "cmake: $cmake_bin"
 
-  local sha
+  local sha gguf_pin
   sha="$(_yb acestep_pin)"
   [[ -n "$sha" ]] || die "build.acestep_pin missing from harness.yaml"
+  gguf_pin="$(_yb music_acestep_gguf_pin)"
+  [[ "$gguf_pin" =~ ^[0-9a-f]{40}$ ]] \
+    || die "build.music_acestep_gguf_pin must be an exact 40-character snapshot SHA"
   say "pin: acestep.cpp @ ${sha:0:12}"
+  say "weights: ${ACESTEP_GGUF_REPO} @ ${gguf_pin:0:12}"
 
   local src="$ACE/src"
   mkdir -p "$ACE"
@@ -248,18 +252,28 @@ do_acestep() {
   mkdir -p "$models"
   local f p
   for f in "${ACESTEP_GGUFS[@]}"; do
-    if [[ -e "$models/$f" ]]; then
-      say "have ${f}"
-      continue
+    if [[ -L "$models/$f" ]]; then
+      p=$("$VENV/bin/python" - "$models/$f" <<'PY'
+import os, sys
+print(os.path.realpath(sys.argv[1]))
+PY
+      )
+      if [[ "$p" == */snapshots/"$gguf_pin"/"$f" && -e "$models/$f" ]]; then
+        say "have ${f} at the pinned snapshot"
+        continue
+      fi
+      say "${f} is stale or broken for snapshot ${gguf_pin:0:12} — replacing the managed link"
+    elif [[ -e "$models/$f" ]]; then
+      die "refusing to replace non-symlink model file: $models/$f"
     fi
     say "downloading ${f}…"
-    p=$("$VENV/bin/python" - "$ACESTEP_GGUF_REPO" "$f" <<'PY'
+    p=$("$VENV/bin/python" - "$ACESTEP_GGUF_REPO" "$f" "$gguf_pin" <<'PY'
 import sys
 from huggingface_hub import hf_hub_download
-print(hf_hub_download(sys.argv[1], sys.argv[2]))
+print(hf_hub_download(sys.argv[1], sys.argv[2], revision=sys.argv[3]))
 PY
     ) || die "download of ${f} failed"
-    ln -sf "$p" "$models/$f"
+    ln -sfn "$p" "$models/$f"
   done
   for f in "${ACESTEP_GGUFS[@]}"; do
     [[ -e "$models/$f" ]] || die "missing model file after install: ${f}"

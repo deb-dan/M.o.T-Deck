@@ -43,6 +43,13 @@ PLUG = os.path.join(SCRIPTS, "install_oo_ai_plugin.sh")
 GOOSE = os.path.join(SCRIPTS, "install_goose.sh")
 DSH = os.path.join(SCRIPTS, "install_deepseek.sh")
 NODE = os.path.join(SCRIPTS, "ensure_node.sh")
+LLAMA = os.path.join(SCRIPTS, "install_llamacpp.sh")
+BUN = os.path.join(SCRIPTS, "ensure_bun.sh")
+SEARX = os.path.join(SCRIPTS, "install_searxng.sh")
+MUSIC = os.path.join(SCRIPTS, "install_music.sh")
+OPENCODE = os.path.join(SCRIPTS, "install_opencode.sh")
+VENDOR_ASSETS = os.path.join(SCRIPTS, "fetch_vendor_assets.sh")
+FIRSTRUN = os.path.join(SCRIPTS, "firstrun.sh")
 
 _SRC = {}
 
@@ -203,11 +210,78 @@ def test_the_checksum_source_is_stated_rather_than_implied():
 
 
 def test_llamacpp_cleans_debris_on_extract_failure():
-    """2026-08-29 audit fix: a corrupt tarball (this script has no digest pin) must not
-    survive to re-fail the next run."""
-    s = src(os.path.join(SCRIPTS, "install_llamacpp.sh"))
+    """2026-08-29 audit fix: a corrupt tarball must not survive to re-fail."""
+    s = src(LLAMA)
     fail_branch = s.split("extraction failed")[1].split("fi")[0]
     assert '"$STAGE" "$TARBALL"' in fail_branch
+
+
+# ── A11-A13: every remaining floating/download-only source is immutable ──────
+def test_searxng_fetches_and_verifies_the_manifest_commit():
+    manifest = src(os.path.join(ROOT, "harness.yaml"))
+    assert re.search(r"^  searxng:\n(?:^    .*\n)*?^    pin: [0-9a-f]{40}(?:\s|$)",
+                     manifest, re.M)
+    s = src(SEARX)
+    assert 'fetch --depth 1 origin "$PIN"' in s
+    assert 'checkout -q --detach FETCH_HEAD' in s
+    assert '[[ "$HAVE" == "$PIN" ]]' in s
+    assert "git pull" not in s and "--depth 1 https://github.com" not in s
+    assert "rm -rf vendor/searxng" not in s
+    assert "exists but is not a git checkout; refusing" in s
+
+
+def test_acestep_weights_use_the_recorded_snapshot_not_huggingface_main():
+    manifest = src(os.path.join(ROOT, "harness.yaml"))
+    assert re.search(r'^  music_acestep_gguf_pin: "[0-9a-f]{40}"$', manifest, re.M)
+    s = src(MUSIC)
+    assert "music_acestep_gguf_pin" in s
+    assert "revision=sys.argv[3]" in s
+    assert '*/snapshots/"$gguf_pin"/"$f"' in s, (
+        "an old managed symlink must not be mistaken for the newly pinned snapshot")
+    assert '&& -e "$models/$f"' in s, (
+        "a broken symlink into the right snapshot must be fetched again, not called present")
+    assert 'refusing to replace non-symlink model file' in s
+
+
+def test_llama_and_bun_verify_recorded_sha256_before_unpacking():
+    llama = src(LLAMA)
+    assert re.search(r"llamacpp_sha256", llama)
+    assert llama.index("sha256 MISMATCH") < llama.index("tar xzf")
+    bun = src(BUN)
+    for key in ("bun_darwin_arm64_sha256", "bun_darwin_x64_sha256",
+                "bun_linux_arm64_sha256", "bun_linux_x64_sha256"):
+        assert key in bun
+    assert bun.index("sha256 MISMATCH") < bun.index("unzip -q -o")
+
+
+def test_opencode_requires_recorded_sha256_and_registry_sha512_before_extract():
+    s = src(OPENCODE)
+    assert "opencode_darwin_arm64_sha256" in s
+    assert "opencode_darwin_x64_sha256" in s
+    assert 'integrity_expect' in s and 'sha512-' in s
+    assert s.index("recorded SHA-256 and npm SHA-512 verified") < s.index("tar xzf")
+    assert "extracting unverified" not in s
+
+
+def test_every_browser_asset_has_a_digest_and_cached_bytes_are_rechecked():
+    s = src(VENDOR_ASSETS)
+    entries = re.findall(r'^  "([^|]+)\|([0-9a-f]{64})\|', s, re.M)
+    assert len(entries) == 20, f"expected all 20 browser assets pinned, got {len(entries)}"
+    assert len({name for name, _ in entries}) == len(entries)
+    cached = s[s.index('if [[ $FORCE -eq 0 && -s "$out" ]]'):s.index('echo "[vendor] fetching', s.index('if [[ $FORCE -eq 0 && -s "$out" ]]'))]
+    assert "shasum -a 256" in cached and '"$got" == "$expected"' in cached
+    assert s.index('shasum -a 256 "$out.tmp"') < s.index('mv "$out.tmp" "$out"')
+
+
+def test_portable_firstrun_verifies_the_installer_script_before_execution():
+    manifest = src(os.path.join(ROOT, "harness.yaml"))
+    assert re.search(r'^  uv_installer_sha256: "[0-9a-f]{64}"$', manifest, re.M)
+    s = src(FIRSTRUN)
+    assert 'refusing an unpinned installer' in s
+    assert 'uv installer sha256 MISMATCH' in s
+    assert s.index('shasum -a 256 "$UV_INSTALLER"') < s.index(
+        'sh "$UV_INSTALLER"')
+    assert 'astral.sh/uv/install.sh' not in s
 
 
 # ── EXECUTED: tamper → refusal, no half-install (tiny fixtures, temp dests) ──
@@ -216,6 +290,71 @@ def _run(script, env_extra, cwd=ROOT, timeout=60):
     env.update(env_extra)
     return subprocess.run([script], env=env, cwd=cwd, timeout=timeout,
                           capture_output=True, text=True)
+
+
+def _tampering_curl(directory):
+    path = os.path.join(directory, "curl")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write('#!/bin/bash\nout=""; prev=""\n'
+                 'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+                 '[ -n "$out" ] && printf tampered > "$out"\nexit 0\n')
+    os.chmod(path, 0o755)
+    return path
+
+
+def test_llamacpp_tamper_refusal_executes_before_extract_or_replacement():
+    with tempfile.TemporaryDirectory(prefix="inst-llama-") as td:
+        shim = os.path.join(td, "shim")
+        dest = os.path.join(td, "dest")
+        os.makedirs(shim)
+        _tampering_curl(shim)
+        r = _run(LLAMA, {"LLAMACPP_DEST": dest,
+                         "PATH": f"{shim}:/usr/bin:/bin:/usr/sbin:/sbin"})
+        assert r.returncode != 0
+        assert "sha256 MISMATCH" in (r.stdout + r.stderr)
+        assert not os.path.exists(os.path.join(dest, "build", "bin", "llama-server"))
+
+
+def test_bun_tamper_refusal_executes_before_unzip_or_replacement():
+    with tempfile.TemporaryDirectory(prefix="inst-bun-") as td:
+        shim = os.path.join(td, "shim")
+        dest = os.path.join(td, "dest")
+        os.makedirs(shim)
+        _tampering_curl(shim)
+        r = _run(BUN, {"BUN_DEST": dest, "BUN_IGNORE_PATH": "1",
+                       "PATH": f"{shim}:/usr/bin:/bin:/usr/sbin:/sbin"})
+        assert r.returncode != 0
+        assert "sha256 MISMATCH" in (r.stdout + r.stderr)
+        assert not os.path.exists(os.path.join(dest, "bin", "bun"))
+
+
+def test_cached_browser_asset_tamper_is_refused_without_network_or_overwrite():
+    with tempfile.TemporaryDirectory(prefix="inst-assets-") as td:
+        babel = os.path.join(td, "babel.min.js")
+        with open(babel, "wb") as fh:
+            fh.write(b"user-visible-corruption")
+        before = open(babel, "rb").read()
+        r = _run(VENDOR_ASSETS, {"VENDOR_ASSET_DEST": td})
+        assert r.returncode != 0
+        assert "cached babel.min.js" in (r.stdout + r.stderr)
+        assert open(babel, "rb").read() == before
+
+
+def test_portable_firstrun_refuses_a_tampered_installer_before_shell_execution():
+    with tempfile.TemporaryDirectory(prefix="inst-uv-") as td:
+        shim = os.path.join(td, "shim")
+        dest = os.path.join(td, "uv-bin")
+        os.makedirs(shim)
+        _tampering_curl(shim)
+        brew = os.path.join(shim, "brew")
+        with open(brew, "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/bash\nexit 0\n")
+        os.chmod(brew, 0o755)
+        r = _run(FIRSTRUN, {"UV_DEST": dest, "UV_IGNORE_PATH": "1",
+                            "PATH": f"{shim}:/usr/bin:/bin:/usr/sbin:/sbin"})
+        assert r.returncode != 0
+        assert "uv installer sha256 MISMATCH" in (r.stdout + r.stderr)
+        assert not os.path.exists(os.path.join(dest, "uv"))
 
 
 def test_editor_tamper_refusal_executed():

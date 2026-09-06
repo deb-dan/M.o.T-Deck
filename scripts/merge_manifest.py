@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add repo manifest keys to live harness.yaml without rewriting existing bytes."""
+"""Add repo manifest keys and named CAS migrations without rewriting live state."""
 from __future__ import annotations
 
 import datetime
@@ -71,8 +71,9 @@ def _whole_components_off(block):
 
 def merge_text(source, destination):
     """Return `(merged, added)` while preserving every pre-existing destination byte."""
-    for label, text in (("repo", source), ("live", destination)):
-        parsed = yaml.safe_load(text)
+    src_parsed = yaml.safe_load(source)
+    dst_parsed = yaml.safe_load(destination)
+    for label, parsed in (("repo", src_parsed), ("live", dst_parsed)):
         if not isinstance(parsed, dict):
             raise ValueError(f"{label} harness.yaml must be a YAML mapping")
     src_lines = source.splitlines(keepends=True)
@@ -110,6 +111,35 @@ def merge_text(source, destination):
             dst_lines[de:de] = block
             added.append(f"{section}.{name}")
             dst_children[name] = (0, 0)
+
+    # A11 migration: `components.searxng.pin: main` was the repo's historical
+    # floating DEFAULT, not user install state. The strict installer now requires the
+    # exact audited commit. Move only that one known old value to the repo's exact SHA;
+    # any other live value is an operator choice and remains byte-for-byte untouched.
+    # This is deliberately a compare-and-swap migration, not a general "sync pins"
+    # exception to the live-state rule.
+    src_searx = ((src_parsed.get("components") or {}).get("searxng") or {})
+    dst_searx = ((dst_parsed.get("components") or {}).get("searxng") or {})
+    src_pin = str(src_searx.get("pin") or "")
+    if dst_searx.get("pin") == "main" and re.fullmatch(r"[0-9a-f]{40}", src_pin):
+        src_top, dst_top = _spans(src_lines, 0), _spans(dst_lines, 0)
+        ss, se = src_top["components"]; ds, de = dst_top["components"]
+        src_children = _spans(src_lines[ss + 1:se], 2)
+        dst_children = _spans(dst_lines[ds + 1:de], 2)
+        if "searxng" not in src_children or "searxng" not in dst_children:
+            raise ValueError("searxng pin migration could not locate the component block")
+        srs, sre = src_children["searxng"]
+        drs, dre = dst_children["searxng"]
+        src_start, src_end = ss + 1 + srs, ss + 1 + sre
+        dst_start, dst_end = ds + 1 + drs, ds + 1 + dre
+        src_fields = _spans(src_lines[src_start:src_end], 4)
+        dst_fields = _spans(dst_lines[dst_start:dst_end], 4)
+        if "pin" not in src_fields or "pin" not in dst_fields:
+            raise ValueError("searxng pin migration could not locate the pin field")
+        src_pin_line = src_start + src_fields["pin"][0]
+        dst_pin_line = dst_start + dst_fields["pin"][0]
+        dst_lines[dst_pin_line] = src_lines[src_pin_line]
+        added.append(f"components.searxng.pin(main→{src_pin[:12]})")
     merged = "".join(dst_lines)
     if not isinstance(yaml.safe_load(merged), dict):
         raise ValueError("merged harness.yaml is not a YAML mapping")

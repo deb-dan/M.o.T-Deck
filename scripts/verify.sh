@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# verify.sh — THE contract gate. Run the pinned-upstream contract suite and say
-# clearly whether it passed, failed, or could not be run at all.
+# verify.sh — THE repository gate. Run the pinned-upstream contracts, repository
+# Python corpus and every JavaScript suite, and say clearly whether the gate passed,
+# failed, or could not be run at all.
 #
 # Exists because the gate was skippable by accident: on 2026-08-15 a vendored pin
 # bump shipped with `python -m pytest bridge/contract_tests/` printing "No module
@@ -19,10 +20,13 @@
 set -uo pipefail   # deliberately NOT -e: this script's job is to REPORT, not to die
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SUITE="$ROOT/bridge/contract_tests"
+CONTRACT_SUITE="$ROOT/bridge/contract_tests"
+REPO_SUITE="$ROOT/bridge/tests"
 
-if [[ ! -d "$SUITE" ]]; then
-  echo "[verify] CANNOT RUN: no contract suite at ${SUITE}"
+if [[ ! -d "$CONTRACT_SUITE" || ! -d "$REPO_SUITE" ]]; then
+  echo "[verify] CANNOT RUN: required test suites are missing."
+  echo "[verify]   contracts: ${CONTRACT_SUITE}"
+  echo "[verify]   repository: ${REPO_SUITE}"
   exit 2
 fi
 
@@ -49,7 +53,25 @@ if [[ -z "$PY" ]]; then
 fi
 
 echo "[verify] python: ${PY}"
-echo "[verify] suite : ${SUITE}"
+echo "[verify] contracts : ${CONTRACT_SUITE}"
+echo "[verify] repository: ${REPO_SUITE}"
+
+# JavaScript suites are standalone Node programs. Prefer the runtime bundled for
+# DeepSeek on an installed/fat tree, then the snapshot's, then PATH. A missing Node
+# is CANNOT RUN rather than a silent partial pass (U49's original failure mode).
+SNAP_NODE="${HOME}/Library/Application Support/Harness/data/node/bin/node"
+NODE=""
+for _n in "${ROOT}/data/node/bin/node" "$SNAP_NODE" node; do
+  if "$_n" --version >/dev/null 2>&1; then NODE="$_n"; break; fi
+done
+if [[ -z "$NODE" ]]; then
+  echo "[verify] CANNOT RUN: no Node.js runtime was found for bridge/tests/*.js."
+  echo "[verify]   tried: ${ROOT}/data/node/bin/node"
+  echo "[verify]          ${SNAP_NODE}"
+  echo "[verify]          node (whatever is on PATH)"
+  exit 2
+fi
+echo "[verify] node  : ${NODE} ($("$NODE" --version))"
 _manifest_digest() {
   if [[ -f "$ROOT/harness.yaml" ]]; then
     shasum -a 256 "$ROOT/harness.yaml" | awk '{print $1}'
@@ -59,7 +81,13 @@ _manifest_digest() {
 }
 MANIFEST_BEFORE="$(_manifest_digest)"
 TEST_RC=1
-if ( cd "$ROOT" && "$PY" -m pytest bridge/contract_tests/ -q ); then
+if ( cd "$ROOT" &&
+     "$PY" -m pytest bridge/contract_tests/ -q &&
+     "$PY" -m pytest bridge/tests/ -q &&
+     for _js in bridge/tests/*.js; do
+       echo "[verify] javascript: ${_js}"
+       "$NODE" "$_js" || exit 1
+     done ); then
   TEST_RC=0
 fi
 MANIFEST_AFTER="$(_manifest_digest)"
@@ -70,11 +98,11 @@ if [[ "$MANIFEST_AFTER" != "$MANIFEST_BEFORE" ]]; then
   exit 1
 fi
 if [[ "$TEST_RC" -eq 0 ]]; then
-  echo "[verify] PASS - the contract gate is green."
+  echo "[verify] PASS - contracts, repository Python and JavaScript are green."
   exit 0
 fi
 
-echo "[verify] FAIL - the contract gate did NOT pass (pytest output above)."
-echo "[verify]   These tests pin our integration surface against the VENDORED pins."
-echo "[verify]   A failure here usually means an upstream moved under us."
+echo "[verify] FAIL - the repository gate did NOT pass (test output above)."
+echo "[verify]   Contracts pin vendored integration; repository suites pin product"
+echo "[verify]   behavior, UI affordances, ceilings and incident echoes."
 exit 1

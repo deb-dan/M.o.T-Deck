@@ -6,16 +6,50 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
+_yc() { awk -v k="    $1:" '/^  searxng:/{f=1;next} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[\",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^  [a-z]/{exit}' harness.yaml; }
+REPO="$(_yc repo)"
+PIN="$(_yc pin)"
+[[ "$PIN" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "ERROR: components.searxng.pin must be an exact 40-character commit SHA"; exit 1; }
+[[ "$REPO" == https://github.com/searxng/searxng.git ]] || {
+  echo "ERROR: unexpected components.searxng.repo: ${REPO:-missing}"; exit 1; }
+
 command -v uv >/dev/null || { echo "uv not found — run scripts/bootstrap.sh first"; exit 1; }
 PY=$(command -v python3.13 || command -v python3.12 || command -v python3.11 || command -v python3)
 
-# 1. Source clone (SearXNG is not on PyPI).
-if [[ ! -d vendor/searxng/.git ]]; then
-  echo "[harness] cloning searxng (shallow)..."
-  git clone --depth 1 https://github.com/searxng/searxng vendor/searxng
+# 1. Source checkout (SearXNG is not on PyPI). Fetch the exact object; a shallow
+# default-branch clone is not a pin and was the A11 defect.
+if [[ -e vendor/searxng && ! -d vendor/searxng/.git ]]; then
+  echo "ERROR: vendor/searxng exists but is not a git checkout; refusing to modify it"
+  exit 1
+elif [[ ! -d vendor/searxng/.git ]]; then
+  echo "[harness] fetching searxng @ ${PIN:0:12}..."
+  mkdir -p vendor/searxng
+  git -C vendor/searxng init -q
+  git -C vendor/searxng remote add origin "$REPO"
+  if git -C vendor/searxng fetch --depth 1 origin "$PIN"; then
+    git -C vendor/searxng checkout -q --detach FETCH_HEAD
+  else
+    echo "[harness] exact shallow fetch refused — fetching full history in place..."
+    git -C vendor/searxng fetch origin
+    git -C vendor/searxng checkout -q --detach "$PIN"
+  fi
 else
-  echo "[harness] vendor/searxng already present."
+  ORIGIN=$(git -C vendor/searxng remote get-url origin 2>/dev/null || true)
+  [[ "$ORIGIN" == "$REPO" || "$ORIGIN" == "${REPO%.git}" ]] || {
+    echo "ERROR: vendor/searxng origin is ${ORIGIN:-missing}, expected $REPO"; exit 1; }
+  HAVE=$(git -C vendor/searxng rev-parse HEAD)
+  if [[ "$HAVE" != "$PIN" ]]; then
+    echo "[harness] searxng is at ${HAVE:0:12}; moving to ${PIN:0:12}..."
+    git -C vendor/searxng fetch --depth 1 origin "$PIN"
+    git -C vendor/searxng checkout -q --detach FETCH_HEAD
+  else
+    echo "[harness] vendor/searxng already at the pin."
+  fi
 fi
+HAVE=$(git -C vendor/searxng rev-parse HEAD)
+[[ "$HAVE" == "$PIN" ]] || {
+  echo "ERROR: searxng checkout is ${HAVE}, expected ${PIN}"; exit 1; }
 
 # 2. venv + build deps + editable install (this compiles some C deps — can take a few minutes).
 echo "[harness] creating venv + installing searxng (compiles deps; be patient)..."

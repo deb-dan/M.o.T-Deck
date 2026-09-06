@@ -7,7 +7,7 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current version: **v1.5.82** (see `VERSION`). Written 2026-09-06.
+Current version: **v1.5.83** (see `VERSION`). Written 2026-09-06.
 
 ---
 
@@ -184,6 +184,16 @@ U143 records v1.5.81's full repository, installed-stack, Goose UI, and clean FAT
 U145 records the missed human-login journey and its correction. No open item below is
 concealed by either release claim.
 
+v1.5.83 closes the local hardening wave without changing third-party source: dependency
+actions deep-link to the named first-party remedy; SearXNG and ACE-Step weights are pinned
+to exact source revisions; all remaining remote installer payloads are digest-verified
+before use; repository Python and every JavaScript suite now block shipping; and the four
+single-model runner consumers report requested-versus-served mismatches with an Open Models
+handoff. The live-theme pseudo-element class is fenced without removing its hover/drag
+affordances. The reported Studio-light contrast and remaining `calc(var(...))` transition
+instances were re-proven absent in the current architecture rather than patched speculatively.
+U149 carries the complete gate, installed journey, size/line and runtime evidence.
+
 Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — see
 `docs/UNFORGET.md` for the full finding, evidence, and verify-still-open command on each:
 
@@ -203,11 +213,6 @@ Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — 
   build); a ComfyUI Video/Audio first-party surface (research done, Fable spec next); a
   goose-lane P4 row from before Goose shipped that likely needs re-verification against
   the ladder now in place.
-- **Small, contained fixes queued 🔵 NEXT:** the dependency banner's "open" action always
-  lands on MOT Deck regardless of which pane actually fixes the problem (U22); two installers
-  (`install_searxng.sh`, `install_music.sh`'s acestep weights) still float on an unpinned
-  upstream HEAD (A11, A12); a couple of stale/red test fences that need re-pointing, not
-  re-arguing (A7, U40, U49).
 
 ## Later
 
@@ -216,16 +221,10 @@ Lower urgency or larger blast radius, queued 🟡 LATER — themes only:
 - **Music tools dock (P6):** first tool is a stem separator only (demucs/UVR-class);
   DAWs and Nightingale docking are explicitly deferred, kept only as the architecture
   argument for Compose's pluggable block grid.
-- **The runner-substitution class (U13/U14/U20/U35):** llama.cpp ignores a request's
-  `model` field and serves whatever's loaded — Odysseus labels the substitution honestly,
-  Hermes and goose's pickers don't yet. One runner fact, four pickers, all queued
-  together.
-- **CSS/rendering classes found engine-wide:** a pseudo-element painted with `var(--x)`
-  doesn't repaint on a live theme flip (S24); WebKit won't transition a property whose
-  computed value came from `calc(var(...))` (S25) — both have known one-line fixes at
-  the two remaining sighted call sites.
-- **Contrast:** `studio-light` under a dark theme pack drops sidebar text to ~2.3-2.5:1
-  (A9) — a reachable but rare combination.
+- **Remaining model-label limit (U14):** requested-versus-served truth is now visible for
+  Odysseus, Hermes, OpenCode and the current managed Goose provider. Goose still exposes
+  only one model identifier field, so MLX filesystem paths remain ugly but correct in its
+  upstream picker until Goose adds a distinct display alias.
 - **Known reliability limit:** Direct Chat history persistence is at-least-once until
   Odysseus exposes an idempotent insertion primitive (U139). M.O.T's request marker and
   read-back close ordinary retries, but cannot make an independent database commit atomic.
@@ -254,9 +253,8 @@ Lower urgency or larger blast radius, queued 🟡 LATER — themes only:
   Goose requires explicit secret provenance plus one cross-process transaction boundary
   shared by provider, config and secret writers. No runtime code follows from these
   findings until the relevant upstream contract survives adversarial review.
-- Digest-pinning the remaining tag-only installers (A13); Hermes v0.20.x update retry,
-  parked on two upstream bugs (P1); the ONLYOFFICE/Euro-Office bump, parked on upstream's
-  next release (P2).
+- Hermes v0.20.x update retry, parked on two upstream bugs (P1); the ONLYOFFICE/Euro-Office
+  bump, parked on upstream's next release (P2).
 
 ## Someday
 

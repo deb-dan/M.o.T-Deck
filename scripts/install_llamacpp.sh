@@ -2,7 +2,7 @@
 # Install the harness's OWN pinned llama-server (llama.cpp) binary into data/llamacpp/.
 # Replaces borrowing Jan's / LM Studio's backends — determinism + pin+bump control.
 #
-# Reads runner.llamacpp_pin (a bNNNN release tag) from harness.yaml, downloads the
+# Reads runner.llamacpp_pin + runner.llamacpp_sha256 from harness.yaml, downloads the
 # macOS arm64 release archive from ggml-org/llama.cpp, and lands llama-server at
 #   data/llamacpp/build/bin/llama-server
 # (the canonical path the shared binary-discovery order looks for).
@@ -21,8 +21,11 @@ cd "$(dirname "$0")/.."
 
 PIN=$(awk '/^runner:/{f=1} f && /^  llamacpp_pin:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*llamacpp_pin:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
 [[ -n "$PIN" ]] || { echo "ERROR: runner.llamacpp_pin not set in harness.yaml"; exit 1; }
+SHA256=$(awk '/^runner:/{f=1} f && /^  llamacpp_sha256:/{line=$0; sub(/#.*/,"",line); sub(/^[[:space:]]*llamacpp_sha256:[[:space:]]*/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit}' harness.yaml)
+[[ "$SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+  echo "ERROR: runner.llamacpp_sha256 must be a recorded 64-character digest"; exit 1; }
 
-DEST="data/llamacpp"
+DEST="${LLAMACPP_DEST:-data/llamacpp}"
 BINPATH="$DEST/build/bin/llama-server"
 ASSET="llama-${PIN}-bin-macos-arm64.tar.gz"
 URL="https://github.com/ggml-org/llama.cpp/releases/download/${PIN}/${ASSET}"
@@ -45,13 +48,22 @@ if ! curl -fL --retry 3 -m 600 -o "$TARBALL" "$URL"; then
   rm -f "$TARBALL"; exit 1
 fi
 
+GOT_SHA256=$(shasum -a 256 "$TARBALL" | awk '{print $1}')
+if [[ "$GOT_SHA256" != "$SHA256" ]]; then
+  echo "ERROR: llama.cpp sha256 MISMATCH for ${ASSET}"
+  echo "  expected: $SHA256"
+  echo "  got     : $GOT_SHA256"
+  rm -rf "$STAGE" "$TARBALL"
+  exit 1
+fi
+echo "[harness] sha256 verified: ${SHA256}"
+
 echo "[harness] extracting…"
 if ! tar xzf "$TARBALL" -C "$STAGE"; then
   echo "ERROR: extraction failed — archive may not be a gzip tar. Downloaded from:"
   echo "  $URL"
   # 2026-08-29 install-path audit: clean up the corrupt tarball + staging debris, so a
-  # re-run starts from a fresh download instead of re-failing on the same bad bytes
-  # (this script has no digest pin, so the bytes themselves are the only evidence).
+  # re-run starts from a fresh download instead of re-failing on the same bad bytes.
   rm -rf "$STAGE" "$TARBALL"
   exit 1
 fi

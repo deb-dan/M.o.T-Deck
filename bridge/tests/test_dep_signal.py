@@ -162,6 +162,20 @@ def test_swapped_is_the_lie_this_catches():
        "an identical binding is silent (no false 'swapped')")
 
 
+def test_user_selected_model_substitution_names_both_models_and_opens_models():
+    b = bound(model="requested-qwen", live="resident-gemma")
+    b["hermes"]["mismatch"] = "substituted"
+    out = derive(healthy(), b)
+    n = out["hermes"]["needs"][0]
+    ok(n["state"] == "substituted", "an honoured picker choice is not stale wiring")
+    ok(n["action"] == "open" and n["target"] == "models",
+       "the working action opens Models; Restart would honour the same pick again")
+    ok("requested-qwen" in n["text"] and "resident-gemma" in n["text"],
+       "the visible sentence names requested and actually served models")
+    ok("llama.cpp" in n["text"] and "answer as the loaded model" in n["text"],
+       "the sentence explains substitution instead of implying the request loaded it")
+
+
 def test_moved_endpoint():
     out = derive(healthy(), bound(ep="http://127.0.0.1:6767/v1",
                                   live_ep="http://127.0.0.1:6868/v1"))
@@ -474,6 +488,28 @@ def test_the_card_can_tell_intent_from_fact():
        "…and deliberately draw NOTHING for 'checking' (the un-earned claim)")
 
 
+def test_dependency_banner_open_honours_the_bridge_target_in_the_clicked_pane():
+    """U22: an honest ``Open Models`` action must not collapse to panel home."""
+    start = SWIFT.index("func dependencyPanelView(")
+    end = SWIFT.index("func depDismiss(", start)
+    body = SWIFT[start:end]
+    ok('case "chat", "models", "music", "caps", "help", "api"' in body,
+       "the shell accepts only the panel's actual showView vocabulary")
+    for lane_or_dialog in ('logs', 'goose', 'compose', 'aider', 'loffice', 'gooseui'):
+        ok(f'"{lane_or_dialog}"' not in body.split('default:')[0],
+           f"{lane_or_dialog} is not mislabelled as an in-panel view")
+    ok('return nil' in body,
+       "an unknown bridge target fails to the ordinary MOT Deck view")
+    ok('let destination = (splitOn && pane == 1) ? 1 : 0' in body and
+       'routeTab(idx, toPane: destination)' in body,
+       "the banner opens in the pane its button belongs to, not whichever pane last focused")
+    ok('dependencyPanelView(need.target)' in body and
+       "showView('\\(view)')" in body and 'webViewFor(idx).evaluateJavaScript' in body,
+       "the bridge's Models target reaches the panel's existing showView API")
+    ok("showView('\\(need.target)')" not in body,
+       "raw HTTP data is never interpolated into JavaScript")
+
+
 # ══ §7 THE COHERENCE WAVE (S28) ═════════════════════════════════════════════
 #
 # The post-switch coherence audit (docs/research/2026-08-29-post-switch-audit.md) is
@@ -503,13 +539,8 @@ def test_disk_bindings_and_opencode_runtime_catalog_use_their_real_authorities()
             "v": 1, "pid": 123, "birth": "stamp", "connected": True,
             "models": ["ghost-27B"],
         }))
-        # S29 — `_dangling_only` asks the SHARED enumerator what we offer, and that
-        # answer now excludes rows whose file is gone. So this fixture must supply a
-        # registry with a REAL artifact: reading it off the dev tree (whose models.json
-        # long outlived its weights) made the test depend on one machine's disk, which
-        # is exactly how it went red here. An empty `offered` is deliberately NOT
-        # information — dangles() repairs nothing then — so the fixture has to mean
-        # something for the readers below to have anything to say.
+        # Supply a registry with real artifacts so the runtime-catalog comparison is
+        # deterministic and never depends on this machine's live model library.
         live_art = root / "live-4B.gguf"
         live_art.write_bytes(fake_gguf())
         other_art = root / "another-9B.gguf"
@@ -550,27 +581,26 @@ def test_disk_bindings_and_opencode_runtime_catalog_use_their_real_authorities()
             }))
             ok(C._opencode_binding("live-4B") == {},
                "OpenCode's matching live catalog makes NO claim")
-            # …and NO CLAIM about a default the seeder has decided to HONOUR: the
-            # banner's only action is "Restart Odysseus", the restart re-runs the
-            # seeder, and the seeder honours it again — a button that provably cannot
-            # work is the S20 dead-button defect (found in the S28 live walk).
+            # A default the seeder HONOURS is still a real request, but it must be
+            # classified as substitution and offer Models—not a dead Restart button.
             (root / "vendor" / "odysseus" / "data" / "settings.json").write_text(
                 _json.dumps({"default_endpoint_id": "local-jan",
                              "default_model": "hers-27B"}))
             (root / "data").mkdir(exist_ok=True)
             (root / "data" / "ody_seed_state.json").write_text(
                 _json.dumps({"local-jan": {"default_model_honoured": "hers-27B"}}))
-            ok(C._ody_binding("live-4B") == {},
-               "a default the seeder HONOURS derives no sentence (no dead button)")
+            honoured = C._ody_binding("live-4B")
+            ok(honoured.get("model") == "hers-27B"
+               and honoured.get("mismatch") == "substituted",
+               "an honoured Odysseus default is reported without pretending Restart fixes it")
             (root / "data" / "ody_seed_state.json").write_text(
                 _json.dumps({"local-jan": {"default_model_honoured": "something-else"}}))
             ok(C._ody_binding("live-4B").get("model") == "hers-27B",
                "…but a value that is NOT the honoured one is still reported")
-            # ⚠️ THE INVARIANT: a `swapped` sentence is only ever derived when the
-            # component's OWN Restart could clear it. goose and OpenCode both HONOUR a
-            # stale-but-valid pick at Start, so reporting one would paint a permanent
-            # banner over a button that provably does nothing (S20). Only a DANGLING
-            # value — which their rebind does repair — may be reported.
+            # A valid Goose choice is honoured at Start, so it is not `swapped` and
+            # must never offer a dead Restart button. It is still important evidence:
+            # llama.cpp will substitute the resident model, so the Models handoff says
+            # that explicitly.
             _real = [m.get("id") for m in C._registry_models()
                      if isinstance(m, dict) and m.get("id")
                      and m.get("kind") != "audio" and not m.get("hidden")]
@@ -579,8 +609,19 @@ def test_disk_bindings_and_opencode_runtime_catalog_use_their_real_authorities()
                 (gdir / "config.yaml").write_text(
                     "providers:\n  custom_mot_deck__local:\n    model: " + _valid
                     + "\nactive_provider: custom_mot_deck__local\n")
-                ok(C._goose_binding(_live2) == {},
-                   "a stale-but-VALID goose pick derives nothing (Restart honours it)")
+                gb = C._goose_binding(_live2)
+                ok(gb.get("model") == _valid and gb.get("mismatch") == "substituted",
+                   "a valid Goose pick is reported as substitution, not stale wiring")
+            ok(C._opencode_model_from_config(
+                {"model": "llama.cpp/another-9B"}) == "another-9B",
+               "OpenCode's running /config model is parsed only for our provider")
+            ok(C._opencode_model_from_config(
+                {"model": "anthropic/claude"}) == "",
+               "another OpenCode provider makes no claim about our runner")
+            opc_match = C._opencode_binding("live-4B", "another-9B")
+            ok(opc_match.get("model") == "another-9B"
+               and opc_match.get("mismatch") == "substituted",
+               "a fresh OpenCode catalog does not hide a mismatched live default")
             # …and an absent file is silence, never an accusation.
             C.ROOT = root / "nope"
             ok(C._ody_binding("x") == {} and C._goose_binding("x") == {}
@@ -849,7 +890,9 @@ def test_the_card_can_never_pair_a_green_dot_with_a_bare_failure():
 
 
 for fn in (test_silent_when_well, test_runner_down, test_runner_has_no_model,
-           test_swapped_is_the_lie_this_catches, test_moved_endpoint,
+           test_swapped_is_the_lie_this_catches,
+           test_user_selected_model_substitution_names_both_models_and_opens_models,
+           test_moved_endpoint,
            test_a_dep_that_is_not_the_runner, test_a_stopped_component_says_nothing,
            test_an_uninstalled_dep_says_nothing, test_a_dep_this_build_does_not_know,
            test_every_sentence_is_written_for_her, test_routes_exist,
@@ -862,6 +905,7 @@ for fn in (test_silent_when_well, test_runner_down, test_runner_has_no_model,
            test_the_failure_sentence_is_a_sentence,
            test_the_bridge_stops_repeating_an_exit_code_it_can_check,
            test_the_card_can_tell_intent_from_fact,
+           test_dependency_banner_open_honours_the_bridge_target_in_the_clicked_pane,
            # §7 — the coherence wave (S28)
     test_disk_bindings_and_opencode_runtime_catalog_use_their_real_authorities,
     test_two_strikes_before_we_accuse_an_app,

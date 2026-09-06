@@ -242,13 +242,14 @@ html[data-design="studio"] body.rail-slim aside { width:56px; padding:20px 4px; 
 
 html[data-design="studio"] .brand {
   font-size:15px; font-weight:600; letter-spacing:.01em;
-  color:var(--cream); margin:0 6px 1px;
+  color:var(--gold); margin:0 6px 1px;
   display:flex; align-items:center; gap:8px; }
+html[data-design="studio"] .brand > span { color:var(--cream); }
 /* the one piece of ornament studio allows itself: a 5px accent square that
    reads as a product mark rather than as decoration. */
 html[data-design="studio"] .brand::before {
   content:''; width:6px; height:6px; border-radius:2px;
-  background:var(--gold); flex:none; }
+  background:currentColor; flex:none; }
 html[data-design="studio"] .build {
   font-family:var(--sd-sans); font-size:11px; line-height:1.45;
   letter-spacing:normal; text-transform:none;

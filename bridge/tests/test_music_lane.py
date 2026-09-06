@@ -29,6 +29,7 @@ Run: python3 bridge/tests/test_music_lane.py
 """
 import json
 import os
+import re
 import signal
 import sys
 import tempfile
@@ -726,14 +727,19 @@ check("the snapshot's sibling module is verified before the install claims succe
       "minimax_mlx_model.py" in SH)
 check("cmake is resolved by EXPLICIT path list (Finder-minimal PATH rule)",
       "/opt/homebrew/bin/cmake" in SH)
-check("the GGUFs are symlinked from the HF cache, not copied",
-      'ln -sf "$p"' in SH)
+check("the GGUFs are re-linked from the pinned HF snapshot, not copied",
+      'ln -sfn "$p"' in SH and 'revision=sys.argv[3]' in SH
+      and 'snapshots/"$gguf_pin"/"$f"' in SH)
+check("a user-owned model file is never overwritten by the managed snapshot link",
+      "refusing to replace non-symlink model file" in SH)
 
 YML = (ROOT / "harness.yaml").read_text()
 check("build.music_minimax_pin exists and is the measured revision",
       "music_minimax_pin" in YML and REV in YML)
 check("build.acestep_pin exists and is the measured commit",
       "acestep_pin" in YML and "9761469d95fc204b5468623c68a1a2203e50b1f9" in YML)
+check("build.music_acestep_gguf_pin is an exact HF snapshot commit",
+      bool(re.search(r'music_acestep_gguf_pin:\s*"[0-9a-f]{40}"', YML)))
 
 PANEL = (ROOT / "bridge" / "panel" / "index.html").read_text()
 check("the Music view exists", 'id="view-music"' in PANEL)

@@ -83,11 +83,13 @@ def test_pin_is_an_npm_version_not_a_git_ref():
 
 # ── the installer ────────────────────────────────────────────────────────────
 def test_installer_verifies_before_it_extracts():
-    assert "dist" in INSTALL and "shasum" in INSTALL, (
-        "npm's published sha1 must be checked — a mismatch is a corrupt or substituted "
-        "artifact and either way we stop")
-    assert INSTALL.index("sha1 mismatch") < INSTALL.index("tar xzf"), (
-        "the hash is verified BEFORE extraction, not after")
+    assert "dist" in INSTALL and "integrity" in INSTALL, (
+        "npm's published SHA-512 integrity must be checked in addition to our recorded hash")
+    assert "opencode_darwin_arm64_sha256" in INSTALL \
+        and "opencode_darwin_x64_sha256" in INSTALL
+    assert INSTALL.index("recorded SHA-256 and npm SHA-512 verified") \
+        < INSTALL.index("tar xzf"), (
+            "both independent hashes are verified BEFORE extraction, not after")
     assert "optionalDependencies" in INSTALL, (
         "the platform package's version is read out of opencode-ai's own metadata "
         "rather than assumed — an upstream re-pin must trip here, not silently install "

@@ -31,10 +31,14 @@ command -v node >/dev/null || say "Node.js not found — Hermes's dashboard buil
 # install_component.sh uses for VB_UV: a Finder-launched app gets a MINIMAL PATH, so
 # `command -v uv` alone misses a perfectly good uv in ~/.local/bin (its own default
 # install location). That single miss already cost us one failed voicebox install.
-UV_DIR="$ROOT/data/uv/bin"
+UV_DIR="${UV_DEST:-$ROOT/data/uv/bin}"
 UV_BIN=""
-for _u in "$(command -v uv || true)" "$UV_DIR/uv" "$HOME/.local/bin/uv" \
-          /opt/homebrew/bin/uv /usr/local/bin/uv "$HOME/.cargo/bin/uv"; do
+UV_CANDIDATES=("$UV_DIR/uv")
+if [[ "${UV_IGNORE_PATH:-0}" != "1" ]]; then
+  UV_CANDIDATES=("$(command -v uv || true)" "$UV_DIR/uv" "$HOME/.local/bin/uv"
+                 /opt/homebrew/bin/uv /usr/local/bin/uv "$HOME/.cargo/bin/uv")
+fi
+for _u in "${UV_CANDIDATES[@]}"; do
   [[ -n "$_u" && -x "$_u" ]] && { UV_BIN="$_u"; break; }
 done
 
@@ -49,17 +53,25 @@ else
   # Pin lives in harness.yaml build.uv_pin; same awk reader as ensure_bun.sh.
   _yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' harness.yaml; }
   UV_PIN="${UV_PIN:-$(_yb uv_pin)}"
-  if [[ -n "$UV_PIN" ]]; then
-    UV_URL="https://astral.sh/uv/${UV_PIN}/install.sh"
-    say "Installing uv ${UV_PIN} → ${UV_DIR} (nothing is written outside this folder)…"
-  else
-    # A missing pin must not brick a fresh Mac: warn loudly, install latest.
-    UV_URL="https://astral.sh/uv/install.sh"
-    say "WARN: build.uv_pin missing from harness.yaml — installing the LATEST uv (unpinned)."
-  fi
+  UV_SHA256="$(_yb uv_installer_sha256)"
+  [[ -n "$UV_PIN" ]] || fail "build.uv_pin is missing; refusing an unpinned installer"
+  [[ "$UV_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+    || fail "build.uv_installer_sha256 must be a recorded 64-character digest"
+  UV_URL="https://astral.sh/uv/${UV_PIN}/install.sh"
+  say "Installing uv ${UV_PIN} → ${UV_DIR} (nothing is written outside this folder)…"
   mkdir -p "$UV_DIR"
-  curl -LsSf "$UV_URL" | env UV_UNMANAGED_INSTALL="$UV_DIR" sh \
-    || fail "uv install failed — tried: $UV_URL  (see https://astral.sh/uv)"
+  UV_INSTALLER="$UV_DIR/.install-${UV_PIN}.$$"
+  cleanup_uv_installer() { rm -f "$UV_INSTALLER"; }
+  trap cleanup_uv_installer EXIT INT TERM
+  curl -LsSf -o "$UV_INSTALLER" "$UV_URL" \
+    || fail "uv installer download failed — tried: $UV_URL"
+  UV_GOT=$(shasum -a 256 "$UV_INSTALLER" | awk '{print $1}')
+  [[ "$UV_GOT" == "$UV_SHA256" ]] \
+    || fail "uv installer sha256 MISMATCH: got $UV_GOT, expected $UV_SHA256"
+  env UV_UNMANAGED_INSTALL="$UV_DIR" sh "$UV_INSTALLER" \
+    || fail "uv install failed — verified installer: $UV_URL"
+  cleanup_uv_installer
+  trap - EXIT INT TERM
   UV_BIN="$UV_DIR/uv"
   [[ -x "$UV_BIN" ]] || fail "uv installed but $UV_BIN is not executable — tried: $UV_URL"
   say "$("$UV_BIN" --version 2>/dev/null || echo 'uv ?') installed → $UV_BIN"

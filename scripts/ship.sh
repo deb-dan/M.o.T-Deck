@@ -509,8 +509,10 @@ fi
 # harness.yaml is NEVER copied wholesale (the snapshot's copy holds LIVE state:
 # installed flags, runner.model, aux.model). But a NEW component or build pin added
 # in the repo would then never reach the app — its card simply never appears. So:
-# ADDITIVE merge only. Existing keys/values in the snapshot are never touched; new
-# components arrive as installed:false (install state is per-machine).
+# ADDITIVE merge by default. Existing keys/values in the snapshot are never touched;
+# new components arrive as installed:false (install state is per-machine). The one
+# named exception is a compare-and-swap migration of SearXNG's repo-owned historical
+# literal `main` default to its audited exact commit. Any other live pin is preserved.
 # One stdlib transaction now owns every harness.yaml write: flock, latest read,
 # line-preserving additive transform, same-directory fsync+replace. It never serializes
 # live state through PyYAML, so empty values cannot become literal `null` and comments,
