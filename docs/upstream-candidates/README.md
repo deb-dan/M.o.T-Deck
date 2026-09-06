@@ -7,34 +7,48 @@ fork.
 
 | Issues | Upstream baseline | Patch | Current boundary |
 | --- | --- | --- | --- |
-| U72 | Hermes `ee5b5ec21e576ccf9b941f9ff71330418415a5cb` | `U72-hermes-local-confinement.patch` | Direct-filesystem-write confinement candidate; upstream acceptance, release, pin bump and M.O.T real-lane validation still required. |
-| U139/U142 | Odysseus `934d23c0be29c9721385f34565c0ae2cbd60da04` | `U139-U142-odysseus-idempotence-managed-endpoints.patch` | Upstream idempotent Direct-turn and managed-endpoint primitives; M.O.T callers intentionally do not exist before a released pin. |
-| U144 | Goose `5e90925962f05acf8e255032de44d16c4a7768a2` | `U144-goose-provider-delete.patch` | Provider-owned transactional deletion candidate; upstream acceptance, release, pin bump and real Goose UI delete/restart/re-list still required. |
+| U72 | Hermes `ee5b5ec21e576ccf9b941f9ff71330418415a5cb` | `U72-hermes-local-confinement.patch` | **Rejected forensic artifact:** a pre-existing hard link under an allowed root writes the same inode outside it. Do not submit or apply. |
+| U139 | Odysseus `934d23c0be29c9721385f34565c0ae2cbd60da04` | `U139-odysseus-idempotent-direct-turn.patch` | **Verified upstream candidate, not accepted:** 24/24 focused cases plus the controlled full comparison pass; normal-context patch applies cleanly to the exact baseline; wait for maintainer agreement before offering a PR. |
+| U139/U142 historical | Odysseus `934d23c0be29c9721385f34565c0ae2cbd60da04` | `U139-U142-odysseus-idempotence-managed-endpoints.patch` | **Mixed forensic artifact:** superseded U139 plus rejected U142. Do not submit or apply. |
+| U144 | Goose `5e90925962f05acf8e255032de44d16c4a7768a2` | `U144-goose-provider-delete.patch` | **Rejected forensic artifact:** generated-looking secret names are not ownership, and its lock does not cover every config writer. Do not submit or apply. |
 
 Submission preparation is also preserved here:
 
 - U72 has an existing issue/PR, so `U72-HERMES-PR-COMMENT.md` records the submitted
-  maintainer-direction request instead of a competing PR.
-- U139 and U142 are now separate Odysseus issues #6255 and #6256; their combined evidence
-  patch is not a valid one-change PR and will be split only after the contracts are
-  accepted.
+  maintainer-direction request instead of a competing PR. That comment predates the
+  adversarial hard-link finding and now requires an upstream correction.
+- U139 and U142 are now separate Odysseus issues #6255 and #6256. U139 has been isolated
+  from rejected U142 and passes the exact sibling-worktree comparison, but its public
+  evidence correction must be posted and its API direction accepted before a PR. U142's
+  posted implementation-evidence paragraph also requires correction before further code.
 - U144 has a human-submission issue draft because Goose explicitly requires the reporter
-  to write the issue and reach **Ready** before code is submitted.
+  to write the issue and reach **Ready** before code is submitted. The draft states the
+  required behavior but no longer promotes the rejected implementation.
 
-Each patch was generated with `git diff --binary --full-index --unified=0` from an
-isolated clone and checked with `git apply --check --unidiff-zero` against a clean
-checkout of the baseline above. Zero context avoids storing unified-diff blank-context
-spaces that would weaken M.O.T's own trailing-whitespace gate; the full blob indices and
-exact baseline commit keep the target identity explicit.
+The original artifacts were generated with `git diff --binary --full-index --unified=0`.
+A 2026-09-06 rehydration audit found that the three zero-context files do not apply with
+ordinary `git apply --check` even though their surviving isolated worktree diffs do apply
+cleanly to the exact recorded HEADs. U72 remains untouched as rejected forensic evidence;
+any future viable candidate must be regenerated with normal context and rechecked before
+submission. Reproducibility is part of the candidate, not clerical polish.
+
+Normal-context patch syntax represents an unchanged blank source line as one literal
+context-marker space. `.gitattributes` therefore disables only Git's plain-file
+`blank-at-eol` diagnostic for patch artifacts in this directory; otherwise
+`git diff --check` reports valid patch grammar as whitespace damage. This is not the
+source-code check. Every viable patch must still pass
+`git apply --whitespace=error-all --check <patch>` from its exact recorded upstream base,
+which validates the whitespace in the code the patch would actually add.
 The issue specifications beside this directory record the threat model, rejected
 shortcuts, test footprint, baseline failures, and remaining release work.
 
 The evidence is deliberately not summarized as “baseline-equivalent, therefore green.”
-U72's exact ten macOS failures and seven opposite-platform skips, U139/U142's exact ten
-macOS/environment failures and four optional/platform skips, and U144's corrected
+U72's exact ten macOS failures and seven opposite-platform skips, U139's final controlled
+seven baseline failures and four optional/platform skips, U139/U142's historical
+ten-failure mixed run, and U144's historical
 Goose-supported **495/495** provider lane are enumerated in their issue specifications.
-Those classifications prove candidate attribution only; unresolved upstream reds and
-unexecuted platform branches remain explicit assurance gaps.
+Those classifications prove attribution only; they do not validate the rejected
+predicates or replace the required post-correction runs.
 
 Do not apply these files directly to `vendor/`. The project's zero-fork doctrine
 requires the corresponding upstream project to accept and release the behavior before

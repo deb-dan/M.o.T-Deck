@@ -4,6 +4,11 @@ API: make owner-scoped Direct-turn insertion idempotent under retries
 
 **Submitted:** https://github.com/odysseus-dev/odysseus/issues/6255
 
+**Historical submitted body:** the implementation-evidence numbers below were withdrawn
+after adversarial review. The prepared correction is
+`U139-ODYSSEUS-CORRECTION-COMMENT.md`; use the post-correction isolated evidence in the
+Fable spec, never silently rewrite this record of what was posted.
+
 # Issue body
 
 ## Problem

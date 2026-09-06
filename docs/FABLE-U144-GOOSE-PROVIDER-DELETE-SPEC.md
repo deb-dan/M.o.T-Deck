@@ -1,7 +1,8 @@
 # U144 — Goose provider deletion must be one owner transaction
 
 **Date:** 2026-09-06
-**Status:** current-main upstream candidate prepared; not released, pinned or shipped.
+**Status:** first current-main transaction candidate rejected after adversarial
+ownership/concurrency review; not released, pinned or shipped.
 
 ## Proven premise
 
@@ -67,9 +68,9 @@ no residue on this installation, but that one named cleanup is not a general pro
 fix. Neither Goose 1.49.0 nor current main closes the upstream gap, so no upgrade or
 local watcher is shipped under this issue.
 
-## Current-main candidate
+## Rejected current-main candidate
 
-An isolated Goose-main patch now makes the provider's own delete operation converge the
+An isolated Goose-main patch attempted to make the provider's own delete operation converge the
 definition, generated provider-owned secret and exact `providers.<id>` stanza under an
 in-process mutex plus cross-process file lock. Before deleting anything it atomically
 persists a private, fsynced intent. Startup rolls incomplete intents forward; completed
@@ -102,12 +103,32 @@ passed serially, did not reproduce on clean-main broad parallel, and is green in
 supported feature lane. It remains recorded as an upstream parallel test-isolation signal,
 not silently counted as a pass and not attributed to U144.
 
-This candidate uses journal persistence as the transaction commit point: no resource changes
-before that point; deterministic roll-forward after it. Goose's existing ACP response schema
-returns the exact provider ID but not per-file deletion details, so the candidate does not
-pretend the UI has a richer receipt. M.O.T still requires upstream acceptance/release, a pin
-bump, and the real Goose UI delete→restart→re-list journey before U144 can close.
-The candidate is preserved at
+Adversarial review then found two premise failures, so the candidate is rejected despite
+those green lanes:
+
+- It inferred ownership of a secret from
+  `api_key_env == generate_api_key_name(provider_id)`. A hand-authored provider may
+  legitimately reference that same environment-variable name. A permanent test creates
+  exactly that provider, stores a user-owned secret, deletes the provider, and currently
+  fails because the candidate deletes the user's secret. Generated-looking spelling is
+  not provenance.
+- Its deletion lock coordinates the new provider create/update/delete paths, but Goose
+  has other configuration writers using a different per-process mutex and temp-file
+  replacement. Locking a temporary output file is not a stable cross-process mutation
+  lock. Concurrent unrelated config changes can still be lost, so the transaction is
+  not yet over the complete writer graph.
+
+A replacement needs explicit persisted secret-origin metadata at provider creation
+(legacy/unknown origin must never authorize secret deletion), plus one stable mutation
+lock and recovery protocol shared by every writer of the affected configuration. Corrupt
+configuration must fail closed rather than marking an intent complete before the stanza
+can be examined. Only after those predicates are implemented can the earlier interruption,
+ID-reuse and byte-preservation tests support a transaction claim.
+
+Goose's existing ACP response schema returns the exact provider ID but not per-file
+deletion details, so M.O.T cannot repair this from the renderer. Upstream acceptance,
+release, a pin bump, and the real Goose UI delete→restart→re-list journey remain required
+before U144 can close. The rejected candidate and failing ownership test are preserved at
 `docs/upstream-candidates/U144-goose-provider-delete.patch`.
 
 Goose's contribution process is stricter than patch readiness: the reporter must write
@@ -115,5 +136,6 @@ the issue, the issue must reach **Ready** on the public board, and only then may
 external PR implement the agreed design. The duplicate search found related UI/cache
 deletion reports but no issue for the exact orphaned `providers.<id>` stanza transaction.
 The human-submission draft is preserved at
-`docs/upstream-candidates/U144-GOOSE-ISSUE-DRAFT.md`. The candidate will not be posted
-ahead of that process.
+`docs/upstream-candidates/U144-GOOSE-ISSUE-DRAFT.md`. It has been corrected so it no
+longer advertises this rejected implementation. No code will be posted ahead of that
+process.

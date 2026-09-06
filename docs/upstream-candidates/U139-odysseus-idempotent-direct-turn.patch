@@ -1,0 +1,986 @@
+diff --git a/core/database.py b/core/database.py
+index 65ad403162e7920b9b24d557fc5cfc446ae0f960..7c25516cea12680ce61cf490fb2983596a22d23e 100644
+--- a/core/database.py
++++ b/core/database.py
+@@ -268,6 +268,7 @@ class ChatMessage(Base):
+     role = Column(String, nullable=False)
+     content = Column(Text, nullable=False)
+     meta_data = Column("metadata", Text, nullable=True)  # JSON string for metrics etc.
++    client_request_id = Column(String, nullable=True)
+ 
+     # Timestamp
+     timestamp = Column(DateTime, default=utcnow_naive)
+@@ -278,8 +279,61 @@ class ChatMessage(Base):
+     # Indexes - optimized composite
+     __table_args__ = (
+         Index('ix_messages_session_time', 'session_id', 'timestamp'),  # Composite for efficient message retrieval
++        Index(
++            'ux_messages_session_client_request_role',
++            'session_id', 'client_request_id', 'role',
++            unique=True,
++        ),
+     )
+ 
++
++def _migrate_add_chat_message_request_id():
++    """Add the request receipt used by idempotent external transcript writes."""
++    if engine.dialect.name != "sqlite":
++        try:
++            with engine.begin() as conn:
++                if not inspect(conn).has_table(ChatMessage.__tablename__):
++                    return
++                columns = {
++                    column["name"]
++                    for column in inspect(conn).get_columns(ChatMessage.__tablename__)
++                }
++                if "client_request_id" not in columns:
++                    conn.execute(text(
++                        "ALTER TABLE chat_messages "
++                        "ADD COLUMN client_request_id VARCHAR"
++                    ))
++                next(
++                    index
++                    for index in ChatMessage.__table__.indexes
++                    if index.name == "ux_messages_session_client_request_role"
++                ).create(bind=conn, checkfirst=True)
++        except Exception as exc:
++            logger.warning("chat message request-id migration failed: %s", exc)
++        return
++
++    db_path = DATABASE_URL.replace("sqlite:///", "")
++    if not os.path.exists(db_path):
++        return
++    conn = None
++    try:
++        conn = sqlite3.connect(db_path)
++        columns = [row[1] for row in conn.execute("PRAGMA table_info(chat_messages)")]
++        if "client_request_id" not in columns:
++            conn.execute("ALTER TABLE chat_messages ADD COLUMN client_request_id VARCHAR")
++        conn.execute(
++            "CREATE UNIQUE INDEX IF NOT EXISTS "
++            "ux_messages_session_client_request_role "
++            "ON chat_messages(session_id, client_request_id, role) "
++            "WHERE client_request_id IS NOT NULL"
++        )
++        conn.commit()
++    except Exception as exc:
++        logger.warning("chat message request-id migration failed: %s", exc)
++    finally:
++        if conn is not None:
++            conn.close()
++
+ class Document(TimestampMixin, Base):
+     """Living document that the AI can create and edit in-place."""
+     __tablename__ = "documents"
+@@ -2113,6 +2167,7 @@ def init_db():
+     _migrate_add_owner_column()
+     _migrate_add_document_archived_column()
+     _migrate_add_last_message_at_column()
++    _migrate_add_chat_message_request_id()
+     _migrate_add_folder_column()
+     _migrate_add_token_columns()
+     _migrate_add_mode_column()
+diff --git a/core/session_manager.py b/core/session_manager.py
+index eeb9c2a164e878b355fd296dbfc1c0cb9af10d3e..0a28e14de3d1a09e79b2f8de4a24b662704e2e7c 100644
+--- a/core/session_manager.py
++++ b/core/session_manager.py
+@@ -14,7 +14,8 @@ import logging
+ from datetime import datetime, timezone, timedelta
+ from typing import Dict, Optional
+ 
+-from sqlalchemy import func
++from sqlalchemy import func, text
++from sqlalchemy.exc import IntegrityError
+ 
+ from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal, utcnow_naive
+ from .models import Session, ChatMessage
+@@ -27,6 +28,14 @@ from .models import set_session_manager_instance, get_session_manager_instance
+ logger = logging.getLogger(__name__)
+ 
+ 
++class IdempotentMessageConflict(ValueError):
++    pass
++
++
++class IdempotentMessageUploadMissing(ValueError):
++    pass
++
++
+ def _message_timestamp_iso(value: Optional[datetime]) -> Optional[str]:
+     """Return a stable ISO timestamp for chat message metadata."""
+     if not value:
+@@ -308,6 +317,122 @@ class SessionManager:
+         finally:
+             db.close()
+ 
++    def put_idempotent_messages(
++        self,
++        session_id: str,
++        request_id: str,
++        messages: list[ChatMessage],
++        owner: str | None = None,
++    ) -> dict:
++        """Insert each requested role once and return its stable database receipt."""
++        desired = {message.role: message for message in messages}
++        if len(desired) != len(messages):
++            raise ValueError("each role may appear only once")
++
++        for attempt in range(2):
++            db = SessionLocal()
++            try:
++                session_query = db.query(DbSession).filter(
++                    DbSession.id == session_id
++                )
++                if owner is not None:
++                    # A plain SELECT followed by INSERT leaves an ownership-change
++                    # race between the route gate and this transaction. SQLite has
++                    # no row-level SELECT FOR UPDATE, so acquire its write lock
++                    # before the read; other supported databases lock the session
++                    # row itself without performing a data update.
++                    if db.get_bind().dialect.name == "sqlite":
++                        db.execute(text("BEGIN IMMEDIATE"))
++                    else:
++                        session_query = session_query.with_for_update()
++                db_session = session_query.first()
++                if db_session is None:
++                    self.sessions.pop(session_id, None)
++                    raise KeyError(session_id)
++                if owner is not None and db_session.owner != owner:
++                    raise KeyError(session_id)
++
++                rows = db.query(DbChatMessage).filter(
++                    DbChatMessage.session_id == session_id,
++                    DbChatMessage.client_request_id == request_id,
++                ).all()
++                existing = {row.role: row for row in rows}
++                if "assistant" in existing and "user" not in existing:
++                    raise IdempotentMessageConflict(
++                        "request id has an assistant receipt without its user receipt"
++                    )
++                if "assistant" in desired and "user" not in desired and "user" not in existing:
++                    raise IdempotentMessageConflict(
++                        "assistant receipt requires an existing user receipt"
++                    )
++                receipts = []
++                now = utcnow_naive()
++
++                for offset, message in enumerate(messages):
++                    metadata = dict(message.metadata or {})
++                    content = persistable_message_content(message.content, metadata)
++                    row = existing.get(message.role)
++                    if row is not None:
++                        try:
++                            stored_metadata = json.loads(row.meta_data) if row.meta_data else {}
++                        except (TypeError, ValueError):
++                            stored_metadata = None
++                        if row.content != content or stored_metadata != metadata:
++                            raise IdempotentMessageConflict(
++                                f"request id already has different {message.role} content"
++                            )
++                        receipts.append({"role": message.role, "id": row.id, "inserted": False})
++                        continue
++
++                    missing_upload_id = reserve_message_upload_references(
++                        getattr(self, "upload_handler", None),
++                        getattr(db_session, "owner", None),
++                        message.content,
++                        metadata,
++                    )
++                    if missing_upload_id:
++                        raise IdempotentMessageUploadMissing(missing_upload_id)
++
++                    row = DbChatMessage(
++                        id=str(uuid.uuid4()),
++                        session_id=session_id,
++                        role=message.role,
++                        content=content,
++                        meta_data=json.dumps(metadata) if metadata else None,
++                        client_request_id=request_id,
++                        timestamp=now + timedelta(microseconds=offset),
++                    )
++                    db.add(row)
++                    receipts.append({"role": message.role, "id": row.id, "inserted": True})
++
++                inserted = sum(1 for receipt in receipts if receipt["inserted"])
++                if inserted:
++                    db.flush()
++                    db_session.message_count = db.query(func.count(DbChatMessage.id)).filter(
++                        DbChatMessage.session_id == session_id
++                    ).scalar()
++                    db_session.last_accessed = now
++                    db_session.last_message_at = now
++                    db_session.updated_at = now
++                db.commit()
++                self._load_session_from_db(session_id)
++                return {
++                    "request_id": request_id,
++                    "status": "inserted" if inserted else "already_present",
++                    "messages": receipts,
++                }
++            except IntegrityError:
++                db.rollback()
++                if attempt:
++                    raise
++            except Exception:
++                db.rollback()
++                raise
++            finally:
++                db.close()
++
++        raise RuntimeError("idempotent message insertion did not resolve")
++
+     def truncate_messages(self, session_id: str, keep_count: int) -> bool:
+         """Truncate session history, keeping only the first `keep_count` messages."""
+         session = self.get_session(session_id)
+diff --git a/routes/session_routes.py b/routes/session_routes.py
+index 895d80b2cbf28792758a111c0e23982597539872..aa20d972ae59e232602524fe90a7f33cc2f10866 100644
+--- a/routes/session_routes.py
++++ b/routes/session_routes.py
+@@ -7,7 +7,11 @@ from datetime import datetime
+ from fastapi import APIRouter, Form, HTTPException, Response, Request, Depends
+ import logging
+ 
+-from core.session_manager import SessionManager
++from core.session_manager import (
++    IdempotentMessageConflict,
++    IdempotentMessageUploadMissing,
++    SessionManager,
++)
+ from core.models import ChatMessage
+ from src.request_models import SessionResponse
+ from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
+@@ -121,12 +125,12 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
+     if row is not None:
+         if user and row.owner != user:
+             raise HTTPException(404, f"Session {session_id} not found")
+-        return
++        return user
+     # No DB row — allow the caller to act on an in-memory ghost they own.
+     if session_manager is not None:
+         ghost = getattr(session_manager, "sessions", {}).get(session_id)
+         if ghost is not None and (not user or getattr(ghost, "owner", None) == user):
+-            return
++            return user
+     raise HTTPException(404, f"Session {session_id} not found")
+ 
+ logger = logging.getLogger(__name__)
+@@ -606,6 +610,50 @@ def setup_session_routes(
+         session_manager.save_sessions()
+         return {"ok": True, "count": len(messages)}
+ 
++    @router.put("/session/{sid}/direct-turn/{request_id}")
++    async def put_direct_turn(request: Request, sid: str, request_id: str):
++        """Idempotently add the user and/or assistant side of one external turn."""
++        owner = _verify_session_owner(request, sid)
++        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", request_id or ""):
++            raise HTTPException(400, "invalid request id")
++        try:
++            body = await request.json()
++            raw_messages = body.get("messages")
++            if not isinstance(raw_messages, list) or not 1 <= len(raw_messages) <= 2:
++                raise ValueError("messages must contain one or two rows")
++            messages = []
++            roles = []
++            for raw in raw_messages:
++                if not isinstance(raw, dict):
++                    raise ValueError("a message is not an object")
++                role = raw.get("role")
++                content = raw.get("content")
++                if role not in ("user", "assistant") or not isinstance(content, str) or not content:
++                    raise ValueError("messages require a non-empty user or assistant content")
++                metadata = sanitize_client_message_metadata(raw.get("metadata"))
++                roles.append(role)
++                messages.append(ChatMessage(role, content, metadata=metadata))
++            if len(set(roles)) != len(roles) or roles != sorted(roles, key=("user", "assistant").index):
++                raise ValueError("messages must contain user then assistant, without duplicate roles")
++        except HTTPException:
++            raise
++        except (AttributeError, TypeError, ValueError) as exc:
++            raise HTTPException(400, str(exc)) from exc
++
++        try:
++            receipt = session_manager.put_idempotent_messages(
++                sid, request_id, messages, owner=owner
++            )
++        except KeyError:
++            raise HTTPException(404, f"Session {sid} not found")
++        except IdempotentMessageConflict as exc:
++            raise HTTPException(409, str(exc)) from exc
++        except IdempotentMessageUploadMissing as exc:
++            raise HTTPException(
++                409, f"Referenced upload is no longer available: {exc}"
++            ) from exc
++        return {"ok": True, **receipt}
++
+     @router.post("/session/{sid}/delete")
+     def delete_session_beacon(request: Request, sid: str):
+         """Delete session via POST (for navigator.sendBeacon on page close)."""
+diff --git a/tests/test_idempotent_direct_turn.py b/tests/test_idempotent_direct_turn.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..f2cd4aa1bc0ac241e6790522185b356c3a3beb10
+--- /dev/null
++++ b/tests/test_idempotent_direct_turn.py
+@@ -0,0 +1,663 @@
++"""Exactly-once storage receipts for externally generated chat turns."""
++
++import concurrent.futures
++import asyncio
++import json
++import os
++import sqlite3
++import threading
++import uuid
++
++import pytest
++
++import core.database as cdb
++import core.session_manager as session_manager_module
++from core.models import ChatMessage
++from tests.helpers.sqlite_db import make_temp_sqlite
++
++
++@pytest.fixture
++def direct_turn_db(monkeypatch):
++    SessionLocal, engine, tmpfile = make_temp_sqlite(cdb.Base.metadata)
++    monkeypatch.setattr(session_manager_module, "SessionLocal", SessionLocal)
++    try:
++        yield SessionLocal
++    finally:
++        engine.dispose()
++        tmpfile.close()
++        try:
++            os.unlink(tmpfile.name)
++        except OSError:
++            pass
++
++
++def _manager():
++    manager = session_manager_module.SessionManager.__new__(
++        session_manager_module.SessionManager
++    )
++    manager.sessions = {}
++    manager.upload_handler = None
++    return manager
++
++
++def _seed_session(SessionLocal, *, owner="alice"):
++    session_id = "direct-" + uuid.uuid4().hex
++    db = SessionLocal()
++    try:
++        db.add(cdb.Session(
++            id=session_id,
++            owner=owner,
++            name="External direct turn",
++            model="test-model",
++            endpoint_url="http://localhost:11434",
++            archived=False,
++            message_count=0,
++        ))
++        db.commit()
++    finally:
++        db.close()
++    return session_id
++
++
++def _rows(SessionLocal, session_id):
++    db = SessionLocal()
++    try:
++        return [
++            {
++                "id": row.id,
++                "role": row.role,
++                "content": row.content,
++                "metadata": json.loads(row.meta_data) if row.meta_data else {},
++                "request_id": row.client_request_id,
++            }
++            for row in db.query(cdb.ChatMessage)
++            .filter(cdb.ChatMessage.session_id == session_id)
++            .order_by(cdb.ChatMessage.timestamp, cdb.ChatMessage.id)
++            .all()
++        ]
++    finally:
++        db.close()
++
++
++def test_identical_replay_returns_the_original_receipt(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-replay"
++    message = ChatMessage("user", "Keep this once", {"source": "mot-direct"})
++
++    first = _manager().put_idempotent_messages(session_id, request_id, [message])
++    replay = _manager().put_idempotent_messages(session_id, request_id, [message])
++
++    assert first["status"] == "inserted"
++    assert replay["status"] == "already_present"
++    assert first["messages"][0]["id"] == replay["messages"][0]["id"]
++    assert first["messages"][0]["inserted"] is True
++    assert replay["messages"][0]["inserted"] is False
++    assert _rows(SessionLocal, session_id) == [{
++        "id": first["messages"][0]["id"],
++        "role": "user",
++        "content": "Keep this once",
++        "metadata": {"source": "mot-direct"},
++        "request_id": request_id,
++    }]
++
++
++def test_partial_retry_adds_only_the_missing_role(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-partial"
++    user = ChatMessage("user", "Question", {"sequence": 1})
++    assistant = ChatMessage("assistant", "Answer", {"sequence": 2})
++
++    user_receipt = _manager().put_idempotent_messages(
++        session_id, request_id, [user]
++    )
++    completed = _manager().put_idempotent_messages(
++        session_id, request_id, [user, assistant]
++    )
++    replay = _manager().put_idempotent_messages(
++        session_id, request_id, [user, assistant]
++    )
++
++    assert completed["status"] == "inserted"
++    assert [row["inserted"] for row in completed["messages"]] == [False, True]
++    assert replay["status"] == "already_present"
++    assert [row["inserted"] for row in replay["messages"]] == [False, False]
++    assert completed["messages"][0]["id"] == user_receipt["messages"][0]["id"]
++    assert len(_rows(SessionLocal, session_id)) == 2
++
++
++def test_assistant_only_can_complete_an_existing_user_receipt(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-assistant-continuation"
++    manager = _manager()
++    manager.put_idempotent_messages(
++        session_id,
++        request_id,
++        [ChatMessage("user", "Question")],
++    )
++
++    completed = manager.put_idempotent_messages(
++        session_id,
++        request_id,
++        [ChatMessage("assistant", "Answer")],
++    )
++
++    assert completed["status"] == "inserted"
++    assert [row["role"] for row in _rows(SessionLocal, session_id)] == [
++        "user",
++        "assistant",
++    ]
++
++
++def test_assistant_cannot_be_the_first_receipt(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++
++    with pytest.raises(
++        session_manager_module.IdempotentMessageConflict,
++        match="requires an existing user receipt",
++    ):
++        _manager().put_idempotent_messages(
++            session_id,
++            "mot-direct:test-assistant-first",
++            [ChatMessage("assistant", "Must not precede its user")],
++        )
++
++    assert _rows(SessionLocal, session_id) == []
++
++
++@pytest.mark.parametrize(
++    "replacement",
++    [
++        ChatMessage("user", "Different text", {"sequence": 1}),
++        ChatMessage("user", "Question", {"sequence": 999}),
++    ],
++)
++def test_conflicting_replay_is_rejected_without_mutation(
++    direct_turn_db,
++    replacement,
++):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-conflict"
++    original = ChatMessage("user", "Question", {"sequence": 1})
++    manager = _manager()
++    manager.put_idempotent_messages(session_id, request_id, [original])
++    before = _rows(SessionLocal, session_id)
++
++    with pytest.raises(
++        session_manager_module.IdempotentMessageConflict,
++        match="different user content",
++    ):
++        manager.put_idempotent_messages(session_id, request_id, [replacement])
++
++    assert _rows(SessionLocal, session_id) == before
++
++
++def test_conflicting_replay_does_not_touch_attachment_reservations(
++    direct_turn_db,
++    monkeypatch,
++):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-attachment-conflict"
++    manager = _manager()
++    calls = []
++    monkeypatch.setattr(
++        session_manager_module,
++        "reserve_message_upload_references",
++        lambda *_args: calls.append(_args) or None,
++    )
++    manager.put_idempotent_messages(
++        session_id,
++        request_id,
++        [ChatMessage("user", "Original")],
++    )
++    calls.clear()
++
++    with pytest.raises(session_manager_module.IdempotentMessageConflict):
++        manager.put_idempotent_messages(
++            session_id,
++            request_id,
++            [ChatMessage("user", "Conflicting")],
++        )
++
++    assert calls == []
++
++
++def test_identical_attachment_replay_preserves_metadata_without_rereserving(
++    direct_turn_db,
++    monkeypatch,
++):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-attachment-replay"
++    attachment_id = "a" * 32 + ".txt"
++    metadata = {
++        "source": "mot-direct",
++        "attachments": [{"id": attachment_id, "name": "evidence.txt"}],
++    }
++    calls = []
++    monkeypatch.setattr(
++        session_manager_module,
++        "reserve_message_upload_references",
++        lambda *args: calls.append(args) or None,
++    )
++    manager = _manager()
++    message = ChatMessage("user", "Review the attachment", metadata)
++
++    first = manager.put_idempotent_messages(session_id, request_id, [message])
++    assert len(calls) == 1
++    calls.clear()
++    replay = manager.put_idempotent_messages(session_id, request_id, [message])
++
++    assert first["status"] == "inserted"
++    assert replay["status"] == "already_present"
++    assert calls == []
++    assert _rows(SessionLocal, session_id)[0]["metadata"] == metadata
++
++
++def test_missing_attachment_aborts_before_any_message_row(direct_turn_db, monkeypatch):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    monkeypatch.setattr(
++        session_manager_module,
++        "reserve_message_upload_references",
++        lambda *_args: "missing-upload",
++    )
++
++    with pytest.raises(
++        session_manager_module.IdempotentMessageUploadMissing,
++        match="missing-upload",
++    ):
++        _manager().put_idempotent_messages(
++            session_id,
++            "mot-direct:test-missing-upload",
++            [ChatMessage("user", "Attachment")],
++        )
++
++    assert _rows(SessionLocal, session_id) == []
++
++
++def test_concurrent_identical_writers_commit_one_row(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-race"
++    message = ChatMessage("user", "Race me once", {"source": "mot-direct"})
++
++    def write_once():
++        return _manager().put_idempotent_messages(
++            session_id, request_id, [message]
++        )
++
++    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
++        receipts = list(pool.map(lambda _index: write_once(), range(2)))
++
++    assert sorted(receipt["status"] for receipt in receipts) == [
++        "already_present",
++        "inserted",
++    ]
++    rows = _rows(SessionLocal, session_id)
++    assert len(rows) == 1
++    assert {
++        receipt["messages"][0]["id"] for receipt in receipts
++    } == {rows[0]["id"]}
++
++
++def test_concurrent_identical_pair_writers_commit_one_ordered_pair(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-pair-race"
++
++    def write_once():
++        return _manager().put_idempotent_messages(
++            session_id,
++            request_id,
++            [
++                ChatMessage("user", "Question", {"sequence": 1}),
++                ChatMessage("assistant", "Answer", {"sequence": 2}),
++            ],
++        )
++
++    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
++        receipts = list(pool.map(lambda _index: write_once(), range(2)))
++
++    assert sorted(receipt["status"] for receipt in receipts) == [
++        "already_present",
++        "inserted",
++    ]
++    rows = _rows(SessionLocal, session_id)
++    assert [(row["role"], row["content"]) for row in rows] == [
++        ("user", "Question"),
++        ("assistant", "Answer"),
++    ]
++    stable_ids = {row["role"]: row["id"] for row in rows}
++    for receipt in receipts:
++        assert {row["role"]: row["id"] for row in receipt["messages"]} == stable_ids
++
++
++def test_user_only_racing_full_pair_converges_to_one_pair(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-partial-race"
++    user = ChatMessage("user", "Question", {"sequence": 1})
++    assistant = ChatMessage("assistant", "Answer", {"sequence": 2})
++
++    def write(messages):
++        return _manager().put_idempotent_messages(session_id, request_id, messages)
++
++    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
++        user_future = pool.submit(write, [user])
++        pair_future = pool.submit(write, [user, assistant])
++        user_receipt = user_future.result()
++        pair_receipt = pair_future.result()
++
++    assert user_receipt["messages"][0]["role"] == "user"
++    assert [row["role"] for row in pair_receipt["messages"]] == ["user", "assistant"]
++    assert [(row["role"], row["content"]) for row in _rows(SessionLocal, session_id)] == [
++        ("user", "Question"),
++        ("assistant", "Answer"),
++    ]
++
++
++def test_commit_before_response_loss_replays_the_committed_receipt(
++    direct_turn_db,
++    monkeypatch,
++):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-lost-response"
++    message = ChatMessage("user", "Committed before transport loss")
++    first_manager = _manager()
++    first_manager.get_session(session_id)
++
++    def lose_response_after_commit(_session_id):
++        raise ConnectionError("simulated response-path failure after commit")
++
++    monkeypatch.setattr(first_manager, "_load_session_from_db", lose_response_after_commit)
++    with pytest.raises(ConnectionError, match="after commit"):
++        first_manager.put_idempotent_messages(session_id, request_id, [message])
++
++    replay = _manager().put_idempotent_messages(session_id, request_id, [message])
++    rows = _rows(SessionLocal, session_id)
++    assert replay["status"] == "already_present"
++    assert replay["messages"] == [{
++        "role": "user",
++        "id": rows[0]["id"],
++        "inserted": False,
++    }]
++    assert len(rows) == 1
++
++
++def test_replay_does_not_advance_message_metadata(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    request_id = "mot-direct:test-metadata-once"
++    message = ChatMessage("user", "Stable metadata")
++    manager = _manager()
++
++    manager.put_idempotent_messages(session_id, request_id, [message])
++    db = SessionLocal()
++    try:
++        before = db.query(cdb.Session).filter(cdb.Session.id == session_id).one()
++        before_count = before.message_count
++        before_last_message_at = before.last_message_at
++        before_updated_at = before.updated_at
++    finally:
++        db.close()
++
++    manager.put_idempotent_messages(session_id, request_id, [message])
++    db = SessionLocal()
++    try:
++        after = db.query(cdb.Session).filter(cdb.Session.id == session_id).one()
++        assert after.message_count == before_count == 1
++        assert after.last_message_at == before_last_message_at
++        assert after.updated_at == before_updated_at
++    finally:
++        db.close()
++
++
++def test_deleted_session_cannot_receive_orphaned_messages(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal)
++    manager = _manager()
++    manager.get_session(session_id)
++    db = SessionLocal()
++    try:
++        db.query(cdb.Session).filter(cdb.Session.id == session_id).delete()
++        db.commit()
++    finally:
++        db.close()
++
++    with pytest.raises(KeyError):
++        manager.put_idempotent_messages(
++            session_id,
++            "mot-direct:test-deleted",
++            [ChatMessage("user", "Must not survive")],
++        )
++
++    assert _rows(SessionLocal, session_id) == []
++
++
++def test_transaction_rechecks_authenticated_owner_before_insertion(direct_turn_db):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal, owner="alice")
++    manager = _manager()
++    cached = object()
++    manager.sessions[session_id] = cached
++
++    with pytest.raises(KeyError):
++        manager.put_idempotent_messages(
++            session_id,
++            "mot-direct:test-owner-race",
++            [ChatMessage("user", "Must not cross owners")],
++            owner="bob",
++        )
++
++    assert _rows(SessionLocal, session_id) == []
++    assert manager.sessions[session_id] is cached
++
++
++def test_owner_change_serializes_behind_direct_turn_transaction(
++    direct_turn_db,
++    monkeypatch,
++):
++    SessionLocal = direct_turn_db
++    session_id = _seed_session(SessionLocal, owner="alice")
++    writer_locked = threading.Event()
++    release_writer = threading.Event()
++    rename_started = threading.Event()
++    rename_done = threading.Event()
++
++    def pause_after_owner_lock(*_args):
++        writer_locked.set()
++        assert release_writer.wait(5)
++        return None
++
++    monkeypatch.setattr(
++        session_manager_module,
++        "reserve_message_upload_references",
++        pause_after_owner_lock,
++    )
++
++    def write_turn():
++        return _manager().put_idempotent_messages(
++            session_id,
++            "mot-direct:test-owner-serialization",
++            [ChatMessage("user", "Owned at transaction start")],
++            owner="alice",
++        )
++
++    def rename_owner():
++        db = SessionLocal()
++        try:
++            rename_started.set()
++            row = db.query(cdb.Session).filter(cdb.Session.id == session_id).one()
++            row.owner = "bob"
++            db.commit()
++            rename_done.set()
++        finally:
++            db.close()
++
++    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
++        writer = pool.submit(write_turn)
++        assert writer_locked.wait(5)
++        renamer = pool.submit(rename_owner)
++        assert rename_started.wait(5)
++        assert not rename_done.wait(0.2)
++        release_writer.set()
++        receipt = writer.result(timeout=5)
++        renamer.result(timeout=5)
++
++    db = SessionLocal()
++    try:
++        assert db.query(cdb.Session).filter(cdb.Session.id == session_id).one().owner == "bob"
++    finally:
++        db.close()
++    assert receipt["status"] == "inserted"
++    assert [row["content"] for row in _rows(SessionLocal, session_id)] == [
++        "Owned at transaction start"
++    ]
++
++
++def test_legacy_sqlite_migration_adds_column_and_uniqueness(monkeypatch, tmp_path):
++    database_path = tmp_path / "legacy.db"
++    conn = sqlite3.connect(database_path)
++    try:
++        conn.execute(
++            "CREATE TABLE chat_messages ("
++            "id VARCHAR PRIMARY KEY, session_id VARCHAR NOT NULL, "
++            "role VARCHAR NOT NULL, content TEXT NOT NULL)"
++        )
++        conn.commit()
++    finally:
++        conn.close()
++
++    monkeypatch.setattr(cdb, "DATABASE_URL", f"sqlite:///{database_path}")
++    cdb._migrate_add_chat_message_request_id()
++    cdb._migrate_add_chat_message_request_id()
++
++    conn = sqlite3.connect(database_path)
++    try:
++        columns = {row[1] for row in conn.execute("PRAGMA table_info(chat_messages)")}
++        indexes = {row[1] for row in conn.execute("PRAGMA index_list(chat_messages)")}
++        assert "client_request_id" in columns
++        assert "ux_messages_session_client_request_role" in indexes
++        conn.execute(
++            "INSERT INTO chat_messages "
++            "(id, session_id, role, content, client_request_id) "
++            "VALUES ('one', 'session', 'user', 'first', 'request')"
++        )
++        with pytest.raises(sqlite3.IntegrityError):
++            conn.execute(
++                "INSERT INTO chat_messages "
++                "(id, session_id, role, content, client_request_id) "
++                "VALUES ('two', 'session', 'user', 'second', 'request')"
++            )
++        conn.rollback()
++        conn.execute(
++            "INSERT INTO chat_messages "
++            "(id, session_id, role, content, client_request_id) "
++            "VALUES ('null-one', 'session', 'user', 'legacy one', NULL)"
++        )
++        conn.execute(
++            "INSERT INTO chat_messages "
++            "(id, session_id, role, content, client_request_id) "
++            "VALUES ('null-two', 'session', 'user', 'legacy two', NULL)"
++        )
++        conn.commit()
++    finally:
++        conn.close()
++
++
++def test_route_validates_shape_and_returns_manager_receipt(monkeypatch):
++    import routes.session_routes as session_routes
++
++    class RequestStub:
++        def __init__(self, payload):
++            self._payload = payload
++
++        async def json(self):
++            return self._payload
++
++    class ManagerStub:
++        def __init__(self):
++            self.calls = []
++
++        def put_idempotent_messages(self, session_id, request_id, messages, owner=None):
++            self.calls.append((session_id, request_id, messages, owner))
++            return {
++                "request_id": request_id,
++                "status": "already_present",
++                "messages": [{"role": "user", "id": "stable", "inserted": False}],
++            }
++
++    monkeypatch.setattr(session_routes, "_verify_session_owner", lambda *_args: "alice")
++    monkeypatch.setattr(session_routes, "effective_user", lambda _request: "alice")
++    manager = ManagerStub()
++    configured = session_routes.setup_session_routes(manager, {})
++    endpoint = [
++        route.endpoint
++        for route in configured.routes
++        if getattr(route, "path", "") == "/api/session/{sid}/direct-turn/{request_id}"
++    ][-1]
++
++    result = asyncio.run(endpoint(
++        RequestStub({
++            "messages": [{
++                "role": "user",
++                "content": "Keep once",
++                "metadata": {"source": "mot-direct", "tool_events": ["forged"]},
++            }]
++        }),
++        sid="session",
++        request_id="mot-direct:route-proof",
++    ))
++
++    assert result["status"] == "already_present"
++    assert result["messages"][0]["id"] == "stable"
++    _sid, _request_id, messages, owner = manager.calls[0]
++    assert _sid == "session"
++    assert _request_id == "mot-direct:route-proof"
++    assert owner == "alice"
++    assert messages[0].metadata == {"source": "mot-direct"}
++
++
++@pytest.mark.parametrize(
++    "request_id,payload",
++    [
++        ("contains a space", {"messages": [{"role": "user", "content": "x"}]}),
++        ("valid", {"messages": []}),
++        ("valid", {"messages": [{"role": "system", "content": "x"}]}),
++        ("valid", {"messages": [{"role": "user", "content": ""}]}),
++        ("valid", {"messages": [
++            {"role": "assistant", "content": "answer"},
++            {"role": "user", "content": "question"},
++        ]}),
++    ],
++)
++def test_route_rejects_ambiguous_or_unstable_receipts(
++    monkeypatch,
++    request_id,
++    payload,
++):
++    import routes.session_routes as session_routes
++    from fastapi import HTTPException
++
++    class RequestStub:
++        async def json(self):
++            return payload
++
++    monkeypatch.setattr(session_routes, "_verify_session_owner", lambda *_args: None)
++    configured = session_routes.setup_session_routes(_manager(), {})
++    endpoint = [
++        route.endpoint
++        for route in configured.routes
++        if getattr(route, "path", "") == "/api/session/{sid}/direct-turn/{request_id}"
++    ][-1]
++
++    with pytest.raises(HTTPException) as failure:
++        asyncio.run(endpoint(RequestStub(), sid="session", request_id=request_id))
++    assert failure.value.status_code == 400

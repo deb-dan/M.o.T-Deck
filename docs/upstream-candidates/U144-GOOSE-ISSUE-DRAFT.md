@@ -53,7 +53,12 @@ owner.
 - unrelated configuration byte-for-byte preserved; and
 - real Desktop delete → restart → re-list journey.
 
-I have a reviewed current-main candidate using a fsynced private intent,
-cross-process lock, deterministic roll-forward, and durable tombstone. The supported
-Goose CI-shaped provider lane passes 495/495 tests and strict clippy passes. I will hold
-the implementation until the issue is triaged and the desired design reaches Ready.
+I reproduced the orphaned stanza and explored a current-main transaction candidate, but
+adversarial review rejected that implementation: it inferred secret ownership from a
+generated-looking environment-variable name, and its lock did not cover every Goose
+configuration writer. Those are exactly the kinds of partial fix this issue should avoid.
+
+The design needs explicit persisted provenance for provider-generated secrets (legacy or
+unknown provenance must preserve the secret), plus one stable mutation lock/recovery
+protocol shared by every writer of the affected configuration. I am seeking agreement on
+that ownership and transaction boundary before proposing code.

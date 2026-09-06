@@ -4,6 +4,11 @@ API: add explicit manager ownership and retry-safe key rotation for model endpoi
 
 **Submitted:** https://github.com/odysseus-dev/odysseus/issues/6256
 
+**Historical submitted body:** the implementation evidence and permanent URL-exclusivity
+language below were rejected after the complete endpoint-writer graph was audited. The
+prepared correction is `U142-ODYSSEUS-CORRECTION-COMMENT.md`; preserve this text only as
+the exact record of what was posted.
+
 # Issue body
 
 ## Problem

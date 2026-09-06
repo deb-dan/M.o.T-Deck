@@ -1,7 +1,8 @@
 # U72 — an OS execution boundary, not command-string theatre
 
 **Date:** 2026-09-05; upstream rechecked 2026-09-06
-**Status:** current-main upstream candidate prepared; not released, pinned or shipped.
+**Status:** current-main Seatbelt candidate rejected after adversarial hard-link testing;
+not released, pinned or shipped.
 
 ## Proven premise
 
@@ -41,12 +42,15 @@ file descriptors, return the final argv/environment, fail closed when unavailabl
 expose active enforcement in the tool result/audit. It may not fall back to an
 unconfined spawn after a setup failure.
 
-On this Mac, a narrowly scoped Seatbelt profile is a viable first provider:
-deny `file-write*` by default, allow only canonical project workspaces plus required
-canonical temporary roots, and functionally probe the policy before use. Apple's
-`sandbox-exec` CLI is deprecated, so the provider must be isolated behind this seam and
-have an explicit replacement path. The optional DeepSeek package is not a security
-dependency.
+The rejected Seatbelt experiment proves that a path allow-list over an ordinary host
+workspace is not a viable provider: pre-existing hard-link aliases defeat the write
+claim. A replacement must first provide an ownership boundary that removes that alias
+class—for example, a genuinely distinct writable filesystem with an explicit publication
+broker—or enforce and name a materially narrower contract. That is an architectural
+requirement, not permission to introduce Docker: M.O.T's Docker-free decision remains
+binding. Apple's `sandbox-exec` CLI is also deprecated, so a future provider must be
+replaceable behind the common spawn seam. The optional DeepSeek package is not a
+security dependency.
 
 User-typed TUI shell commands are host subprocesses today and are outside the current
 model-controlled-agent claim. If they are later included, that must be a visible
@@ -64,26 +68,41 @@ operator-selected sandbox mode, not a silent behavior change.
 - pre-open writable descriptors and inherited handles are closed or explicitly denied;
 - full Hermes tool/approval/session smoke with the provider enabled.
 
-## Current-main candidate
+## Rejected current-main candidate
 
-An isolated candidate against Hermes main `ee5b5ec21e…` now adds the missing provider
-at all four spawn seams without editing M.O.T's pinned vendor. The first provider is
-macOS Seatbelt. It canonicalizes existing writable roots, rejects `/`, denies filesystem
-writes elsewhere, denies outbound Unix-domain sockets (so a Docker socket cannot become
-an indirect filesystem escape), preserves ordinary IP networking and host reads, closes
-inherited descriptors at the subprocess/PTY boundaries, and reports
-`execution_confinement: macos-seatbelt` in foreground, background and kernel results.
+An isolated candidate against Hermes main `ee5b5ec21e…` added the missing provider at all
+four spawn seams without editing M.O.T's pinned vendor. Its first provider was macOS
+Seatbelt. It canonicalized existing writable roots, rejected `/`, denied path-addressed
+filesystem writes elsewhere, denied outbound Unix-domain sockets, preserved ordinary IP
+networking and host reads, closed inherited descriptors at the subprocess/PTY boundaries,
+and reported `execution_confinement: macos-seatbelt` in foreground, background and kernel
+results.
 
-Two real-host invariant tests cover direct shell/Python writes, symlink and hard-link
+That predicate is **rejected**. A hard link created *before* the child starts gives one
+inode two names. If one name is under an allowed root and the other is outside it,
+Seatbelt authorizes a write through the allowed name and the protected name changes too.
+The original invariant only tried to create the hard link from inside the sandbox; it
+proved that post-start link creation was blocked but did not test a pre-existing alias.
+The counterexample was reproduced on the real Mac: both paths had the same inode and a
+write through the allowed path changed the protected file from `original` to `mutated`.
+Therefore this path-filtering Seatbelt profile cannot honestly be called a complete
+direct-filesystem-write boundary for arbitrary existing writable roots.
+
+Two real-host invariant tests covered direct shell/Python writes, symlink and new hard-link
 escapes, subprocesses, delayed background children, background pipe and PTY paths, the
 persistent `execute_code` kernel, Unix-socket denial, allowed loopback TCP and allowed-root
 writes. A broad 16-file footprint comparison also caught an unacceptable first draft:
 checking the disabled default initialized `HERMES_HOME` and broke 16 existing environment
 tests. The corrected lookup is side-effect-free when neither user nor managed config exists,
 and the invariant test now writes a real temporary `config.yaml` instead of mocking the
-configuration result. The final candidate footprint is 294 passes, ten failures and seven
+configuration result. The candidate footprint was 294 passes, ten failures and seven
 platform skips; the same ten host-sensitive failures occur on the untouched upstream
 baseline, while both new real-boundary invariants pass.
+
+Those passes no longer establish the claimed boundary because the test oracle omitted
+the stronger pre-existing-hard-link case. A later rerun also produced nine rather than
+ten baseline failures because `test_timeout_kill_reaps_setsid_grandchild` passed on that
+run, confirming it is timing-sensitive. The other nine signatures remained identical.
 
 ### Exact baseline and platform classification
 
@@ -124,18 +143,21 @@ direct sequential pytest diagnostic reached 100% but did not complete teardown a
 roughly eight minutes and was terminated by exact PID. That teardown behavior is also
 unresolved upstream harness evidence; it is not hidden as a successful run.
 
-This is a direct-filesystem-write boundary, not a claim of full host isolation. It still
-allows host reads, ordinary IP networking, process creation and required IPC; a reachable
-HTTP service with mutation authority remains outside the filesystem predicate. The upstream
-documentation in the candidate states those limits explicitly. `sandbox-exec` is deprecated,
-so the provider seam—not Seatbelt itself—is the durable design.
+This was intended as a direct-filesystem-write boundary rather than full host isolation.
+Host reads, ordinary IP networking, process creation, required IPC and reachable mutation
+services were already explicit non-claims. The pre-existing-hard-link result defeats even
+that narrower write claim. `sandbox-exec` is also deprecated; neither the provider seam nor
+its label makes the rejected Seatbelt predicate sufficient.
 
 ## Current honest boundary
 
 U72 remains open in M.O.T. The current shipped file-tool guard is valuable but is not a
-shell execution boundary. A local patch to vendored Hermes would violate the zero-fork
-doctrine; the candidate must be accepted upstream, released, pin-bumped and re-walked on
-the real M.O.T Hermes lane before the app may enable or claim it.
+shell execution boundary. The Seatbelt candidate is rejected, not merely waiting for an
+upstream release. A replacement must eliminate the hard-link alias class or state and
+enforce a materially narrower contract; renaming the same path predicate is not a fix. A
+local patch to vendored Hermes would also violate the zero-fork doctrine. Any replacement
+still needs upstream acceptance, release, a pin bump and a real M.O.T Hermes lane walk
+before the app may enable or claim it.
 
 The upstream recheck did not change that result. M.O.T's pinned Hermes tag resolves to
 `bbc20510676c…`; upstream main resolved to `ee5b5ec21e…` on 2026-09-06. Both expose
@@ -146,12 +168,10 @@ registry still offers only local, Docker, Singularity, Modal, Daytona,
 Vercel Sandbox and SSH; it has no supported macOS local-confinement provider seam.
 
 Therefore there is still no code-only M.O.T release fix without either forking Hermes or
-pretending command filtering is confinement. The direct-write portion has been advanced
-to a reviewable upstream candidate in
-`docs/upstream-candidates/U72-hermes-local-confinement.patch`; it is not called complete
-confinement because host reads, IP-reachable mutation services and broader process
-authority remain outside its predicate. The shipped row remains blocked on upstream
-acceptance, a release, and a real M.O.T lane walk.
+pretending command filtering is confinement. The rejected implementation remains in
+`docs/upstream-candidates/U72-hermes-local-confinement.patch` as forensic evidence only;
+it is not a candidate to apply. The shipped row is blocked on a replacement architecture,
+then upstream acceptance, a release and a real M.O.T lane walk.
 
 ## Upstream submission route
 
@@ -167,4 +187,6 @@ Opening the Seatbelt candidate as a competing PR would violate Hermes's search-f
 rule and risk creating two generic policy seams. A focused coordination comment was
 therefore posted on #39004 asking whether maintainers want the macOS provider rebased as
 a supplement or as a follow-up after its policy seam settles. The submitted text and
-link are preserved at `docs/upstream-candidates/U72-HERMES-PR-COMMENT.md`.
+link are preserved at `docs/upstream-candidates/U72-HERMES-PR-COMMENT.md`. That comment
+predates the hard-link counterexample and must be corrected upstream before any further
+candidate is offered.

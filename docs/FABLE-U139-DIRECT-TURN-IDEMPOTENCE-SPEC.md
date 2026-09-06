@@ -1,7 +1,8 @@
 # U139 — exactly-once Direct Chat transcript insertion
 
 **Date:** 2026-09-05; upstream rechecked 2026-09-06
-**Status:** current-main upstream candidate prepared; not released, pinned or shipped.
+**Status:** isolated current-main upstream candidate passes the controlled baseline,
+focused, neighboring and repeated-race lanes; not accepted, released, pinned or shipped.
 
 ## Proven premise
 
@@ -59,7 +60,7 @@ That is materially safer than blind retry but is not mathematically exactly-once
 must stay open until the upstream transaction exists and M.O.T pins/tests it. No local
 code change in this wave can honestly close it.
 
-## Current-main candidate
+## Current-main candidate under renewed review
 
 An isolated patch against Odysseus main `934d23c0…` now implements the required
 `PUT /api/session/{sid}/direct-turn/{request_id}` primitive. It adds a database-enforced
@@ -69,15 +70,49 @@ message IDs, supports partial pair completion, and rejects same-key/different-pa
 retries with HTTP 409. The transaction commits the pair and denormalized session counters
 together; SQLite and non-SQLite migrations create the same uniqueness constraint.
 
-The permanent candidate suite covers identical replay, partial completion, conflicting
-content/metadata, concurrent calls, deleted sessions, missing attachments, attachment
-conflicts, migration idempotence and route behavior. The full upstream run completed
-5,927 passes and four skips with the same ten host/environment failures reproduced on
-clean main; no candidate-only full-suite failure remains.
+Adversarial review found four gaps that the first suite missed:
+
+- an assistant-only request could create the first receipt, allowing a later pair retry
+  to store the user after the assistant;
+- the response-loss test accidentally raised during the pre-write cache load rather than
+  after commit, so it did not test the named failure boundary;
+- an identical replay entered `get_session()`, whose access touch advanced
+  `sessions.updated_at`, making the replay observably non-idempotent; and
+- ownership was checked in a separate route transaction, leaving a rename race before
+  insertion.
+
+The isolated candidate now rejects assistant-first insertion while allowing assistant
+completion after an existing user receipt, performs no side-effecting cache touch before
+receipt lookup, exercises a genuine commit-before-response-loss replay, and carries the
+authenticated owner into the insertion transaction. SQLite acquires `BEGIN IMMEDIATE`
+before the owner read; databases with row locking use `SELECT ... FOR UPDATE`. A
+concurrent owner change is therefore serialized behind the receipt commit, while a
+wrong-owner request fails without evicting the legitimate session cache.
+
+The permanent isolated suite now contains **24 passing cases** covering identical replay,
+partial completion, user/assistant ordering, conflicting content/metadata, concurrent
+single and pair writers, user-only versus pair races, true commit-before-response-loss,
+stable replay timestamps/counters, authenticated-owner revalidation and concurrent
+rename serialization, deleted sessions, valid/missing/conflicting attachments, migration
+idempotence and route behavior. The attachment lane proves a successful replay neither
+re-reserves nor changes the stored metadata. The 41-case focused-plus-neighboring
+attachment run passes, and the seven highest-risk concurrency/response/owner cases pass
+ten consecutive repetitions (70 checks).
+
+The controlled full comparison uses sibling no-space worktrees at the same upstream
+baseline and the same interpreter with explicit `PYTHONPATH` isolation:
+
+- untouched `934d23c0…`: **5,909 passed, 7 failed, 4 skipped**;
+- isolated U139 candidate: **5,933 passed, 7 failed, 4 skipped**.
+
+The same seven nodes fail on both sides; all 24 additional candidate cases execute and
+pass. An earlier alleged baseline run imported the mixed candidate through an editable
+virtualenv link and is discarded as contaminated evidence, not averaged into these
+totals.
 
 ### Exact baseline failure and skip classification
 
-The ten failures are **not fixed**. They reproduce on untouched Odysseus main and are
+The seven failures are **not fixed**. They reproduce on untouched Odysseus main and are
 disjoint from the Direct-turn/managed-endpoint changes, so they are not candidate
 regressions. They remain upstream macOS/test-environment debt:
 
@@ -89,26 +124,29 @@ regressions. They remain upstream macOS/test-environment debt:
 - `test_real_socket_falls_back_from_dead_first_to_live_second`, where the first dead
   loopback address times out on this host instead of reaching the fallback promptly;
 - `test_rewrites_loopback_when_in_docker`, whose Docker-host assumption is absent here;
-- three `test_run_focus.py` dry-run assertions—
-  `test_dry_run_prints_command_and_does_not_execute`,
-  `test_dry_run_last_failed_prints_safe_flags`, and
-  `test_fast_durations_dry_run_prints_command`—whose expected text omits the safe shell
-  quoting required by this checkout path's spaces; and
 - `test_glob_confined_e2e`, whose assertion does not account for macOS's lexical
   `/var`→`/private/var` alias and the echoed caller-supplied relative pattern.
+
+Three additional `test_run_focus.py` failures seen in the earlier project-path run are
+not part of the controlled seven: both sibling comparison roots intentionally contain no
+spaces, so those assertions pass. Their path-with-spaces expectation remains separately
+recorded upstream portability debt, but it is not reported as a failure in this final
+comparison.
 
 The four skips also do not cover U139/U142 code: the Windows-only Ollama CLI startup
 guard; a Docker test requiring the unavailable `odysseus-odysseus:latest` image; an
 optional MarkItDown runtime test when `markitdown` is absent; and a content-detection
 test when `python-magic`/`libmagic` is absent. They are unexecuted optional/platform
-coverage, not passes. Every new U139/U142 case executed and passed.
+coverage, not passes. None is a U139 case.
 
 This does not change the shipped M.O.T claim. The bridge cannot call an unreleased API,
 and adding dead feature detection before a pin exists would be speculative. Closure still
 requires upstream acceptance/release, an Odysseus pin bump, bridge integration, response-
 loss testing through the real network seam, and the human Direct Chat history journey.
-The preserved candidate is
-`docs/upstream-candidates/U139-U142-odysseus-idempotence-managed-endpoints.patch`.
+The isolated candidate is preserved as the normal-context, exact-base-checked
+`docs/upstream-candidates/U139-odysseus-idempotent-direct-turn.patch` (SHA-256
+`1c74973fe7e220842121f770ad3f41ff0b30b38b3f8091434664617637bdbe5f`). The older
+combined U139/U142 patch is superseded forensic evidence and must not be submitted.
 
 Odysseus's contribution rules require an issue before an agent-assisted PR, one focused
 change per PR, and `dev` as the target branch. No matching idempotent-message issue/PR

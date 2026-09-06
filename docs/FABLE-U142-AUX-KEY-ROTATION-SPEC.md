@@ -1,7 +1,8 @@
 # U142 — owner-aware auxiliary key rotation
 
 **Date:** 2026-09-06
-**Status:** current-main upstream ownership candidate prepared; M.O.T rotation remains blocked.
+**Status:** first current-main ownership candidate rejected by adversarial writer-path
+review; upstream contract remains open and M.O.T rotation remains blocked.
 
 ## Proven premise
 
@@ -22,9 +23,11 @@ Odysseus must provide a manager-scoped endpoint primitive before M.O.T rotates A
 
 1. M.O.T generates a high-entropy management token and sends it with a stable manager
    ID (`mot`) and resource ID (`aux`) during explicit Aux provisioning.
-2. Creation is exclusive. It fails with conflict if the normalized base URL already
-   belongs to any unclaimed or differently managed row. It never deduplicates or fills
-   an existing row.
+2. Initial managed creation is non-adopting. It fails if the requested normalized base
+   URL already belongs to an unclaimed or differently managed row; it never deduplicates
+   onto or fills that existing row. After creation, the manager's authority remains
+   bound to the exact managed endpoint ID plus token—not to permanent global ownership of
+   a URL that another user may legitimately configure later.
 3. The manager/resource pair is unique. Retrying creation with the same token returns
    the original receipt; a different token conflicts. Odysseus stores only a token
    hash, while M.O.T stores the token in its protected local secret store.
@@ -86,9 +89,9 @@ managed Aux binding. This installation currently has no Aux binding, so its rele
 acceptance is the exact no-op path; a live rotation must be walked on a deliberately
 provisioned test binding without changing the user's optional state.
 
-## Current-main candidate
+## Rejected current-main candidate
 
-An isolated Odysseus-main patch now implements the upstream half without inferring any
+An isolated Odysseus-main patch attempted the upstream half without inferring any
 legacy ownership. Managed endpoints carry a unique manager/resource claim, a domain-
 separated management-token hash and monotonic revision. Provisioning refuses to adopt an
 existing URL, resolve is token-authenticated, and key updates use revision plus a full,
@@ -97,21 +100,43 @@ create/update/delete routes cannot bypass a managed claim. Identical lost-respon
 return the committed result; a different key or token conflicts without exposing either
 secret.
 
-The candidate tests cover exclusive creation, token non-storage, collision-resistant
+That last claim was too narrow and is rejected. Odysseus has endpoint writers outside
+the three generic HTTP routes: the agent-facing `manage_endpoints` tool can delete,
+enable or disable a managed row by ID; Cookbook auto-registration can update a row found
+by URL; and subscription/Copilot provisioners have their own create/update paths. The
+candidate guarded only selected routes, so a managed row was not actually protected at
+the ownership boundary. A separate regression also proved that an unmanaged row could
+be PATCHed onto the managed URL; that does not by itself transfer token authority, but
+it disproved the candidate's broader permanent-URL-exclusivity story and exposed the
+partial nature of the guard.
+
+The replacement must put mutation authorization at one shared database/service boundary
+used by every writer, with an explicit capability for the managed API rather than route-
+local conditionals. It must preserve ordinary user ability to configure a duplicate
+service URL after the managed row exists, because endpoint identity and settings bind by
+endpoint ID; URL spelling is neither ownership nor authentication. Every creation,
+update, enable/disable, adoption and delete seam must be enumerated and tested before a
+new candidate is described as owner-aware.
+
+The rejected candidate tests cover exclusive creation, token non-storage, collision-resistant
 fingerprints, wrong-token indistinguishability, generic-route bypasses, concurrent
 provisioning, lost-response replay, rollback CAS and legacy SQLite migration/uniqueness.
-They run within the 5,927-pass full Odysseus comparison described in U139.
+They do not cover the complete writer graph above. The earlier 5,927-pass full Odysseus
+comparison described in U139 therefore cannot rescue the invalid ownership premise.
 
 M.O.T-side rotation is intentionally not added yet. Until the primitive is released and
 pinned, a local caller would be dead code or would have to fall back to the unsafe URL/name
 inference this issue forbids. This installation has no Aux binding; unset therefore remains
 the correct no-op state, not a missing component to manufacture for QA.
-The upstream candidate is preserved with U139 in
+The rejected candidate and its failing counterexample are preserved with U139 in
 `docs/upstream-candidates/U139-U142-odysseus-idempotence-managed-endpoints.patch`.
 
 Odysseus's issue-first and one-change-per-PR rules make the combined patch evidence, not
 a submission unit. No matching managed-endpoint ownership/rotation issue or PR was found
 in the upstream search. The separate report is now upstream issue
 [#6256](https://github.com/odysseus-dev/odysseus/issues/6256), with the submitted text
-preserved at `docs/upstream-candidates/U142-ODYSSEUS-ISSUE.md`; implementation will be
-split and rebased onto `dev` only if maintainers accept the contract.
+preserved at `docs/upstream-candidates/U142-ODYSSEUS-ISSUE.md`. The issue's statement
+that generic routes must not bypass a claim remains correct, but the posted
+"implementation evidence" now requires a public correction: the first implementation
+did not cover every writer. No code will be split or submitted until the shared
+authorization boundary survives this review.
