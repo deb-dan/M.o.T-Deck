@@ -184,6 +184,15 @@
 > volume. Full matrix and the v1.5.81→v1.5.82 Odysseus incident are in
 > docs/DOCTRINE-PROACTIVE-BUILD.md §12.**
 
+> **🧾 BASELINE RED/SKIPS ARE EVIDENCE, NOT EXEMPTIONS (Debi standing order,
+> 2026-09-06):** “same on clean upstream” proves only that the candidate did not cause
+> the result. It never means fixed, harmless or passed. Reports must name every failure
+> and skip, reproduce reds at the exact baseline, run the upstream-supported platform and
+> feature lane, classify portability/dependency/flakiness versus product behavior, and
+> prove the candidate's affected tests were not skipped. Unsupported-command failures and
+> transient reds remain recorded even when the supported lane is green. Full binding and
+> the U72/U139/U144 incident are in docs/DOCTRINE-PROACTIVE-BUILD.md §13.**
+
 > **🔁 DOCTRINE (Debi, 2026-08-27): every report to Debi that touches shipped behavior MUST
 > end with the exact commands to see it — restart/refresh/kill MOT Deck. The canonical set:
 > full ship `./scripts/ship.sh` (gate → snapshot → restarts app+bridge; components stay up);

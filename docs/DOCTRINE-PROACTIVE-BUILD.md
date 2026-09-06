@@ -240,6 +240,41 @@ authenticated workspace.” v1.5.82 added the server-side cookie handoff and wal
 exact human journey. This rule makes the same echo mandatory for every future state or
 credential migration.
 
+## 13. BASELINE RED AND SKIPS ARE EVIDENCE, NOT EXEMPTIONS (Debi, 2026-09-06)
+
+“Also fails on clean upstream” answers only one question: the candidate did not introduce
+that result. It does **not** mean the failure was fixed, harmless, irrelevant, or safe to
+hide behind a pass total. Likewise, a skipped test is unexecuted evidence, not a pass.
+Every candidate and release report that contains failures or skips must name and classify
+each one, preserve its exact command and environment, and state whether the affected
+behavior overlaps the change.
+
+The required sequence is:
+
+1. reproduce every red result on an untouched checkout of the exact baseline commit;
+2. compare the exact test node, failure phase and reason—not merely the total count;
+3. run the upstream project's supported platform/feature command before interpreting an
+   ad-hoc broad command (for example, Goose's TLS-feature CI lanes);
+4. distinguish product failure, test portability defect, missing optional dependency,
+   intentionally unsupported platform branch, and transient/flaky isolation failure;
+5. ensure the candidate's own affected tests actually executed and passed rather than
+   being among the skips; and
+6. record unresolved baseline and flaky findings as upstream debt or an explicit assurance
+   gap. Never silently convert them into “of no consequence.”
+
+A candidate may proceed when the reds are proven baseline-identical and disjoint from its
+changed behavior, but the report must still say that those upstream defects remain. If the
+supported lane is green while an unsupported invocation is red, report both and explain
+why the supported lane is authoritative; do not quote only the more convenient result.
+
+**The incident (example, not the rule):** the U72 and U139 candidate summaries compressed
+ten clean-upstream macOS failures and platform/dependency skips into totals, leaving it
+unclear whether they were resolved. U144 initially reported four Goose crypto failures
+from `cargo test` with the crate's empty default feature set even though Goose CI always
+selects a TLS crypto provider; the supported `rustls-tls,code-mode` lane passed all 495
+provider tests. The corrected records retain the unsupported-command result as diagnostic
+evidence while refusing to present it as a product regression.
+
 ### 2b. The install path is a journey too (Debi, 2026-08-29)
 
 Self-provisioning is a golden journey, not plumbing: every installer/provisioner must be

@@ -108,3 +108,10 @@ inference this issue forbids. This installation has no Aux binding; unset theref
 the correct no-op state, not a missing component to manufacture for QA.
 The upstream candidate is preserved with U139 in
 `docs/upstream-candidates/U139-U142-odysseus-idempotence-managed-endpoints.patch`.
+
+Odysseus's issue-first and one-change-per-PR rules make the combined patch evidence, not
+a submission unit. No matching managed-endpoint ownership/rotation issue or PR was found
+in the upstream search. The separate report is now upstream issue
+[#6256](https://github.com/odysseus-dev/odysseus/issues/6256), with the submitted text
+preserved at `docs/upstream-candidates/U142-ODYSSEUS-ISSUE.md`; implementation will be
+split and rebased onto `dev` only if maintainers accept the contract.

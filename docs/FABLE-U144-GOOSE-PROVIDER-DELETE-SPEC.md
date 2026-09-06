@@ -82,8 +82,25 @@ rewritten during recovery.
 The first candidate was rejected during review because deleting the journal after success
 made a late retry capable of deleting a new provider with the same ID. The tombstone design
 replaces it. Focused deletion/config tests now pass 33 checks; the broader provider run is
-491 passes plus the same four crypto-provider failures on clean main, and strict Rust clippy
-passes with warnings denied.
+**495 passed, 0 failed** under Goose's supported CI shape:
+`cargo test -p goose --no-default-features --features rustls-tls,code-mode providers --lib`.
+Strict Rust clippy also passes with warnings denied.
+
+The earlier **491 passed, 4 failed** total came from an incomplete ad-hoc invocation using
+the crate's empty default feature set. Without `rustls-tls` or `native-tls`, no
+process-level `jsonwebtoken` crypto provider is installed, so
+`test_parse_jwt_claims_verified_with_issuer`, `test_service_account_jwt_creation`,
+`test_token_expiration`, and `test_token_refresh_race_condition` panic before exercising
+provider deletion. Clean upstream produces the same four failures under that unsupported
+shape; they were neither U144 regressions nor product failures. Goose's own CI matrix
+explicitly runs both TLS feature lanes, which is why the corrected supported result is
+authoritative.
+
+One repeated default-feature parallel diagnostic also produced a fifth, transient
+`unconfigure_provider_clears_structured_entry` missing-temp-file failure. It passed alone,
+passed serially, did not reproduce on clean-main broad parallel, and is green in the
+supported feature lane. It remains recorded as an upstream parallel test-isolation signal,
+not silently counted as a pass and not attributed to U144.
 
 This candidate uses journal persistence as the transaction commit point: no resource changes
 before that point; deterministic roll-forward after it. Goose's existing ACP response schema
@@ -92,3 +109,11 @@ pretend the UI has a richer receipt. M.O.T still requires upstream acceptance/re
 bump, and the real Goose UI delete→restart→re-list journey before U144 can close.
 The candidate is preserved at
 `docs/upstream-candidates/U144-goose-provider-delete.patch`.
+
+Goose's contribution process is stricter than patch readiness: the reporter must write
+the issue, the issue must reach **Ready** on the public board, and only then may an
+external PR implement the agreed design. The duplicate search found related UI/cache
+deletion reports but no issue for the exact orphaned `providers.<id>` stanza transaction.
+The human-submission draft is preserved at
+`docs/upstream-candidates/U144-GOOSE-ISSUE-DRAFT.md`. The candidate will not be posted
+ahead of that process.

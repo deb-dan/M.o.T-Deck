@@ -85,6 +85,45 @@ configuration result. The final candidate footprint is 294 passes, ten failures 
 platform skips; the same ten host-sensitive failures occur on the untouched upstream
 baseline, while both new real-boundary invariants pass.
 
+### Exact baseline and platform classification
+
+The untouched baseline produced **292 passed, 10 failed, 7 skipped**; the candidate
+produced **294 passed, 10 failed, 7 skipped**. The two additional passing tests are the
+new U72 macOS boundary invariants. None of the ten failures or seven skips is a U72 test.
+
+The ten failures remain unresolved upstream test/portability findings; “baseline-identical”
+means only that this patch did not introduce them:
+
+- `test_timeout_kill_reaps_setsid_grandchild`: the helper grandchild did not create its
+  PID file before the cleanup assertion could run on this host.
+- `test_parallel_cells_share_one_kernel_process`: its `pgrep -fc` process-count check
+  yielded no BSD/macOS output.
+- eight `TestSystemdCgroupIsolation` cases exercise Linux systemd behavior on macOS:
+  `test_wraps_in_systemd_scope_when_supervisor_and_available`,
+  `test_systemd_post_spawn_failure_never_kills_gateway_process_group`,
+  `test_pty_spawn_is_wrapped_in_systemd_scope`,
+  `test_pty_spawn_failure_reaps_scope_before_distinct_pipe_fallback`,
+  `test_pty_spawn_failure_does_not_fallback_when_scope_reap_fails`,
+  `test_systemd_run_user_scope_available_caches_after_probe`,
+  `test_systemd_scope_first_probe_is_serialized`, and
+  `test_failed_systemd_probe_retries_after_cache_ttl`. The class excludes Windows but
+  does not exclude non-systemd macOS.
+
+The seven skips are deliberate opposite-platform branches on this Mac: six Windows-only
+cases (`test_windows_hermes_owned_paths_stripped`,
+`test_make_run_env_preserves_windows_mixed_case_path_key`,
+`test_write_stdin_uses_str_for_windows_pty`,
+`test_submit_stdin_uses_crlf_for_windows_pty`,
+`test_submit_stdin_keeps_lf_for_windows_pipe`, and
+`test_windows_invokes_taskkill_with_tree_and_force_flags`) plus the Linux/POSIX PTY-byte
+case `test_write_stdin_uses_bytes_for_posix_pty`. Those branches still require their
+native CI platforms; they are not evidence from this Mac run.
+
+The supported `scripts/run_tests.sh` invocation completed with the totals above. A second
+direct sequential pytest diagnostic reached 100% but did not complete teardown after
+roughly eight minutes and was terminated by exact PID. That teardown behavior is also
+unresolved upstream harness evidence; it is not hidden as a successful run.
+
 This is a direct-filesystem-write boundary, not a claim of full host isolation. It still
 allows host reads, ordinary IP networking, process creation and required IPC; a reachable
 HTTP service with mutation authority remains outside the filesystem predicate. The upstream
@@ -113,3 +152,19 @@ to a reviewable upstream candidate in
 confinement because host reads, IP-reachable mutation services and broader process
 authority remain outside its predicate. The shipped row remains blocked on upstream
 acceptance, a release, and a real M.O.T lane walk.
+
+## Upstream submission route
+
+The required duplicate search found Hermes issue
+[#36645](https://github.com/NousResearch/hermes-agent/issues/36645) and open PR
+[#39004](https://github.com/NousResearch/hermes-agent/pull/39004). That PR is the best
+existing general direction: it replaces command parsing with an explicit
+`terminal.execution_write_scope` and a Docker-backed boundary, and it fails closed on
+unsupported environments. Its own scope explicitly excludes native local execution,
+however, so it does not provide the macOS boundary M.O.T needs.
+
+Opening the Seatbelt candidate as a competing PR would violate Hermes's search-first
+rule and risk creating two generic policy seams. A focused coordination comment was
+therefore posted on #39004 asking whether maintainers want the macOS provider rebased as
+a supplement or as a follow-up after its policy seam settles. The submitted text and
+link are preserved at `docs/upstream-candidates/U72-HERMES-PR-COMMENT.md`.
