@@ -1,13 +1,16 @@
 **Submitted:** 2026-09-06 at
 https://github.com/NousResearch/hermes-agent/pull/39004#issuecomment-5555854326
 
-**Correction required:** the candidate described below was subsequently rejected. A
+**Correction posted:** 2026-09-06 at
+https://github.com/NousResearch/hermes-agent/pull/39004#issuecomment-5559267762
+
+**Current boundary:** the candidate described below was subsequently rejected. A
 pre-existing hard link under an allowed root can mutate the same inode through its name
 outside that root. The authored test covered creating a hard link after confinement, not
-this pre-existing alias. Do not offer or submit the patch; post this correction to the
-upstream thread before proposing any replacement.
+this pre-existing alias. Do not offer or submit the patch. The public correction retracts
+the earlier evidence; any replacement still needs a new, independently reviewed design.
 
-## Correction comment prepared for the upstream thread
+## Correction comment posted to the upstream thread
 
 Correction to my earlier macOS candidate note: adversarial testing found that the
 Seatbelt predicate I described is not a sufficient direct-write boundary. If a hard link

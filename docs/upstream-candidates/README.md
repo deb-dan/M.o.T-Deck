@@ -16,14 +16,19 @@ Submission preparation is also preserved here:
 
 - U72 has an existing issue/PR, so `U72-HERMES-PR-COMMENT.md` records the submitted
   maintainer-direction request instead of a competing PR. That comment predates the
-  adversarial hard-link finding and now requires an upstream correction.
+  adversarial hard-link finding; the correction was posted publicly on 2026-09-06. The
+  rejected patch remains forensic-only, and Docker support upstream does not silently
+  become native macOS confinement.
 - U139 and U142 are now separate Odysseus issues #6255 and #6256. U139 has been isolated
-  from rejected U142 and passes the exact sibling-worktree comparison, but its public
-  evidence correction must be posted and its API direction accepted before a PR. U142's
-  posted implementation-evidence paragraph also requires correction before further code.
+  from rejected U142 and passes the exact sibling-worktree comparison. Both public
+  evidence corrections were posted on 2026-09-06. U139 now waits for maintainer agreement
+  on the API before any PR; U142 does not wait for a pin bump and instead needs a
+  replacement design covering every endpoint writer.
 - U144 has a human-submission issue draft because Goose explicitly requires the reporter
   to write the issue and reach **Ready** before code is submitted. The draft states the
-  required behavior but no longer promotes the rejected implementation.
+  required behavior but no longer promotes the rejected implementation. Its rejected
+  patch is not a release candidate; explicit secret provenance plus a shared mutation and
+  recovery boundary must be designed before upstream submission.
 
 The original artifacts were generated with `git diff --binary --full-index --unified=0`.
 A 2026-09-06 rehydration audit found that the three zero-context files do not apply with

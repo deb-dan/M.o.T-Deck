@@ -239,6 +239,12 @@ Lower urgency or larger blast radius, queued 🟡 LATER — themes only:
   prefixes with four-token warm evaluations; adding parallel/cache slots would add
   memory/state without a reproduced benefit (U73). Re-measure on runner/cache-policy
   change, not by calendar.
+- **Upstream coordination checkpoint (2026-09-06):** corrective evidence is public on
+  Hermes #39004 and Odysseus #6255/#6256. U139 alone has a verified candidate and awaits
+  agreement on its API before any PR; acceptance must then become a released Odysseus
+  pin, an M.O.T caller, and real response-loss/replay/attachment/human-history journeys.
+  U72, U142 and U144 have rejected candidates and require replacement upstream designs;
+  they are not silently skipped and are not merely waiting for dependency versions.
 - Digest-pinning the remaining tag-only installers (A13); Hermes v0.20.x update retry,
   parked on two upstream bugs (P1); the ONLYOFFICE/Euro-Office bump, parked on upstream's
   next release (P2).

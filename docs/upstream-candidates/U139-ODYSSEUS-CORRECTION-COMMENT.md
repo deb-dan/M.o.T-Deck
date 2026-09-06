@@ -1,5 +1,12 @@
 # Correction comment for Odysseus issue #6255
 
+**Posted:** 2026-09-06 at
+https://github.com/odysseus-dev/odysseus/issues/6255#issuecomment-5559271598
+
+**Current boundary:** the corrected candidate is evidence for discussing the API, not an
+accepted upstream change. Do not offer its patch as a PR until maintainers agree on the
+API direction. Shipped Direct history remains at-least-once meanwhile.
+
 Correction to the implementation evidence I mentioned above: adversarial review found
 four holes in the first candidate and its tests. It allowed assistant-first storage; its
 response-loss test actually failed before the write rather than after commit; an
