@@ -352,7 +352,7 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
 
 ## 4. User-reported / observed
 
-- **U150 — 🔴 THIS — MOT Deck identity migration.** The FAT installer exposed the
+- **U150 — ✅ CLOSED — MOT Deck identity migration.** The FAT installer exposed the
   split identity directly: its mounted volume and app still carried the retired product
   name while the icon said `M.O.T` and the shell said `MOT Deck`. Debi approved one complete
   identity map (visible name, bundle, DMG, volume, slug, bundle ID, executable,
@@ -366,8 +366,18 @@ Targets: 🔴 THIS (blocks current cycle) · 🔵 NEXT · 🟡 LATER · ⚪ SOME
   allowlist now syncs those without recursively touching user skills, generated app
   material, historical documents, live YAML, or `data/`, and retires only three exact
   old filenames after byte-verifying their replacements.
-  `@status:in-progress` — binding implementation, rollback, permanent gates, and real-
-  stack acceptance: `docs/FABLE-U150-MOT-DECK-IDENTITY-MIGRATION-SPEC.md`.
+  `@status:done-verified` v1.5.84 — clean candidate FAT plus committed live ship. The
+  supported gate passed 554 contracts (four explicit checkout-local Aider skips), 652
+  repository Python checks, all 44 JavaScript programs, shell/Swift checks and every
+  size ceiling. `ship.sh --restart hermes` synchronized the snapshot, restarted Hermes
+  by launch provenance, and left all 10 components healthy. Manifest/navigation bytes,
+  11 model identities, runner pin/live model, optional empty Aux state, and all four
+  protected-secret fingerprints match the pre-migration capture. The installed bundle
+  is `MOT Deck.app` / `local.motdeck.app` / `MOTDeck`; a fresh real Chat reply survived
+  Models → Chat, managed Odysseus opened authenticated, Help carried only the new product
+  name, and the 8 px gold-hover session divider remained. Full contract and exact
+  changed-path inventory: `docs/FABLE-U150-MOT-DECK-IDENTITY-MIGRATION-SPEC.md` and
+  `docs/U150-IDENTITY-CHANGE-INVENTORY.md`.
 
 | # | Target | Finding | Urgency | Risk: Fix | Risk: No Fix | ROI | Blast Radius | Fix Effort | Status |
 |---|---|---|---|---|---|---|---|---|---|

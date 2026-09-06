@@ -1,6 +1,6 @@
 # U150 — MOT Deck identity migration
 
-Status: v1.5.84 release candidate; clean FAT candidate passed, final live ship pending.
+Status: shipped and done-verified in v1.5.84.
 
 Exhaustive surface/file inventory: `docs/U150-IDENTITY-CHANGE-INVENTORY.md`.
 
@@ -119,12 +119,12 @@ From the installed shell, not merely source fixtures:
    `MOT Deck` containing `MOT Deck.app`, whose executable and bundle identity match this
    contract. The seed records `dirty_files=0`.
 
-The candidate has passed all pre-release and clean-FAT evidence, so `VERSION` advanced
-from 1.5.83 to 1.5.84. It is not called shipped until the release commit reaches the
-live snapshot, Hermes performs the managed guard migration, and the post-ship checks
-repeat successfully.
+All five acceptance stages passed. `VERSION` advanced from 1.5.83 to 1.5.84 only after
+the clean candidate FAT build; the committed release was then shipped to the live
+snapshot, Hermes performed the managed guard migration, and the post-ship checks
+repeated successfully.
 
-## Candidate evidence
+## Release evidence
 
 - Full source gate: 554 contracts passed with four explicit checkout-local Aider skips;
   652 repository Python checks passed with two deprecation warnings; every JavaScript,
@@ -138,6 +138,24 @@ repeat successfully.
   `git_sha=9a71a68`, `dirty_files=0`, and nine configured components. DMG CRC, deep code
   signature, bundle plist, executable, byte-identical icon, mounted volume, contained
   app, Help/roadmap/docs corpus, and exhaustive identity inventory were inspected.
+- Release commit `50f28ef` shipped through `./scripts/ship.sh --restart hermes`: 554
+  contract checks passed with the same four explicit checkout-local Aider skips; 652
+  repository Python checks and all 44 JavaScript programs passed; Bash hygiene/syntax,
+  Swift parse, byte ceiling, and every router ceiling passed. Snapshot identity sync
+  verified six allowlisted files and retired the four exact old entries.
+- The managed Hermes configuration contains `motdeck-path-guard` exactly once, contains
+  no retired guard ID, and the ownership-verified old generated plug-in directory is
+  absent. Hermes restarted from `~/Library/Application Support/MOT Deck` through its
+  launch record and returned healthy.
+- All 10 components are healthy. The manifest hash remains `8ae9d242…`, navigation hash
+  remains `a0838afd…`, the same 11 model IDs hash to `a22bf653…`, and all four protected
+  secret encoded lengths/fingerprints match their pre-migration evidence. The runner pin
+  and live model remain the same Qwen3.8 27B model; Aux remains intentionally unset.
+- A fresh shipped Direct Chat turn returned exactly `MOT-DECK-U150-SHIPPED-OK` and
+  survived Chat → Models → Chat. `/odysseus` opened the authenticated upstream UI with
+  no login prompt. Help rendered MOT Deck with no retired product label. The sessions
+  divider retained its 8 px hit target, `col-resize`, `Drag to resize`, and gold hover
+  line.
 
 ## Honest limits
 
@@ -145,4 +163,8 @@ Historical prose, Git history, old rollback artifacts, and external/upstream nam
 not rewritten. macOS may retain old Launch Services history until its cache refresh,
 but the installed and newly built bundle must report only the new identity. The parent
 folders named `New Harness` and `September 3rd new check harness` are outside the
-approved rename boundary and remain unchanged.
+approved rename boundary and remain unchanged. An existing provisioned live root may
+also retain inactive `bridge/tests/` and `bridge/contract_tests/` files from its prior
+FAT seed: `ship.sh` deliberately neither imports nor mutates those non-runtime trees.
+The final v1.5.84 FAT seed contains the current test corpus; U150 refuses to delete an
+old live directory whose absence of user-added files cannot be proven.

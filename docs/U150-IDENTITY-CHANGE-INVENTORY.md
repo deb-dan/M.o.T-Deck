@@ -1,8 +1,7 @@
 # U150 identity-change inventory
 
-Status: v1.5.84 release-candidate inventory; final live ship evidence pending. Update
-this file whenever an identity-bearing surface is added, renamed, migrated, retired, or
-deliberately retained.
+Status: v1.5.84 shipped and done-verified. Update this file whenever an identity-bearing
+surface is added, renamed, migrated, retired, or deliberately retained.
 
 This is the exhaustive file-and-state companion to `FABLE-U150-MOT-DECK-IDENTITY-MIGRATION-SPEC.md`. The specification defines behavior; this document answers “where did the name move?” so a future rename or audit does not rely on memory or a blind global replacement.
 
@@ -34,7 +33,7 @@ This is the exhaustive file-and-state companion to `FABLE-U150-MOT-DECK-IDENTITY
 - Live state moved as one root to `~/Library/Application Support/MOT Deck`. Its manifest and backups moved to `motdeck.yaml*`; protected secret keys changed to `MOT_DECK_*_B64`; explicitly enumerated generated venv/profile paths were retargeted.
 - WebKit and HTTP-storage domains moved from `local.harness.app` to `local.motdeck.app` only when the destination did not already exist.
 - Shell UserDefaults and first-party localStorage keys migrate once; an already-present new key always wins.
-- The installed application is `/Applications/MOT Deck.app`, executable `MOTDeck`, identity `local.motdeck.app`. The old app is retained only as a temporary rollback artifact until release verification completes.
+- The installed application is `/Applications/MOT Deck.app`, executable `MOTDeck`, identity `local.motdeck.app`. The exact old app bundle was retained as a temporary rollback artifact through live verification and is retired only after the final clean FAT replacement passes.
 - Hermes startup replaces and deduplicates the managed guard ID, then removes only an ownership-verified generated old plug-in directory. User plug-ins and foreign lookalikes are preserved.
 - The FAT snapshot synchronizes six explicit repo-owned authoring files and retires only three exact files plus the verified generated old guard directory. It never recursively mirrors app, docs, skills, live YAML, or data.
 
@@ -43,6 +42,7 @@ This is the exhaustive file-and-state companion to `FABLE-U150-MOT-DECK-IDENTITY
 - `DeepSeek Harness` is an upstream product name and remains unchanged.
 - “test harness” and similar generic engineering language remain ordinary English.
 - The old bundle ID, key prefixes, manifest name, live root, and guard ID remain only inside migration code/tests that must recognize old installations.
+- A previously provisioned live root can contain inactive test directories from its older FAT seed. `ship.sh` deliberately does not import, execute, synchronize, or delete those non-runtime trees. Their legacy fixtures may retain old literals; the final v1.5.84 FAT seed contains the current test corpus. Preserving an unproven live directory is safer than assuming every neighbor is disposable.
 - Git history, incident records, frozen rollback artifacts, and explicitly historical handoff/research prose may name the identity that existed at that time.
 - The visible logo artwork remains `M.O.T`; it is not the app, bundle, executable, installer, or machine slug.
 
@@ -430,8 +430,29 @@ wording was reviewed; it does not mean product logic was otherwise redesigned.
 
 ## Release closure files
 
-- `VERSION` advances only after the clean candidate FAT build passes.
-- `README.md`, `docs/ROADMAP.md`, `docs/UNFORGET.md`, this inventory, and the U150 spec receive final version/verification evidence only after the real-stack release journey passes.
+- `VERSION` advanced only after the clean candidate FAT build passed.
+- `README.md`, `docs/ROADMAP.md`, `docs/UNFORGET.md`, this inventory, and the U150 spec received final version/verification evidence only after the real-stack release journey passed.
+
+## Verified live closure
+
+- `./scripts/ship.sh --restart hermes` shipped commit `50f28ef` from the canonical
+  checkout. The supported gate passed 554 contracts (four explicit checkout-local
+  Aider skips), 652 repository Python checks, all 44 JavaScript programs, all shell and
+  Swift checks, and the byte/router ceilings.
+- Snapshot parity passed for the six allowlisted repo-owned authoring files. The exact
+  retired icon, two document filenames, and generated guard directory are absent; no
+  recursive app/docs/skills/live-state cleanup occurred.
+- Hermes has exactly one enabled `motdeck-path-guard`, no retired guard ID, and no old
+  generated plug-in directory. The restarted dashboard and provider check passed.
+- All 10 components are healthy. Manifest hash `8ae9d242…`, navigation hash
+  `a0838afd…`, 11-model identity hash `a22bf653…`, runner pin/live model, optional Aux
+  state, and all four protected-secret encoded fingerprints match the pre-migration
+  capture.
+- The installed bundle reports `MOT Deck` / `local.motdeck.app` / `MOTDeck`; its deep
+  signature verifies. A fresh Direct Chat turn returned
+  `MOT-DECK-U150-SHIPPED-OK` and survived Models → Chat, managed Odysseus entry reached
+  the authenticated UI without a login form, Help contains no retired product label,
+  and the sessions divider still exposes its 8 px `col-resize`/gold-hover affordance.
 
 ## Future audit procedure
 
