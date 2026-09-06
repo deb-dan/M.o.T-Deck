@@ -1,6 +1,6 @@
 # U150 — MOT Deck identity migration
 
-Status: approved for implementation by Debi, 2026-09-07.
+Status: v1.5.84 release candidate; clean FAT candidate passed, final live ship pending.
 
 Exhaustive surface/file inventory: `docs/U150-IDENTITY-CHANGE-INVENTORY.md`.
 
@@ -119,8 +119,25 @@ From the installed shell, not merely source fixtures:
    `MOT Deck` containing `MOT Deck.app`, whose executable and bundle identity match this
    contract. The seed records `dirty_files=0`.
 
-Only after all five pass may `VERSION` advance from 1.5.83 and the release be called
-shipped.
+The candidate has passed all pre-release and clean-FAT evidence, so `VERSION` advanced
+from 1.5.83 to 1.5.84. It is not called shipped until the release commit reaches the
+live snapshot, Hermes performs the managed guard migration, and the post-ship checks
+repeat successfully.
+
+## Candidate evidence
+
+- Full source gate: 554 contracts passed with four explicit checkout-local Aider skips;
+  652 repository Python checks passed with two deprecation warnings; every JavaScript,
+  Bash syntax/hygiene, Swift parse, byte-ceiling, and router-ceiling gate passed.
+- Live-state migration conserved the manifest and navigation bytes, 11 model identities,
+  the runner pin/live model, optional empty Aux state, installed-component state, and
+  protected-secret value fingerprints while moving the root and preference domains.
+- Native journeys passed for a real Direct Chat response and lane return, managed
+  Odysseus entry, Help content, and the preserved session-divider hover/resize affordance.
+- Clean candidate commit `9a71a68` built `dist/MOT Deck.dmg`; its seed recorded
+  `git_sha=9a71a68`, `dirty_files=0`, and nine configured components. DMG CRC, deep code
+  signature, bundle plist, executable, byte-identical icon, mounted volume, contained
+  app, Help/roadmap/docs corpus, and exhaustive identity inventory were inspected.
 
 ## Honest limits
 

@@ -6,7 +6,7 @@
 > executable is `MOTDeck`, manifest is `motdeck.yaml`, environment prefix is
 > `MOT_DECK_*`, and live state is `~/Library/Application Support/MOT Deck`.
 
-## ⟳ STATE UPDATE — 2026-09-02 (v1.5.72)
+## ⟳ STATE UPDATE — 2026-09-07 (v1.5.84 release candidate)
 
 This README describes the early scaffold. Current reality, in order of authority:
 **`CLAUDE.md`** (working memory), **`docs/ROADMAP.md`** (what's done / in progress / next),

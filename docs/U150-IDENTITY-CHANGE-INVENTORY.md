@@ -1,6 +1,8 @@
 # U150 identity-change inventory
 
-Status: implementation inventory for the MOT Deck identity release. Update this file whenever an identity-bearing surface is added, renamed, migrated, retired, or deliberately retained.
+Status: v1.5.84 release-candidate inventory; final live ship evidence pending. Update
+this file whenever an identity-bearing surface is added, renamed, migrated, retired, or
+deliberately retained.
 
 This is the exhaustive file-and-state companion to `FABLE-U150-MOT-DECK-IDENTITY-MIGRATION-SPEC.md`. The specification defines behavior; this document answers “where did the name move?” so a future rename or audit does not rely on memory or a blind global replacement.
 
@@ -46,13 +48,19 @@ This is the exhaustive file-and-state companion to `FABLE-U150-MOT-DECK-IDENTITY
 
 ## Exhaustive U150 file inventory
 
-The list below contains every tracked rename/modification and every new file in the U150 working wave at the time of the candidate gate, plus this inventory itself. A path’s presence means its identity-bearing reference, expectation, fixture, help text, operational instruction, or historical wording was reviewed; it does not mean product logic was otherwise redesigned.
+The list below contains all 334 current tracked paths changed by U150 through the
+v1.5.84 release candidate, plus the eight retired source paths shown on rename rows.
+This count is mechanically checked against the union of the U150 candidate commit and
+the release-candidate diff. A path’s presence means its identity-bearing reference,
+expectation, fixture, help text, operational instruction, release record, or historical
+wording was reviewed; it does not mean product logic was otherwise redesigned.
 
-### Repository root and manifest (4)
+### Repository root and manifest (5)
 
 - `.gitignore`
 - `CLAUDE.md`
 - `README.md`
+- `VERSION`
 - `harness.yaml → motdeck.yaml`
 
 ### Native app and icon (4)
@@ -250,7 +258,7 @@ The list below contains every tracked rename/modification and every new file in 
 - `bridge/tests/test_voice_stt.py`
 - `bridge/tests/test_voice_tts.py`
 
-### Active specifications, Help, roadmap, and ledgers (16)
+### Active specifications, Help, roadmap, and ledgers (17)
 
 - `docs/FABLE-AGENT-CHANGESET-SPEC.md`
 - `docs/FABLE-STUDIO-DESIGN-SPEC.md`
@@ -262,6 +270,7 @@ The list below contains every tracked rename/modification and every new file in 
 - `docs/FABLE-U74-RECOVERY-HARDENING-SPEC.md`
 - `docs/FABLE-U78-APP-BUNDLE-DISCOVERY-SPEC.md`
 - `docs/HARNESS-INTERNALS.md → docs/MOT-DECK-INTERNALS.md`
+- `docs/ROADMAP.md`
 - `docs/U150-IDENTITY-CHANGE-INVENTORY.md`
 - `docs/UNFORGET.md`
 - `docs/USER-EXPLAINERS.md`
@@ -433,4 +442,3 @@ The list below contains every tracked rename/modification and every new file in 
 5. Mount the clean FAT DMG and inspect its volume, bundle, plist, executable, icon, seed manifest, and clean-tree stamp.
 6. Walk the human entry points whose identity or persistence moved; automated HTTP health is not a substitute.
 7. Advance the version and delete rollback artifacts only after all preceding evidence passes.
-

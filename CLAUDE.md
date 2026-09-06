@@ -205,7 +205,8 @@
 > `MOT Deck.app`; lifecycle identity is the bundle id, never the filename.**
 
 
-> **🔢 VERSIONING (Debi's ruling, 2026-08-27):** the project is at **v1.5.0** (see `VERSION`).
+> **🔢 VERSIONING (Debi's ruling, 2026-08-27):** the authoritative current version is
+> always the tracked `VERSION` file; do not duplicate a stale number in this doctrine.
 > Every shipped work slice bumps the patch: 1.5.1, 1.5.2, … up to 1.5.100, then 1.6.0.
 > Bump `VERSION` in the same commit as the slice it names and lead the commit message with
 > the version (`v1.5.1: …`). "Shipped" = passed the gate + ship.sh, not merely edited.

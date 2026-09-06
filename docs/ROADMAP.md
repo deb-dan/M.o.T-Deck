@@ -7,7 +7,7 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current version: **v1.5.83** (see `VERSION`). Written 2026-09-06.
+Current version: **v1.5.84 release candidate** (see `VERSION`). Written 2026-09-07.
 
 ---
 
@@ -193,6 +193,16 @@ handoff. The live-theme pseudo-element class is fenced without removing its hove
 affordances. The reported Studio-light contrast and remaining `calc(var(...))` transition
 instances were re-proven absent in the current architecture rather than patched speculatively.
 U149 carries the complete gate, installed journey, size/line and runtime evidence.
+
+v1.5.84 is the one-identity release candidate. The public app, Finder/Dock label,
+bundle, DMG, mounted volume, executable, manifest, environment namespace, live root,
+repository folder, GitHub repository, first-party browser keys/handlers, and managed
+Hermes path guard now follow the approved MOT Deck mapping while the M.O.T logo artwork
+remains unchanged. Live-state conservation and the native Chat/Odysseus/Help/resize
+journeys passed before the candidate; a clean committed FAT build mounted with the exact
+new volume/bundle identity and `dirty_files=0`. U150 remains open until this version is
+shipped to the live snapshot, Hermes is restarted through launch provenance, and the
+post-ship human/runtime checks pass.
 
 Everything else below is queued (🔵 NEXT in the ledger), grouped by theme — see
 `docs/UNFORGET.md` for the full finding, evidence, and verify-still-open command on each:
