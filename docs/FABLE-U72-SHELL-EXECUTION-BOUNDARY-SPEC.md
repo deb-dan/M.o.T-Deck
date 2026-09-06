@@ -1,6 +1,6 @@
 # U72 — an OS execution boundary, not command-string theatre
 
-**Date:** 2026-09-05; upstream rechecked 2026-09-06
+**Date:** 2026-09-05; upstream and public thread rechecked 2026-09-06
 **Status:** current-main Seatbelt candidate rejected after adversarial hard-link testing;
 not released, pinned or shipped.
 
@@ -159,8 +159,9 @@ local patch to vendored Hermes would also violate the zero-fork doctrine. Any re
 still needs upstream acceptance, release, a pin bump and a real M.O.T Hermes lane walk
 before the app may enable or claim it.
 
-The upstream recheck did not change that result. M.O.T's pinned Hermes tag resolves to
-`bbc20510676c…`; upstream main resolved to `ee5b5ec21e…` on 2026-09-06. Both expose
+The upstream recheck did not change that result. M.O.T's vendored Hermes resolves to
+`df4b65147d7…` (`v2026.8.16`); upstream main resolved to `b706529476bf…` on 2026-09-06.
+Both expose
 `pre_tool_call` policy hooks and `check_execute_code_guard`, but those are approval and
 policy decisions—not an OS boundary. Foreground, background-pipe, PTY and session-kernel
 children still spawn with the Hermes process's host authority. The terminal environment
@@ -187,6 +188,39 @@ Opening the Seatbelt candidate as a competing PR would violate Hermes's search-f
 rule and risk creating two generic policy seams. A focused coordination comment was
 therefore posted on #39004 asking whether maintainers want the macOS provider rebased as
 a supplement or as a follow-up after its policy seam settles. The submitted text and
-link are preserved at `docs/upstream-candidates/U72-HERMES-PR-COMMENT.md`. That comment
-predates the hard-link counterexample and must be corrected upstream before any further
-candidate is offered.
+link are preserved at `docs/upstream-candidates/U72-HERMES-PR-COMMENT.md`. That first
+comment predated the hard-link counterexample. The correction was posted publicly at
+[#39004 comment 5559267762](https://github.com/NousResearch/hermes-agent/pull/39004#issuecomment-5559267762),
+withdraws the Seatbelt claim, and offers no patch.
+
+The later `rodboev` comment at
+[#39004 comment 5555921386](https://github.com/NousResearch/hermes-agent/pull/39004#issuecomment-5555921386)
+is addressed to the reviewer who asked that the PR be split. It argues that terminal,
+`execute_code`, file tools, prompt probing and cleanup must share one policy/environment
+identity; Docker is the currently supported workspace adapter and other adapters may
+follow separately. This is useful architectural direction, not a maintainer acceptance
+of the macOS proposal, not a reply to the hard-link correction, and not permission to
+introduce Docker into M.O.T.
+
+## Replacement-design checkpoint
+
+No implementation candidate survived this checkpoint. The upstream PR's shared policy
+and environment identity is the correct *seam*, but none of the currently supported
+native mechanisms supplies the required no-Docker macOS ownership boundary:
+
+- reusing Seatbelt with a stronger path list still leaves pre-existing inode aliases;
+- copying the workspace into a private shadow tree would remove that particular alias,
+  but requires an explicit publication/merge protocol and changes ordinary workspace
+  semantics; it is not a transparent wrapper;
+- refusing `workspace` scope on native local execution is honest and is what #39004
+  currently does, but enabling that behavior in M.O.T would disable existing shell and
+  Python work rather than preserve it; and
+- adding Docker or a VM would be a product-architecture change, not a security patch,
+  and conflicts with the project's deliberate no-Docker direction unless the user makes
+  a new explicit decision.
+
+Therefore the next admissible step is upstream design agreement on a native provider—or
+a separately authorized product-level isolation mode—with a publication contract that
+eliminates host inode aliasing. Until then U72 stays open and the shipped UI must not call
+model-controlled shell/Python execution confined. Failing to claim confinement is safer
+than shipping a predicate already disproved by the hostile case.

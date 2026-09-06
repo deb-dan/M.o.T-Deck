@@ -245,6 +245,15 @@ Lower urgency or larger blast radius, queued 🟡 LATER — themes only:
   pin, an M.O.T caller, and real response-loss/replay/attachment/human-history journeys.
   U72, U142 and U144 have rejected candidates and require replacement upstream designs;
   they are not silently skipped and are not merely waiting for dependency versions.
+- **Replacement-design checkpoint (2026-09-06):** Hermes's PR author confirmed that its
+  policy, environment identity, callers and cleanup are intentionally one boundary, with
+  Docker as the only current workspace adapter and other adapters possible separately.
+  That is direction, not macOS acceptance; M.O.T remains Docker-free and no viable native
+  confinement candidate exists yet. Odysseus's complete endpoint-writer graph requires a
+  field/actor-aware mutation boundary rather than route checks or a whole-row freeze.
+  Goose requires explicit secret provenance plus one cross-process transaction boundary
+  shared by provider, config and secret writers. No runtime code follows from these
+  findings until the relevant upstream contract survives adversarial review.
 - Digest-pinning the remaining tag-only installers (A13); Hermes v0.20.x update retry,
   parked on two upstream bugs (P1); the ONLYOFFICE/Euro-Office bump, parked on upstream's
   next release (P2).

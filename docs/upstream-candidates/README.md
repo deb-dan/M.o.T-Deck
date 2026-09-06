@@ -18,7 +18,8 @@ Submission preparation is also preserved here:
   maintainer-direction request instead of a competing PR. That comment predates the
   adversarial hard-link finding; the correction was posted publicly on 2026-09-06. The
   rejected patch remains forensic-only, and Docker support upstream does not silently
-  become native macOS confinement.
+  become native macOS confinement. The PR author's later boundary explanation was aimed
+  at a split-review request, not the macOS proposal; it is recorded as seam guidance only.
 - U139 and U142 are now separate Odysseus issues #6255 and #6256. U139 has been isolated
   from rejected U142 and passes the exact sibling-worktree comparison. Both public
   evidence corrections were posted on 2026-09-06. U139 now waits for maintainer agreement
@@ -29,6 +30,12 @@ Submission preparation is also preserved here:
   required behavior but no longer promotes the rejected implementation. Its rejected
   patch is not a release candidate; explicit secret provenance plus a shared mutation and
   recovery boundary must be designed before upstream submission.
+
+Fresh source review baselines for that replacement work are Hermes main
+`b706529476bf8ef843d6d03d785dcbc1dc8c5456`, Odysseus `dev`
+`934d23c0be29c9721385f34565c0ae2cbd60da04`, and Goose main
+`5e90925962f05acf8e255032de44d16c4a7768a2`. These hashes document what was inspected;
+they do not repoint a vendor, bless a rejected patch, or imply upstream acceptance.
 
 The original artifacts were generated with `git diff --binary --full-index --unified=0`.
 A 2026-09-06 rehydration audit found that the three zero-context files do not apply with

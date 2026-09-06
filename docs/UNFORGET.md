@@ -532,6 +532,17 @@ regressed without first reading the applicable closure row.
   maintainer agreement on the API before any PR. U72/U142/U144 still require replacement
   upstream designs. These records do not change the installed v1.5.82 app, vendor pins,
   live state, or release version.
+- Upstream reply classification, 2026-09-06: `rodboev`'s Hermes #39004 comment
+  `5555921386` addresses `egilewski`'s request to split that PR. It explains why the
+  policy/environment identity, terminal, `execute_code`, file tools, prompt probing and
+  cleanup are reviewed as one boundary; Docker is its current workspace adapter and
+  other adapters may follow separately. It is useful seam direction, not a response to
+  the later hard-link correction, not acceptance of a native macOS provider, and not a
+  reason to reverse M.O.T's no-Docker decision. Fresh writer review also fixes the next
+  design predicates: U142 must protect manager/credential fields at one field-aware
+  boundary without blocking legitimate cache refresh, while U144 requires persisted
+  secret provenance plus one cross-process transaction boundary shared by provider,
+  config and secret writers. No new candidate or runtime change follows yet.
 - Hermes v2026.8.16 is the only conservative update candidate. The newer v2026.8.27
   remains blocked by the recorded incompatibility, and v2026.8.16 does not itself fix
   WhatsApp disable persistence.

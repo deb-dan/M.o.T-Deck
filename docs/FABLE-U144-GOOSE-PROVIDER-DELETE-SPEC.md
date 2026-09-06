@@ -125,6 +125,30 @@ configuration must fail closed rather than marking an intent complete before the
 can be examined. Only after those predicates are implemented can the earlier interruption,
 ID-reuse and byte-preservation tests support a transaction claim.
 
+The current-main re-read at `5e90925962f0…` confirms the replacement cannot be confined
+to the ACP delete handler. `DeclarativeProviderConfig` persists `api_key_env` but no
+secret-origin/provenance field. `remove_custom_provider` infers ownership solely from
+`api_key_env == generate_api_key_name(id)`. The structured `providers` map is changed
+through `set_provider_entry`, while general configuration writes use `Config`'s
+per-instance mutex and a predictable `.tmp` replacement path. Locking only a candidate
+deletion journal or temporary output file would not serialize every participating writer
+and would still permit lost updates across processes.
+
+The next acceptable upstream design therefore needs all of the following before code:
+
+1. a backward-compatible persisted secret-origin value created at the same time as the
+   secret reference; legacy/missing provenance means preserve the secret;
+2. one stable cross-process mutation coordinator used by provider definition, structured
+   provider stanza, ordinary config and secret writers—not a lock attached to a temp file;
+3. a durable transaction/receipt keyed by provider identity plus creation generation, so
+   a delayed delete cannot target a newly reused ID;
+4. explicit roll-forward/recovery rules for each crash point and corrupt-state case; and
+5. byte-preservation tests for unrelated config plus the real Goose UI delete, restart
+   and re-list journey.
+
+This is a Goose-owned consistency fix. M.O.T must not add a watcher, renderer cleanup or
+private config surgery while waiting for it.
+
 Goose's existing ACP response schema returns the exact provider ID but not per-file
 deletion details, so M.O.T cannot repair this from the renderer. Upstream acceptance,
 release, a pin bump, and the real Goose UI delete→restart→re-list journey remain required

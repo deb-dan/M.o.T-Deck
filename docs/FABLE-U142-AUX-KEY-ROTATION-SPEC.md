@@ -118,6 +118,33 @@ endpoint ID; URL spelling is neither ownership nor authentication. Every creatio
 update, enable/disable, adoption and delete seam must be enumerated and tested before a
 new candidate is described as owner-aware.
 
+The current `dev` writer graph was re-enumerated at `934d23c0be29…`, not inferred from
+the generic endpoint routes. `ModelEndpoint` is mutated by `routes/model_routes.py`,
+Cookbook registration and watchdog cleanup, ChatGPT-subscription provisioning, Copilot
+provisioning, chat-time cache refresh, and `src/agent_tools/admin_tools.py`. Those paths
+write different field classes: credentials and lifecycle state, but also legitimate live
+metadata such as `cached_models`. A blanket rule that rejects every write to a managed
+row would therefore break ordinary discovery and health behavior.
+
+The replacement boundary must be field- and actor-aware:
+
+1. manager/resource claim, management-token hash, credential, credential fingerprint and
+   management revision are protected fields;
+2. the exact manager capability may rotate those fields through the managed API only;
+3. an authenticated human owner keeps an explicit, separately specified administration
+   path—management does not silently become ownership of all row behavior;
+4. system probes may update an allow-listed set of non-secret observations such as model
+   cache/refresh metadata, but cannot change claim, endpoint identity, URL, credential or
+   enabled/deleted state; and
+5. every direct ORM writer, flush, migration and bulk-update route must pass one mutation
+   service or a database-level enforcement hook. Route checks alone are insufficient.
+
+The adversarial test oracle must attempt the protected mutations through every writer
+above while proving allowed cache refresh still works. It must also prove that a user can
+create a distinct endpoint for the same URL without acquiring the manager capability.
+The exact allowed-field matrix must be accepted upstream before another patch is written;
+inventing it locally would be another partial policy disguised as an ownership boundary.
+
 The rejected candidate tests cover exclusive creation, token non-storage, collision-resistant
 fingerprints, wrong-token indistinguishability, generic-route bypasses, concurrent
 provisioning, lost-response replay, rollback CAS and legacy SQLite migration/uniqueness.
@@ -137,6 +164,8 @@ in the upstream search. The separate report is now upstream issue
 [#6256](https://github.com/odysseus-dev/odysseus/issues/6256), with the submitted text
 preserved at `docs/upstream-candidates/U142-ODYSSEUS-ISSUE.md`. The issue's statement
 that generic routes must not bypass a claim remains correct, but the posted
-"implementation evidence" now requires a public correction: the first implementation
-did not cover every writer. No code will be split or submitted until the shared
-authorization boundary survives this review.
+"implementation evidence" required a public correction because the first implementation
+did not cover every writer. That correction is now public at
+[#6256 comment 5559273438](https://github.com/odysseus-dev/odysseus/issues/6256#issuecomment-5559273438).
+There is no maintainer response or API agreement yet. No code will be split or submitted
+until the shared, field-aware authorization boundary survives this review.
