@@ -1,7 +1,7 @@
 # v1.5.89 local lifecycle and reproducibility wave
 
-Status: release candidate implemented and gated. The final release section is completed
-only after the clean commit, installed ship, real-stack health check, and archive audit.
+Status: shipped and verified. The release section records the clean commit, installed
+ship, real-stack health check, and read-only FAT archive audit.
 
 ## Scope and preservation boundary
 
@@ -141,5 +141,28 @@ that changes that boundary. Neither worktree nor branch was removed here.
 
 ## Release acceptance — v1.5.89
 
-Pending the clean release commit, installed ship, all-component check, and FAT archive
-audit. This section must not be rewritten as passed until those operations complete.
+- The release commit is `0095b95`; local `HEAD` and GitHub `main` matched before the
+  installed ship and FAT build, and the seed recorded that exact SHA with
+  `dirty_files=0`.
+- The clean-tree ship reran the complete gate: 577 contract checks with only the four
+  declared checkout-local Aider skips; 720 repository checks with two dependency
+  deprecation warnings; and every JavaScript suite, including U42's ten executable
+  lifecycle checks.
+- The installed bundle reports identifier `local.motdeck.app`, executable `MOTDeck`,
+  and both version fields as 1.5.89. Its bridge came up with API fingerprint `981998f7`
+  and snapshot app-layer fingerprint `9ffe0595`.
+- All ten components were running and healthy. The runner's configured and served IDs
+  both named the same Qwen3.8 27B model. DeepSeek's live listener command used the exact
+  supported `--profile web --patch .../deepseek-directory-picker.yaml` form. Music and
+  Generate each returned HTTP 200 with `ok:true`.
+- The FAT build contains a 445 MB app payload and a 112 MB compressed seed. The mounted
+  DMG passed deep strict code-signature verification and repeated the exact bundle
+  identifier, executable, and 1.5.89 versions. Its SHA-256 is
+  `a095ce27e0b6650804b157881e8d4cdb44522f9c44fedcf66a9eda0bc25020c9`.
+- All 12,536 entries in `SEED_FILES.json` were independently streamed from the archive
+  and SHA-256 verified: zero missing, zero extra, zero mismatches. MOT Deck's own
+  `bridge/tests` and `bridge/contract_tests` authoring suites are absent. Test-named
+  directories that remain are part of the unchanged upstream Hermes, Odysseus, and
+  SearXNG vendor seeds; they are not the retired first-party runtime-test residue.
+- The final installer is `dist/MOT Deck.dmg`. No screenshot was taken during the build,
+  human-entry verification, installed ship, or archive audit.
