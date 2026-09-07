@@ -712,11 +712,12 @@ ok(/arm\(running\(\) \|\| installing\(\) \? 1000 : 20000\)/.test(html),
 ok(/timer = setTimeout\(\(\) => \{ timer = null; load\(\); \}, ms\)/.test(html),
    '28b. the timer clears its own handle when it fires, so the next render re-arms it '
    + '(a page that polls once and then lies about "now" is the worst version of this)');
-// Comments may NAME alert() (they explain why it is banned); the CODE may not call it.
+// Comments may NAME alert(); routine feedback remains non-modal even though S12 now
+// gives embedded pages a working native-dialog fallback.
 const codeOnly = html.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/<!--[\s\S]*?-->/g, ' ')
                      .replace(/^\s*\/\/.*$/gm, ' ');
 ok(/function toast\(/.test(html) && !/(^|[^.\w])alert\s*\(/.test(codeOnly),
-   '29. feedback is a toast, never alert() — a silent no-op in the shell (v1.5.39)');
+   '29. routine feedback stays in the non-modal toast rather than a blocking alert');
 ok(/S\.form\.steps = String\(j\.steps\)/.test(html) && /S\.form\.seed = '';/.test(html),
    '30. write-back: a finished run’s values land in the ordinary controls, and the seed '
    + 'still resets to random');

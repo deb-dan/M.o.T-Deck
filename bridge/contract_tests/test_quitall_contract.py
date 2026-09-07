@@ -317,9 +317,9 @@ def test_quit_everything_is_on_option_command_q_and_never_shift_command_q():
 
 
 def test_the_confirmation_is_a_real_nsalert_and_names_what_is_running():
-    """alert()/confirm() are silent no-ops in this WKWebView shell, so a panel-side
-    confirm returns instantly and always false. And a warning that cannot be checked
-    ('this stops everything') is not informed consent."""
+    """Quit Everything remains a native shell decision even after S12 added working
+    web-dialog delegates: it must enumerate the actual running processes rather than
+    reduce a privileged app-wide stop to a generic page confirmation."""
     src = _read(SWIFT)
     body = src[src.index("func confirmQuitEverything"):src.index("func showQuitAllSheet")]
     assert "NSAlert()" in body and "runModal()" in body

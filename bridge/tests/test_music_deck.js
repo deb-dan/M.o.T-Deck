@@ -128,7 +128,7 @@ ok(/id="music-hero"[^>]*hidden/.test(html),
 ok(/id="music-tplhead"[^>]*onclick="toggleMusicTpls\(\)"/.test(html),
    'the Templates header is the disclosure control');
 ok(!/alert\('Policies UI lands in M2'\)/.test(html),
-   'the dead Policies nav entry is gone (alert() is a silent no-op in WKWebView)');
+   'the deliberately removed Policies nav entry is not resurrected by S12 dialogs');
 
 // ---------- EXECUTE the pure helpers ----------
 function grab(name) {

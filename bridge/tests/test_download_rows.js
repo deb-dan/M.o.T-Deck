@@ -371,12 +371,12 @@ async function retryOf(e, opts) {
   ok(h.calls.started.length === 0, 'retry(stale id): a no-op, never a Get for undefined');
 }
 
-// ══ 6. the S12 class — nothing here alert()s ════════════════════════════════
+// ══ 6. routine row feedback remains non-modal after S12 ════════════════════
 // COMMENT-STRIPPED, because this panel's prose talks ABOUT alert() — a fence that
 // fires on a comment explaining the rule is a fence that punishes documenting it.
 const decomment = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 ok(!/\balert\s*\(/.test(decomment(SRC_REFRESH)) && !/\balert\s*\(/.test(decomment(SRC_RETRY)),
-   'neither the row renderer nor Retry uses alert() (the S12 silent-no-op class)');
+   'neither the row renderer nor Retry interrupts routine work with alert()');
 
 // ══ 7. ALL-DESIGNS: the new chips are TOKENS ONLY ═══════════════════════════
 {

@@ -5710,11 +5710,10 @@ function truncatedSheets(s) {
   } catch (e) { return ''; }
 }
 
-// Switching away from unsaved work asks IN THE PAGE, never with window.confirm:
-// WKWebView shows no JS confirm() unless the host implements the JS-panel delegate,
-// and a missing delegate makes confirm() return FALSE — i.e. the native tab would
-// silently refuse to open any other file once a sheet was touched. Same recorded
-// class as the ⊕-attach file picker. So: the first click warns, the second discards.
+// Switching away from unsaved work asks IN THE PAGE. The shell supports native
+// JavaScript dialogs from S12 onward, but keeping the warning beside the document makes
+// the consequence visible and avoids a modal interruption: first click warns, second
+// discards.
 let discardArmed = null, discardAt = 0;
 // The same two-step arm, for the same reason, guarding the tier-2 navigation.
 let richArmed = null, richArmedAt = 0;

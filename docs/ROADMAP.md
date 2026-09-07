@@ -7,7 +7,7 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current version: **v1.5.84** (see `VERSION`). Written 2026-09-07.
+Current version: **v1.5.85** (see `VERSION`). Written 2026-09-07.
 
 <!-- current-status:start
 in-progress: S1 S12 S15 S16 S23 S34 A1 A2 A4 U151

@@ -2195,8 +2195,9 @@
        are the user's), not written out here. With no saved layout the model IS this
        list, so a fresh install is byte-identical to the build before this slice —
        plus the two lanes (Aider, LOffice) that previously had no sidebar row at all.
-       Policies removed 2026-08-20 (FABLE-MUSIC-DECK-SPEC C8): its onclick was an
-       alert(), which is a SILENT no-op in WKWebView. -->
+       Policies removed 2026-08-20 (FABLE-MUSIC-DECK-SPEC C8): at that release its
+       alert()-only onclick was silent in WKWebView. S12 later fixed the shell-wide
+       dialog primitive; it does not silently restore a deliberately removed row. -->
   <div class="navlbl">Workspace</div>
   <nav id="sideworkspace"></nav>
   <!-- STUDIO PHASE 2 v2: the "More" affordance, Unsloth's own path to Customize.
@@ -3993,7 +3994,8 @@ async function exportLog() {
 }
 
 async function clearLog(btn) {
-  // Two-step arm (same pattern as session delete — WKWebView has no confirm()).
+  // Two-step arm (same pattern as session delete). Native confirm() exists from S12,
+  // but destructive actions remain visibly armed in context rather than modal.
   if (!btn._armed) { btn._armed = true; btn.textContent = 'Clear?'; setTimeout(() => {
     btn._armed = false; btn.textContent = 'Clear'; }, 3000); return; }
   btn._armed = false; btn.textContent = 'Clear';
@@ -6958,7 +6960,8 @@ async function submitMcpAdd(btn) {
   } finally { if (btn) btn.disabled = false; }
 }
 
-// two-step Remove (arm → confirm) — WKWebView has no confirm(), so we arm inline.
+// Two-step Remove (arm → confirm). Native confirm() exists from S12, but this keeps the
+// target and consequence visible together rather than interrupting with a modal.
 const _mcpRmArmed = {};
 async function removeMcpServer(id, name, btn) {
   const errEl = document.getElementById('mcp-' + id + '-err');
@@ -8442,9 +8445,8 @@ function sttOn(){ return !!(voiceCfg && voiceCfg.stt_model); }
    prove, live: (1) audioWorklet exists, (2) a Blob-URL module loads, (3) process()
    actually runs against the real mic stream. Verdict is shown AND logged. */
 async function audioWorkletSpike(){
-  // alert() is a silent no-op in the app's WKWebView (recorded gotcha — no
-  // runJavaScriptAlertPanel delegate), so the verdict goes to the activity feed
-  // (Mission Control), the console, and alert() as a browser-only bonus.
+  // Keep three observation channels: the activity feed survives a dismissed native
+  // alert, the console helps development, and S12 makes alert() visible in the app.
   const say = (msg) => {
     try { feed('voice', msg); } catch(_){}
     console.log(msg);
@@ -9793,7 +9795,7 @@ function beginRename(sid, btn){
   input.onblur = () => commit(false);
 }
 
-// Two-step inline delete (no OS dialog — WKWebView can't show confirm()): first
+// Two-step inline delete (no OS dialog): first
 // click arms the button (✓? for 3s), second click within the window deletes.
 function armDelete(sid, btn){
   if (chatPane.delArm && chatPane.delArm.sid === sid){ clearTimeout(chatPane.delArm.t); doDelete(sid); return; }
@@ -9958,7 +9960,7 @@ async function setModelHidden(id, hidden){
   } catch (e){ voiceErr = 'could not reach the bridge'; }
   await initModels();
 }
-/* Two-step arm→confirm, same idiom as Delete (WKWebView has no confirm()). */
+/* Two-step arm→confirm, same visible-in-context idiom as Delete. */
 function hideBtn(id, name, src){
   if (!isHideable(src)) return null;
   const b = document.createElement('button'); b.className = 'mp-act';
@@ -12163,7 +12165,8 @@ function renderDetail(){
       acts.appendChild(auxBtn);}
     // Delete — ONLY for app-owned models (download/local, files under data/models/).
     // Read-only imports show a greyed note instead (deleting would touch files the
-    // motdeck does not own). Two-step arm→confirm (WKWebView has no confirm()).
+    // motdeck does not own). Two-step arm→confirm stays visible in context even though
+    // the shell supports native confirm() from S12 onward.
     if (isAppOwned(m.source)){
       const del = document.createElement('button'); del.className = 'md-del';
       del.textContent = 'Delete'; del.title = "Remove this model's files from data/models/";
@@ -12240,7 +12243,7 @@ async function ejectModel(){
   modelsBusy = false; initModels(); loadChatModels();
 }
 
-// Delete an app-owned model — two-step (WKWebView has no confirm()): first click arms
+// Delete an app-owned model — two-step and visible in context: first click arms
 // ("Delete — really?" for 3s), second within the window deletes. Only rendered for
 // download/local models; the bridge HARD-refuses anything else even if called directly.
 let _mDelArm = null;
@@ -12445,7 +12448,8 @@ async function renderHfFiles(repo, box){
   paintHfFits(repo, box);
 }
 
-// Two-step (WKWebView has no confirm()): first click arms, second within 3s downloads.
+// Two-step: first click arms, second within 3s downloads. Native confirm() exists from
+// S12, but keeping this local to the row leaves the exact model visible.
 let _dlArm = null;
 function hfDownload(repo, btn){
   if (modelsBusy) return;

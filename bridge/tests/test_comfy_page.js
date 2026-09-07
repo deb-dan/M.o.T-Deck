@@ -567,7 +567,7 @@ ok(/ComfyUI tab ↗/.test(sheet.markup),
 const scriptNoComments = bodyScript.replace(/\/\*[\s\S]*?\*\//g, '')
                                    .replace(/^\s*\/\/.*$/gm, '');
 ok(/function toast\(/.test(html) && !/[^\w.]alert\s*\(/.test(scriptNoComments),
-   'the v1.5.39 toast pattern stays and alert() is still banned (silent no-op in the shell)');
+   'routine Comfy feedback stays in the non-modal toast after S12 dialogs');
 ok(/S\.form\.width = Number\(m\[1\]\)/.test(html) && /S\.form\.seed = null;/.test(html),
    'Pixelmator write-back: a finished run’s values land in the ordinary controls, and '
    + 'the seed still resets to random');

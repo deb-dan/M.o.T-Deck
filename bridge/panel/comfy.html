@@ -668,9 +668,8 @@
               flex:1 1 auto; overflow-wrap:anywhere; }
   .frow .fs { color:var(--faint); white-space:nowrap; }
 
-  /* Inline toast — alert() is a SILENT NO-OP inside the app shell's WKWebView (no
-     runJavaScriptAlertPanel delegate), so any feedback routed through alert() simply
-     never appears there. Same silent-no-op class as runOpenPanelWith in main.swift. */
+  /* Keep routine feedback in a page-owned, non-modal toast. The shell supports native
+     alert/confirm/prompt from S12 onward, but status should not interrupt the workflow. */
   #toast { position:fixed; left:50%; bottom:30px; transform:translateX(-50%);
     max-width:min(560px, 92vw); z-index:9900;
     border:1px solid var(--gold); border-radius:var(--r-panel);
@@ -2436,9 +2435,8 @@ function openComfyTab() {
   return false;
 }
 
-/* NOT alert(): the app shell's WKWebView has no runJavaScriptAlertPanel delegate, so
-   alert() shows nothing there — "Open template in ComfyUI" looked dead in the app while
-   the template was in fact written. This toast renders in every host. */
+/* Keep actionable status in this page-owned toast. Native JavaScript dialogs exist from
+   S12 onward, but a blocking alert is still the wrong interaction for this path. */
 let toastTimer = null;
 function toast(msg, bad) {
   let t = $('toast');
