@@ -1,7 +1,7 @@
 # v1.5.86 local truth, lifecycle and media-compatibility wave
 
-**State:** implemented release candidate; not shipped or closed until the checklist at
-the end passes. **Canonical root only:** `New Harness/MOT Deck`. The protected former
+**State:** shipped and verified 2026-09-07; the complete checklist below passed.
+**Canonical root only:** `New Harness/MOT Deck`. The protected former
 project is read-only context and is never an edit, cleanup or migration source.
 
 This file is the decision and evidence record for U153. It prevents the many small
@@ -153,16 +153,22 @@ intentionally not changed.
 
 - [x] Focused adversarial suites for every implementation slice.
 - [x] U7 real `.docx` ribbon action and visible result; exact temporary file removed.
-- [ ] Full supported `scripts/verify.sh` passes after all candidate/docs changes.
-- [ ] `ship.sh` updates the installed app without overwriting live YAML, registries,
+- [x] Full supported `scripts/verify.sh` passes after all candidate/docs changes: 564
+      contracts (four known checkout-local Aider skips), 708 repository Python tests and
+      every JavaScript suite.
+- [x] `ship.sh` updates the installed app without overwriting live YAML, registries,
       secrets, user files, component state or navigation state.
-- [ ] Affected installed surfaces are walked: memory preferences/measurement, Aider
+- [x] Affected installed surfaces are walked: memory preferences/measurement, Aider
       theme, Audio density, Goose logs, LOffice Stop, Music event/status, Comfy Graph and
       subgraph/download wording, Agent search, Hermes attachment recovery, Odysseus
       catalogue refresh and runner served-ID wording.
-- [ ] All ten components and the bridge are healthy; runner pin and served model are
+- [x] Music Reset layout is executed on the user's genuinely rearranged installed
+      workbench: all eight panels return to authored order, Settings returns left/full
+      height, and the control remains visible. The isolated visual walk also proves the
+      separately scoped navigation reset without modifying the user's navigation state.
+- [x] All ten components and the bridge are healthy; runner pin and served model are
       reported explicitly; optional Aux remains optional.
-- [ ] Clean FAT DMG has the correct MOT Deck identity, signature, seed ownership,
+- [x] Clean FAT DMG has the correct MOT Deck identity, signature, seed ownership,
       `dirty_files=0`, no test roots, and exact archive/manifest path+digest equality.
-- [ ] Only then mark U153 and its completed constituent rows closed, update the current
+- [x] Only then mark U153 and its completed constituent rows closed, update the current
       indexes, commit, push, and call v1.5.86 shipped.
