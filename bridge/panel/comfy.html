@@ -1674,6 +1674,7 @@ function renderCaps() {
       '" data-sf="' + esc(it.subfolder || '') + '">Reveal</button>' +
     '<button class="ghost ovf" data-act="item-menu" data-fn="' + esc(it.filename) +
       '" data-sf="' + esc(it.subfolder || '') + '" data-job="' + esc(it.job || '') +
+      '" data-graph="' + (it.graph_available ? '1' : '') +
       '" aria-label="More actions">⋯</button>');
   wireTips($('caps'));
 }
@@ -2727,7 +2728,9 @@ document.addEventListener('click', async (e) => {
   }
   else if (act === 'item-menu') {
     const its = [];
-    if (b.dataset.job) its.push({ label:'The exact graph that made this', act:'graph', job:b.dataset.job });
+    if (b.dataset.job && b.dataset.graph === '1') {
+      its.push({ label:'The exact graph that made this', act:'graph', job:b.dataset.job });
+    }
     its.push({ label:'Reveal in Finder', act:'reveal', fn:b.dataset.fn, sf:b.dataset.sf });
     /* an act, not an href — the second half of Debi's Chrome bug lived here */
     its.push({ label:'ComfyUI tab ↗', act:'comfyui-tab' });

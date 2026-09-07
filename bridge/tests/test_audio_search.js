@@ -40,6 +40,7 @@ eval(grab('audioLicText'));
 eval(grab('audioLicNote'));
 eval(grab('audioProbeSummary'));
 eval(grab('audioGetState'));
+eval(grab('audioStarterDetail'));
 
 // ── licence pills (reuse the existing fit-pill palette; no new CSS) ───────────
 check('an ok licence is the green pill', audioLicPill('ok') === 'fit-ok');
@@ -94,6 +95,14 @@ check('the two Qwen3-TTS starters are DEMOTED, not removed',
       /repo: 'ggml-org\/Qwen3-TTS-12Hz-1\.7B-Base-GGUF'/.test(html)
       && /repo: 'mlx-community\/Qwen3-TTS-12Hz-1\.7B-Base-8bit'/.test(html)
       && (html.match(/below OmniVoice/g) || []).length === 2);
+const starterDetail = audioStarterDetail({ desc:'quality', warn:'needs a package',
+                                           repo:'owner/model', lic:'Apache-2.0' });
+check('starter detail keeps description, dependency warning, provenance and licence',
+      ['quality', 'Caution: needs a package', 'owner/model', 'Apache-2.0']
+        .every(s => starterDetail.includes(s)));
+check('starter rows are compact at rest and expose detail to hover and keyboard focus',
+      /tabindex="0" role="note" title="\$\{escAttr\(detail\)\}"/.test(html)
+      && !/white-space:normal">\$\{esc\(s\.desc\)\}/.test(html));
 
 // ── the probe summary line ───────────────────────────────────────────────────
 check('a tts-mlx probe reads engine · size · voices',

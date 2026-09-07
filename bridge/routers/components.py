@@ -66,7 +66,8 @@ def _fail_note(name: str) -> "dict | None":
 # THE LIVE BUG (Debi, screenshot, 2026-09-02). The runner card read
 # "Online · serving Qwen3.5-9B-Q4_0" and, one line below it,
 # "no model is pinned — pick one in Models". /api/status agreed with the GREEN half
-# of that card in every field — pin = pin_intent = live_id = Qwen3.5-9B-Q4_0,
+# of that card in every field — pin = pin_intent and served_id = live_id =
+# Qwen3.5-9B-Q4_0,
 # running true, health ok — and carried the red half anyway, in `last_error`, with
 # `stale: false`, `model: ""`, `path: ""`. So the card was not confused: it was
 # faithfully rendering a sentence about a DIFFERENT, EARLIER start attempt, one that
@@ -332,16 +333,17 @@ async def status() -> dict:
         # than painting a permanent "health lost" line in the feed.
         r_verdict, r_misses = _health_track(
             "runner", _expected_path("runner").exists(), port_up)
-        # U15 — THE PIN IS AN INTENT, THE LIVE ID IS A FACT, AND THE CARD MUST BE ABLE
-        # TO TELL THEM APART. `pin` keeps its historical meaning (best-known name) so
-        # no existing reader changes behaviour; the two new keys are what let the panel
-        # write "serving X" when something is loaded and "pinned: X" when nothing is.
+        # U15/S30 — THE PIN IS AN INTENT, THE SERVED ID IS A FACT.  `pin` now has the
+        # same configured-pin meaning as every other component row; `served_id` is the
+        # authenticated live answer.  Keep `live_id` as a compatibility alias while
+        # first-party readers move to the explicit name.
         mv = await asyncio.to_thread(runner_model_view, c)
         out["components"]["runner"] = {
             "installed": True,
-            "pin": str(live_id or rc.get("model") or rc.get("adapter") or "auto"),
+            "pin": mv["pin"],              # configured runner.model — same semantics as peers
             "pin_intent": mv["pin"],       # motdeck.yaml runner.model — INTENT, always
-            "live_id": live_id or "",      # what the runner answers — FACT, or ""
+            "served_id": live_id or "",    # authenticated live FACT, or ""
+            "live_id": live_id or "",      # compatibility alias; do not add new readers
             "model_path": mv["path"],
             "model_file": mv["file"],      # ok | checking | gone | incomplete | unknown | unregistered
             "model_note": mv["note"],
@@ -931,11 +933,10 @@ async def deps() -> dict:
     c = cfg()
     hard = {n: (comp.get("depends_on") or [])
             for n, comp in (c.get("components") or {}).items()}
-    # ⚠️ `runner.pin` CARRIES THE LIVE ID, not the pin (audit §5.3 — the component
-    # "pin" field name is reused for the runner row and means "what it is serving").
-    # Spelled out here because reading it as the pin is a one-character mistake with a
-    # LIE at the end of it; a `served_id` alias is ledgered as S30.
-    live = (st.get("components", {}).get("runner") or {}).get("pin")
+    # S30: the dependency graph follows the authenticated served identity, never the
+    # configured pin.  The two may differ during a switch, failed restart, or explicit
+    # pin drift and that distinction is the whole reason this field exists.
+    live = (st.get("components", {}).get("runner") or {}).get("served_id")
     loaded = (st.get("components", {}).get("runner") or {}).get("loaded")
     comps = dict(st.get("components", {}))
     bindings = {}
@@ -1017,6 +1018,11 @@ _LOG_NAMES = ("bridge", "hermes", "odysseus", "searxng", "runner", "guard",
               # the goose lane: identical shape to aider's — one line per PTY session
               # plus the online-only, sha-verified binary install.
               "goose", "goose-install",
+              # Goose UI has three distinct failure seams: bridge-owned lifecycle,
+              # the renderer server's stderr, and its online-only build/install.
+              # Its own failure page names these files, so the panel must expose the
+              # same narrowly allowlisted names rather than sending the user to shell.
+              "gooseui", "gooseui-serve", "goose-ui-install",
               # the OpenCode tab: its server log + the online-only binary install
               # (same voicebox-install rule — a download install must be readable
               # in-panel, not only from a terminal).

@@ -193,8 +193,9 @@ check('...and routes through the same helper instead',
       html.indexOf("liveModelLabel(chatPane.model) || 'Assistant'") > 0);
 check('liveModelLabel reads the live runner off the status poll',
       /function liveModelLabel[\s\S]{0,240}components\.runner/.test(html));
-check('...and passes BOTH the pin and its running gate (a stopped pin lies)',
-      /laneModelLabel\(r && r\.pin, !!\(r && r\.running\), echo\)/.test(html));
+check('...and passes BOTH the explicit served id and its running gate (a stopped id lies)',
+      /laneModelLabel\(r && \(r\.served_id \|\| r\.live_id\), !!\(r && r\.running\), echo\)/
+        .test(html));
 check('the session-model fallback is no longer mangled by a dash split',
       html.indexOf(".split('-').slice(0,2).join('-') || 'model'") < 0);
 

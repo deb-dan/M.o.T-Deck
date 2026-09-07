@@ -49,6 +49,7 @@ The groups:
      both, because a lane missing from the source view makes every `not in` assertion
      about it pass VACUOUSLY (APP-FACADE-MANIFEST.md).
 """
+import asyncio
 import json
 import os
 import sys
@@ -230,7 +231,8 @@ try:
     C.state_dir().mkdir(parents=True, exist_ok=True)
     C._gallery_write([
         {"filename": "kept.png", "subfolder": C.OUT_PREFIX, "bytes_at_ingest": 100,
-         "job": "j1", "pick_title": "T", "mode": "image", "at": 3},
+         "job": "j1", "pick_title": "T", "mode": "image", "at": 3,
+         "graph": {"1": {"class_type": "CheckpointLoaderSimple"}}},
         {"filename": "grew.png", "subfolder": C.OUT_PREFIX, "bytes_at_ingest": 999,
          "job": "j2", "pick_title": "T", "mode": "image", "at": 2},
         {"filename": "gone.png", "subfolder": C.OUT_PREFIX, "bytes_at_ingest": 10,
@@ -239,6 +241,16 @@ try:
     g = C.gallery()
     by = {i["filename"]: i for i in g["items"]}
     ok(by["kept.png"]["state"] == "ok", "an intact item is ok")
+    ok(by["kept.png"]["graph_available"] is True and "graph" not in by["kept.png"],
+       "a persisted graph is advertised without bloating the gallery payload")
+    ok(by["gone.png"]["graph_available"] is False,
+       "a legacy row without a graph does not advertise a dead Graph action")
+    C.JOBS.pop("j1", None)
+    graph_response = asyncio.run(C.api_comfy_graph("j1"))
+    graph_body = json.loads(graph_response.body)
+    ok(graph_response.status_code == 200 and graph_body["graph"]["1"]["class_type"]
+       == "CheckpointLoaderSimple",
+       "a persisted exact graph remains retrievable after its in-memory job is gone")
     ok(by["gone.png"]["state"] == "missing",
        "A-2: an item whose file vanished is LISTED as missing, not dropped")
     ok(by["grew.png"]["state"] == "size_changed",

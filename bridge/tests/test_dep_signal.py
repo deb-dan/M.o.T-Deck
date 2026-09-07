@@ -469,9 +469,13 @@ def test_the_card_can_tell_intent_from_fact():
     src = _APP_SOURCE
     st = src[src.index('out["components"]["runner"] = {'):]
     st = st[:st.index("try:")]
-    for key in ('"pin_intent"', '"live_id"', '"model_path"', '"model_file"',
+    for key in ('"pin_intent"', '"served_id"', '"live_id"', '"model_path"', '"model_file"',
                 '"model_note"', '"last_error"'):
         ok(key in st, f"the runner row publishes {key}")
+    ok('"pin": mv["pin"]' in st,
+       "runner.pin has the same configured-pin semantics as every component row")
+    ok('"served_id": live_id or ""' in st,
+       "the authenticated live answer has its own unambiguous field")
     panel = (ROOT / "bridge" / "panel" / "index.html").read_text()
     ok("c.loaded ? 'serving' : 'pinned'" in panel,
        "the card labels the name as an INTENT whenever nothing is loaded")
@@ -793,7 +797,8 @@ def test_a_switch_re_seeds_every_dependent():
 # THE INCIDENT (Debi, screenshot, 2026-09-02, and the reason this is not just more of
 # §6): the runner card read "Online · serving Qwen3.5-9B-Q4_0" with "no model is pinned
 # — pick one in Models" on the line below it. /api/status agreed with the green half in
-# every field — pin = pin_intent = live_id = Qwen3.5-9B-Q4_0, running true, health ok —
+# every field — pin = pin_intent and served_id = live_id = Qwen3.5-9B-Q4_0,
+# running true, health ok —
 # and carried the red half anyway, in `last_error`, with stale: false, model: "",
 # path: "". The sentence was TRUE about a start attempt made while motdeck.yaml had no
 # runner.model; it was published as though it described now.

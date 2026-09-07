@@ -17,7 +17,7 @@ appears in two groups, disappears from the ledger, or drifts from `docs/ROADMAP.
 <!-- current-status:start
 in-progress:
 next: P6 P3 P5 S4 S7 U3
-later: S3 S5 S6 S10 S13 S17 S18 S19 S20 S26 S27 S30 A3 A5 A6 U2 U7 U9 U14 U26 U28 U29 U33 U34 U36 U39 U41 U42 U44 U45 U47 U57 U58 U65 U67 U70
+later: S5 S6 S10 S13 S17 S18 S19 S20 S26 S27 S30 A3 A5 A6 U2 U7 U9 U14 U26 U28 U29 U33 U34 U36 U39 U41 U42 U44 U45 U47 U57 U58 U65 U67 U70
 someday: S2 U4 U5 U6 U8 U43 U46 U68
 blocked-later: P1 U1 U72 U91 U139 U142 U144
 blocked-someday: P2
@@ -28,7 +28,7 @@ current-status:end -->
 |---|---|---|
 | 🔴 In progress | None | v1.5.85 is shipped and verified; no work is being concealed as an active candidate |
 | 🔵 Next | P6, P3, P5, S4, S7, U3 | P6 is the next user-selected product slice; the remaining IDs retain their recorded order after it |
-| 🟡 Later | S3, S5, S6, S10, S13, S17–S20, S26, S27, S30, A3, A5, A6, U2, U7, U9, U14, U26, U28, U29, U33, U34, U36, U39, U41, U42, U44, U45, U47, U57, U58, U65, U67, U70 | Valid backlog, lower urgency or larger scope |
+| 🟡 Later | S5, S6, S10, S13, S17–S20, S26, S27, S30, A3, A5, A6, U2, U7, U9, U14, U26, U28, U29, U33, U34, U36, U39, U41, U42, U44, U45, U47, U57, U58, U65, U67, U70 | Valid backlog, lower urgency or larger scope |
 | ⚪ Someday | S2, U4–U6, U8, U43, U46, U68 | Preserved ideas or low-priority investigations |
 | ⏸ Blocked | P1, P2, U1, U72, U91, U139, U142, U144 | Needs an upstream contract/release, a safe replacement design, or the named owner decision |
 | Withdrawn | U147 | Preserved mistaken inference; not a defect and not work |
@@ -63,7 +63,7 @@ current-status:end -->
 |---|---|---|---|---|---|---|---|---|---|
 | S1 | ✅ CLOSED | **LOFFICE SESSIONS ARE CATALOG-BOUND.** The Office MCP publishes a canonical SHA-256 over the full real tool catalogue. The panel stores the hash with its local Agent session, adopts pre-fingerprint sessions once, defers a change while a turn is active, then clears only its local session pointer/transcript and visibly starts a fresh session; upstream history is never deleted. | 🟢 MEDIUM | ⚪ Low | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Small | `@status:done-verified` v1.5.85 — adversarial adopt/change/defer/rollover ordering runs in `test_office_catalog_refresh.js`; the installed `/office` loaded normally and `/api/office/mcp` returned catalog hash `e4e8819f…` with four tool groups. |
 | S2 | ⚪ SOMEDAY | Session-creation unification across lanes (offered to Debi, no word yet) | ⚪ LOW | 🟢 Medium | ⚪ Low | 🟡 Marginal | 🟢 2-5 files | Medium | `@status:open` awaiting Debi's word |
-| S3 | 🟡 LATER | Tier-1 grid code deletion after soak + Univer rollback-asset removal decision | ⚪ LOW | 🟢 Medium | ⚪ Low | 🟡 Marginal | 🟡 6-15 files | Medium | `@status:open` soak ongoing since v1.5.x one-editor cutover |
+| S3 | ✅ CLOSED | **Keep the LOffice plain-DOM Tier-1 grid and retained Univer rollback assets.** The grid is not dead code: it is the immediate workbook interstitial and the functional fallback when optional ONLYOFFICE is absent or fails. The retired Univer mount remains an intentional rollback asset. | ⚪ LOW | ⚪ Low | ⚪ Low | 🟡 Marginal | ⚪ 0 files | None | `@status:preserved` 2026-09-07 — Debi explicitly ruled that the current LOffice arrangement is okay as-is. This row grants no future deletion authority; revisit only on a new explicit request. |
 | S4 | 🔵 NEXT | Voice/music spawn gates still use old budget_gb predicate — retrofit onto the fit engine (core/fit.py) | 🟢 MEDIUM | 🟢 Medium | 🟢 Medium | 🟢 Good | 🟢 2-5 files | Small | `@status:open` queued in v1.5.30 report |
 | S5 | 🟡 LATER | Post-load truth: parse runner's own buffer-size log lines, store measured-vs-predicted per model | 🟢 MEDIUM | ⚪ Low | ⚪ Low | 🟢 Good | 🟢 2-5 files | Medium | `@status:open` designed in v1.5.30, not built |
 | S6 | 🟡 LATER | Guardrail spectrum as a setting (Quiet / Advise / Advise-early / Custom headroom) per UX research §9.6 | ⚪ LOW | ⚪ Low | ⚪ Low | 🟡 Marginal | 🟢 2-5 files | Small | `@status:open` |

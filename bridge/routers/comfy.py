@@ -1132,7 +1132,10 @@ async def api_comfy_graph(job_id: str) -> JSONResponse:
     actually run": not the template, the graph."""
     j = JOBS.get(job_id)
     if not j:
-        it = next((x for x in gallery()["items"] if x.get("job") == job_id), None)
+        # Read the persisted registry, not gallery(): the list response deliberately
+        # removes the potentially-large graph payload.  Looking in that slim response
+        # made every persisted graph unreachable after a bridge restart.
+        it = next((x for x in _gallery_load() if x.get("job") == job_id), None)
         if it and it.get("graph"):
             return JSONResponse({"ok": True, "graph": it["graph"]})
         return JSONResponse({"ok": False, "error": "no such job"}, status_code=404)
@@ -1250,6 +1253,10 @@ def gallery() -> dict:
         p = output_dir() / (it.get("subfolder") or "") / it["filename"]
         seen.add(str(p))
         row = dict(it)
+        # The client needs only this capability bit.  Keep the exact graph out of the
+        # list payload, while never offering a Graph action for legacy rows that did
+        # not persist one.
+        row["graph_available"] = bool(it.get("job") and it.get("graph"))
         row.pop("graph", None)                    # too big for a list payload
         try:
             sz = p.stat().st_size

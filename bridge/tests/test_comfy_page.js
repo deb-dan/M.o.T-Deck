@@ -244,7 +244,7 @@ const GAL = {
             pick_title: 'SDXL base 1.0', mode: 'image', prompt: 'a red fox in the snow',
             seed: 128339186323896, steps: 25, shape: '1024×1024', wall_s: 38.3,
             peak_bytes: 13265768096, bytes: 1578515, size_h: '2 MB', state: 'ok',
-            kind: 'image' }],
+            kind: 'image', graph_available: true }],
 };
 
 // ── 2. the pure functions + the verdict objects ──────────────────────────────
@@ -560,6 +560,14 @@ ok(/timer = setTimeout\(\(\) => \{ timer = null; load\(\); \}, ms\);/.test(html)
    'the poll timer nulls its own id when it fires, so arm() can re-arm it');
 ok(/act:'graph'/.test(html) && /The exact graph that made this/.test(html),
    'the Graph power exit: kept, in the item’s ⋯ overflow (fork answer 3)');
+ok(/b\.dataset\.job && b\.dataset\.graph === '1'/.test(html),
+   'the Graph action is offered only when the gallery proves an exact graph exists');
+ok(/data-graph="1"/.test(daily.markup),
+   'a current result carries the lightweight persisted-graph capability bit');
+const legacyNoGraph = runPage(STATE(), { ok:true, total_h:'2 MB', output_dir:'/x/output',
+  items:[Object.assign({}, GAL.items[0], { graph_available:false })] });
+ok(/data-graph=""/.test(legacyNoGraph.markup),
+   'a pre-graph gallery row carries no capability and cannot expose a dead action');
 ok(!/>Graph</.test(daily.markup) && !/exact graph/.test(daily.markup),
    '…and invisible at rest');
 ok(/ComfyUI tab ↗/.test(sheet.markup),

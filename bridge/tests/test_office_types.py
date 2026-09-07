@@ -372,7 +372,8 @@ check("…and save() refuses BEFORE the request rather than after it",
 check("the status line never calls itself a grid editor for a blob",
       "editor only" in PAGE)
 check("the AI panel says it cannot see the file, and swaps its whole placeholder",
-      'id="ai-empty-blob"' in PAGE and "cannot" in PAGE.split('id="ai-empty-blob"')[1][:400])
+      'id="ai-empty-blob"' in PAGE and "cannot read this document" in
+      PAGE.split('id="ai-empty-blob"')[1][:300])
 check("…and its sheet toggle is disabled with the reason on it",
       "cx.disabled = true" in PAGE)
 check("…and the context note says which kind of file it is",

@@ -767,6 +767,16 @@ def test_the_sidebar_delete_is_wired_and_fenced():
        "…with the status code behind the hover, never as the message")
 
 
+def test_every_goose_ui_log_is_reachable_in_the_panel():
+    components = (ROOT / "bridge" / "routers" / "components.py").read_text()
+    panel = (ROOT / "bridge" / "panel" / "index.html").read_text()
+    for name in ("gooseui", "gooseui-serve", "goose-ui-install"):
+        ok(f'"{name}"' in components.split("_LOG_NAMES = (")[1].split("\n\n")[0],
+           f"{name} is in the bridge's closed log allowlist")
+        ok(f"{{n:'{name}'," in panel,
+           f"{name} is reachable from the panel Logs dialog")
+
+
 def main():
     for fn in (test_entry_document, test_route_shapes_are_registered,
                test_the_lane_is_REACHABLE,
@@ -784,7 +794,8 @@ def main():
                test_absent_dependency_lands_on_something_usable,
                test_the_shim_is_complete_and_honest,
                test_the_sidebar_delete_speaks_gooses_own_protocol,
-               test_the_sidebar_delete_is_wired_and_fenced):
+               test_the_sidebar_delete_is_wired_and_fenced,
+               test_every_goose_ui_log_is_reachable_in_the_panel):
         fn()
         print(f"  ok  {fn.__name__}")
     print(f"goose UI lane: {CHECKS} checks passed")

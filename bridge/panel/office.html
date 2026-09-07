@@ -1299,6 +1299,7 @@
       <button class="mtop" id="btn-help">Help</button>
       <div id="m-help" class="mpop">
         <button class="mi" id="mi-keys">Keyboard shortcuts</button>
+        <button class="mi" id="mi-aihelp">How the AI panel works</button>
         <button class="mi" id="mi-fidelity">What round-trips</button>
         <button class="mi" id="mi-about">About this build</button>
       </div>
@@ -1513,22 +1514,10 @@
              panel can do WITH A SPREADSHEET; every sentence in it is false while a .docx
              or .pptx is open. `#ai-empty-blob` is the honest version, and aiPaint swaps
              the two — the same grey-not-hide discipline the rest of this page uses. -->
-        <div id="ai-empty-blob" class="off"><b>Ask the model anything.</b><br>This is a
-          chat with the model running on this Mac — useful while you write. What it
-          <b>cannot</b> do here is see the file: LOffice reads .xlsx spreadsheets, and a
-          document or a presentation belongs entirely to the editor. Nothing here reads
-          inside it and nothing here can change it, which is also why nothing in it can
-          be lost.<br><br>Open a spreadsheet and the panel gets its cells back, along
-          with Apply cards that can fill it in.</div>
-        <div id="ai-empty"><b>Ask about this sheet.</b><br>The open sheet is sent with
-          your question, so “what does column C do?”, “write me a formula that sums B
-          by month” and “is anything odd in this data?” all work.<br><br>It is told
-          it is answering inside a spreadsheet, so <b>“what does CLEAN do?”</b> means
-          the Excel function — not the Python one.<br><br>It can also
-          <b>fill the sheet in</b>: “create a 2026 monthly budget with a total row”,
-          “put the months down column A”, “bold the header”.
-          You get a preview of every cell it would touch and it changes nothing until
-          you press <b>Apply</b>.
+        <div id="ai-empty-blob" class="off"><b>Ask the model while you write.</b>
+          It cannot read this document. <button class="lnk ai-help">How it works</button></div>
+        <div id="ai-empty"><b>Ask about this sheet or propose a change.</b>
+          Nothing changes until you approve it. <button class="lnk ai-help">How it works</button>
           <!-- ⚠️ THIS SENTENCE WAS REWRITTEN AT loffice-2026-08-28d BECAUSE IT WAS FALSE
                IN THE LANE IT DESCRIBES (live finding L5). It used to promise "with an
                Undo after, and the file written only on a ⌘S", and MEASURED:
@@ -1540,12 +1529,9 @@
                was exactly wrong for it. Worse, the promise was SOMETIMES kept — the
                create-from-nothing path does render an Undo chip — so the rule could not be
                learnt. One sentence per lane, matching what the card will actually offer. -->
-          Apply puts the change in the editor: <b>⌘Z</b> inside the sheet takes it
-          back, and <b>⌘S</b> writes it to the file. The one exception is a
-          <b>sort</b>, which has to go through the file and is saved straight away —
-          the card says so before you press it.<br><br>
-          Each question is asked on its own: the sheet travels with it, the earlier
-          answers do not.</div>
+          The complete, path-specific behavior now lives in Help → How the AI panel
+          works; keep this comment as the forensic reason the Help copy names sort
+          separately. --></div>
       </div>
       <div id="ai-status"></div>
       <div id="ai-foot">
@@ -3267,6 +3253,23 @@ const KEYS_TEXT = [
   '  hides it.',
 ].join('\n');
 function helpKeys() { say(KEYS_TEXT, 'dim'); }
+function helpAI() {
+  say('How the AI panel works\n\n'
+      + 'With a spreadsheet open\n\n'
+      + '  The open sheet can travel with your question, so you can ask what a column '
+      + 'does, request a formula, inspect unusual data, or ask for a proposed change. '
+      + 'Spreadsheet names such as CLEAN are interpreted as spreadsheet functions.\n\n'
+      + '  A proposed edit shows every cell it would touch and changes nothing until '
+      + 'you press Apply. An editor-applied change can be undone with ⌘Z and is written '
+      + 'with ⌘S. A sort is the exception: it goes through the file and is saved '
+      + 'immediately, and its card says so before Apply.\n\n'
+      + 'With a document or presentation open\n\n'
+      + '  The panel remains a chat with the model running on this Mac, but it cannot '
+      + 'read or change that file. Open a spreadsheet to restore sheet context and '
+      + 'Apply cards.\n\n'
+      + 'Each Quick question stands alone: the current sheet may travel with it, but '
+      + 'earlier answers do not.', 'dim');
+}
 /* ⚠️⚠️ REWRITTEN AT loffice-2026-08-28d, AND EVERY LINE OF THE CHANGE IS A MEASUREMENT
    (live finding L3). This sheet used to say, globally and in one voice, that "a SAVE drops
    charts, images, pivot tables, conditional formatting, data validation, comments, cell
@@ -9800,6 +9803,7 @@ el('lane-agent').onclick = () => {
   aiPaint();
 };
 el('ai-send').onclick = aiSend;
+document.querySelectorAll('.ai-help').forEach(b => { b.onclick = helpAI; });
 // Per-document, in memory, on purpose — see the note in showWorkbook(). There is no
 // localStorage key here any more: a sticky global "off" is a bug that outlives the
 // question it was an answer to.
@@ -10088,6 +10092,7 @@ mi('mi-aishow', () => {
 mi('mi-aiclear', () => { const b = el('ai-clear'); if (b) b.click(); });
 
 mi('mi-keys', helpKeys);
+mi('mi-aihelp', helpAI);
 mi('mi-fidelity', helpFidelity);
 mi('mi-about', helpAbout);
 

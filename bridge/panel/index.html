@@ -3615,7 +3615,8 @@ function cardHTML(name, c, isBridge, prov) {
   const ps = prov && prov.state;
   const h = healthOf(c);
   const isRunner = (name === 'runner');
-  const pinFull = String(c.pin || '');
+  const pinFull = String(isRunner ? (c.served_id || c.live_id || c.pin_intent || c.pin || '')
+                                  : (c.pin || ''));
   const isCommitPin = !isRunner && /^[0-9a-f]{20,}$/i.test(pinFull);
   const pin = isCommitPin ? '✓' : (pinFull.length > 16 ? pinFull.slice(0,12)+'…' : pinFull);
   const fileGone = isRunner && (c.model_file === 'gone' || c.model_file === 'unregistered');
@@ -3633,14 +3634,15 @@ function cardHTML(name, c, isBridge, prov) {
   // ⚠️ HOISTED OUT OF fileGone (S28): drift is pin ≠ served, not "deleted model", so
   // the general case (pin names a healthy model that simply is not loaded) said
   // nothing at all. Reasoning + states: test_dep_signal.py §7.
-  const drift = isRunner && !!(c.live_id && c.pin_intent && c.live_id !== c.pin_intent);
+  const served = isRunner ? (c.served_id || c.live_id || '') : '';
+  const drift = isRunner && !!(served && c.pin_intent && served !== c.pin_intent);
   if (fileUnavailable) {
-    why = (drift ? 'serving ' + c.live_id + ' right now, but the pin points elsewhere — '
+    why = (drift ? 'serving ' + served + ' right now, but the pin points elsewhere — '
                  : '')
         + (c.model_note||'model unavailable')
         + (drift ? ' · “Pin this model” makes the two agree without a reload.' : '');
   } else if (drift) {
-    why = 'serving ' + c.live_id + ' right now, but the pin still points at '
+    why = 'serving ' + served + ' right now, but the pin still points at '
         + c.pin_intent + ' — “Pin this model” makes the two agree without a reload.';
   } else if (le) {
     // ⚠️ A GREEN CARD MAY NEVER CARRY A BARE FAILURE SENTENCE (U60). Debi's screenshot:
@@ -3882,6 +3884,8 @@ const LOG_SOURCES = [
   {n:'unsloth', label:'unsloth'}, {n:'unsloth-install', label:'unsloth install'},
   {n:'aider', label:'aider'}, {n:'aider-install', label:'aider install'},
   {n:'goose', label:'goose'}, {n:'goose-install', label:'goose install'},
+  {n:'gooseui', label:'goose UI'}, {n:'gooseui-serve', label:'goose UI server'},
+  {n:'goose-ui-install', label:'goose UI install'},
   {n:'opencode', label:'opencode'}, {n:'opencode-install', label:'opencode install'},
   {n:'deepseek', label:'deepseek'}, {n:'deepseek-install', label:'deepseek install'},
   // LOffice's boot beacon — the page phones home at every step of its own boot, and
@@ -4532,7 +4536,7 @@ function apiEndpointHtml(keys, runner) {
   const portUp = !!(runner && runner.port_up);
   h += '<div class="api-line">';
   h += '<span class="chip">' + (loaded ? 'Serving' : portUp ? 'Loading' : 'Runner off') + '</span>';
-  const model = (runner && (runner.live_id || runner.pin_intent)) || '';
+  const model = (runner && (runner.served_id || runner.live_id || runner.pin_intent)) || '';
   if (model) h += '<span class="chip">' + esc(model) + '</span>';
   h += '</div>';
   if (!loaded) {
@@ -7395,7 +7399,7 @@ function stampFor(model){
   // Fable QA: trust pin ONLY while a model is actually loaded (`running` = loaded) —
   // a stopped/ejected runner's pin falls back to the INTENT model and would lie here.
   const r = lastStatus && lastStatus.components && lastStatus.components.runner;
-  const live = (r && r.running && r.pin) || '';
+  const live = (r && r.running && (r.served_id || r.live_id)) || '';
   const shown = live || model || (r && !r.running ? 'no model loaded' : 'default model');
   // If a session was created under a different model, say so quietly rather than hide it.
   const drift = (live && model && live !== model) ? (' · session: ' + model) : '';
@@ -11550,6 +11554,11 @@ const VOICE_STARTERS = [
     desc: 'Much more accurate transcription, still fast on Apple silicon.',
     lic: 'MIT (upstream Whisper)' },
 ];
+function audioStarterDetail(s){
+  return [s.desc || '', s.warn ? ('Caution: ' + s.warn) : '',
+          (s.repo || '') + (s.lic ? (' · ' + s.lic) : '')]
+    .filter(Boolean).join('\n\n');
+}
 function renderAudioGet(){
   const box = document.getElementById('audio-get');
   if (!box) return;
@@ -11563,13 +11572,15 @@ function renderAudioGet(){
     const leaf = s.file ? s.file.replace(/\.gguf$/i, '') : s.repo.split('/').pop();
     const owned = have.has(leaf);
     const row = document.createElement('div'); row.className = 'hffile';
-    row.style.display = 'block'; row.style.lineHeight = '1.7';
-    row.innerHTML = `<div style="color:var(--cream)">${esc(s.title)} <span style="color:var(--faint)">· ${esc(s.size)}</span></div>`
-      + `<div style="color:var(--dim);white-space:normal">${esc(s.desc)}</div>`
-      + (s.warn ? `<div style="color:var(--gold);white-space:normal">⚠ ${esc(s.warn)}</div>` : '')
-      + `<div style="color:var(--faint);white-space:normal">${esc(s.repo)} · ${esc(s.lic)}</div>`;
+    row.style.display = 'flex'; row.style.alignItems = 'center'; row.style.gap = '8px';
+    row.style.lineHeight = '1.45';
+    const detail = audioStarterDetail(s);
+    row.innerHTML = `<span style="color:var(--cream);min-width:0">${esc(s.title)}</span>`
+      + `<span style="color:var(--faint);white-space:nowrap">${esc(s.size)}</span>`
+      + `<span class="fitpill fit-slow" tabindex="0" role="note" title="${escAttr(detail)}"`
+      + ` aria-label="Details for ${escAttr(s.title)}: ${escAttr(detail)}">details</span>`;
     const b = document.createElement('button'); b.className = 'hfget';
-    b.style.marginTop = '6px';
+    b.style.marginLeft = 'auto'; b.style.flex = 'none';
     if (owned){ b.textContent = 'In library'; b.disabled = true; }
     else { b.textContent = 'Get'; b.onclick = async () => {
              // the button must TELL THE TRUTH: a refused download resets it and puts
@@ -12725,7 +12736,7 @@ async function dlRetry(id){
          reply really did come from the new model while the label named the old one.
 
    The fix is to stop trusting the echo: the LIVE runner identity is the truth, and
-   the bridge already publishes it, display-mapped, at status.components.runner.pin
+   the bridge already publishes it, display-mapped, at status.components.runner.served_id
    (= _live_model_id → display_model_id, so never a path). The echo survives only as
    a fallback for when nothing is loaded, and is basename-shortened so a wire path
    can never be printed in full again. */
@@ -12740,7 +12751,7 @@ function laneModelLabel(live, running, echo){
 /* The live half of the above, read off the poll the panel already runs. */
 function liveModelLabel(echo){
   const r = lastStatus && lastStatus.components && lastStatus.components.runner;
-  return laneModelLabel(r && r.pin, !!(r && r.running), echo);
+  return laneModelLabel(r && (r.served_id || r.live_id), !!(r && r.running), echo);
 }
 
 function addMsg(role, text) {

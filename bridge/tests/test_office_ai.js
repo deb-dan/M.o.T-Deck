@@ -81,6 +81,16 @@ function grabFrom(src, name, label) {
 }
 const grab = n => grabFrom(html, n, 'office.html');
 
+check('the resting AI states are invitations, not embedded Help articles',
+      /id="ai-empty"[^>]*><b>Ask about this sheet or propose a change\.<\/b>/.test(html)
+      && /id="ai-empty-blob"[^>]*><b>Ask the model while you write\.<\/b>/.test(html));
+check('the full explanation moved to a reachable Help route',
+      /id="mi-aihelp"/.test(html) && /querySelectorAll\('\.ai-help'\)/.test(html)
+      && /mi\('mi-aihelp', helpAI\)/.test(html));
+check('the moved Help copy preserves Apply, undo, save, sort, and non-sheet limits',
+      ['changes nothing until', '⌘Z', '⌘S', 'sort', 'document or presentation',
+       'earlier answers do not'].every(s => grab('helpAI').includes(s)));
+
 // Constants are READ OUT OF THE PAGE. A value changed there must not keep passing
 // against a stale copy written down here.
 function num(name) {
@@ -621,7 +631,7 @@ check('the context can be switched off, and the panel says when it is',
 // history, so every question is single-shot. A user who asks a follow-up and gets a
 // puzzled answer must not have to discover why.
 check('the panel says plainly that each question is asked on its own',
-      /Each question is asked on its own/.test(html));
+      /Each Quick question stands alone/.test(grab('helpAI')));
 // the selected cell: tier 1 records it on focus, the rich editor is asked for it
 check('tier 1 records the selected cell on focus', /aiSel = a1\(/.test(code));
 const sn = grab('aiSelNow');
@@ -1904,9 +1914,12 @@ check('the stack beacons its own pushes, clears and the too-large case',
 check('…and the undo and the redo through one call site named by direction',
       /bx\('hist-' \+ dir/.test(code));
 
-// WHAT THE PANEL PROMISES THE USER, which must match what it does
-check('the placeholder says the model can fill the sheet in',
-      /<b>fill the sheet in<\/b>/.test(html));
+// WHAT THE PANEL PROMISES THE USER, which must match what it does. S18 moved the
+// complete contract into Help so the resting state stays an invitation; these checks
+// follow the information rather than pinning it back into six standing paragraphs.
+const AI_HELP = grab('helpAI');
+check('Help says the model can propose and apply sheet changes',
+      /proposed edit/.test(AI_HELP) && /press Apply/.test(AI_HELP));
 /* ⚠️⚠️ THESE TWO CHECKS PINNED A PROMISE THAT WAS FALSE IN THE LANE IT DESCRIBED (live
    finding L5), so what they pin changed with it. The intro said "You get a preview of every
    cell it would touch and it changes nothing until you press Apply — with an Undo after,
@@ -1922,13 +1935,14 @@ check('the placeholder says the model can fill the sheet in',
    will actually offer. */
 check('…and names the guarantees it can keep: a preview, an Apply, and the EDITOR\'s ⌘Z '
       + 'as the undo — not a card button that is not there',
-      /preview of every cell/.test(html) && /<b>Apply<\/b>/.test(html)
-      && /<b>⌘Z<\/b> inside the sheet takes it/.test(html)
+      /shows every cell/.test(AI_HELP) && /press Apply/.test(AI_HELP)
+      && /undone with ⌘Z/.test(AI_HELP)
       && !/with an <b>Undo<\/b> after/.test(html));
 check('…and that ⌘S writes the file, WITH the one route that does not wait for it',
-      /<b>⌘S<\/b> writes it to the file/.test(html)
-      && /<b>sort<\/b>, which has to go through the file and is saved straight away/
-         .test(html)
+      AI_HELP.includes('is written ')
+      && AI_HELP.includes('with ⌘S. A sort is the exception')
+      && AI_HELP.includes('saved ')
+      && AI_HELP.includes('immediately')
       && !/file only written when you press ⌘S/.test(html));
 check('the block header no longer claims the panel is advisory only, because it is not',
       html.indexOf('AND IT IS ADVISORY ONLY') < 0
