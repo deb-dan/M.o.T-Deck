@@ -215,17 +215,17 @@ STAGED_NOTE = ("You cannot apply this yourself: there is no apply tool, and Appl
 # The two outcome lines (spec §2). One of these reaches the session after every human
 # decision, so the next turn cannot hallucinate the state of the workbook.
 APPLIED_LINE = ("[LOffice] changeset {cid} was APPLIED by the user at {when} — receipt "
-                "{receipt}: {cells} cell(s) written to \"{name}\". The workbook on disk "
-                "now holds that change.")
+                "{receipt}: {cells} cell(s) were written. The workbook on disk now holds "
+                "that change.")
 DISMISSED_LINE = ("[LOffice] changeset {cid} was DISMISSED by the user at {when} — it "
-                  "was NEVER applied and \"{name}\" is unchanged. Do not claim "
+                  "was NEVER applied and its workbook is unchanged. Do not claim "
                   "otherwise.")
-UNDONE_LINE = ("[LOffice] changeset {cid} was UNDONE by the user at {when} — \"{name}\" "
-               "was restored to the checkpoint taken before that apply.")
+UNDONE_LINE = ("[LOffice] changeset {cid} was UNDONE by the user at {when} — its "
+               "workbook was restored to the checkpoint taken before that apply.")
 # ⚠️ THE FOURTH OUTCOME, ADDED FOR FINDING F-17: a proposal that was pushed out of the
 # bridge's store before Debi ever saw it. The model was told it was staged; if nothing says
 # otherwise, its next turn will talk about a card that does not exist.
-EVICTED_LINE = ("[LOffice] changeset {cid} for \"{name}\" was DROPPED before Debi saw it "
+EVICTED_LINE = ("[LOffice] changeset {cid} was DROPPED before Debi saw it "
                 "— this bridge holds at most {max} pending proposals and older ones are "
                 "evicted. It was NEVER applied. Stage it again if it still matters.")
 # ⚠️ THE APPLY'S OWN mtime FENCE (finding F-01). `stage_changes` recorded the file's mtime
@@ -3186,7 +3186,7 @@ def stage_changes(root, session, name, sheet=None, ops=None, now=None):
             gone = _CHANGESETS.get(dead)
             if isinstance(gone, dict) and gone.get("status") == "pending":
                 push_session_line(gone["key"][0], EVICTED_LINE.format(
-                    cid=gone["id"], name=gone["name"], max=CHANGESET_MAX))
+                    cid=gone["id"], max=CHANGESET_MAX))
             _drop(dead)
     _CHANGESETS[cid] = {
         "id": cid, "key": key, "name": base, "sheet": sheet or "",
@@ -3538,7 +3538,7 @@ def apply_changeset(root, cid, now=None):
     _PENDING.pop(cs["key"], None)
     line = APPLIED_LINE.format(cid=cs["id"], when=time.strftime(
         "%H:%M:%S", time.localtime(t)), receipt=receipt_hash,
-        cells=out["cells_written"], name=name)
+        cells=out["cells_written"])
     push_session_line(cs["key"][0], line)
     return {"ok": True, "changeset_id": cs["id"], "receipt": receipt_hash,
             "applied_at": t,
@@ -3644,7 +3644,7 @@ def dismiss_changeset(root, cid, now=None):
     cs["dismissed_at"] = t
     _PENDING.pop(cs["key"], None)
     line = DISMISSED_LINE.format(cid=cs["id"], when=time.strftime(
-        "%H:%M:%S", time.localtime(t)), name=cs["name"])
+        "%H:%M:%S", time.localtime(t)))
     push_session_line(cs["key"][0], line)
     return {"ok": True, "changeset_id": cs["id"], "name": cs["name"],
             "dismissed_at": t, "session_line": line,
@@ -3689,7 +3689,7 @@ def undo_changeset(root, cid, now=None):
     if cs is not None:
         cs["status"] = "undone"
         line = UNDONE_LINE.format(cid=cs["id"], when=time.strftime(
-            "%H:%M:%S", time.localtime(out["at"])), name=name)
+            "%H:%M:%S", time.localtime(out["at"])))
         push_session_line(cs["key"][0], line)
         out["session_line"] = line
     return out, None
