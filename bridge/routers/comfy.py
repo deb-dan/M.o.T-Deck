@@ -66,6 +66,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from ..core.appctx import PANEL, ROOT, app
 from ..core.events import publish
 from ..core.procs import _ownership_matches, _read_ownership, cfg
+from ..core.comfymeta import hosted_api_nodes
 
 # ── THE RE-EXPORTED CURATION LAYER (bridge/core/comfycur.py) ─────────────────
 # Explicit, not `import *`: the underscore names below are named from the suite and
@@ -78,7 +79,7 @@ from ..core.comfycur import (                                    # noqa: F401
     digest_known, disk_verdict, dynamic_fence_violations, fence_violations, gb, graph_classes,
     graph_steps, input_dir, measure_note, model_key, models_dir, output_dir,
     pick_card, retarget_outputs, size_known, sizes_save, state_dir, stock_class,
-    template_graph, template_models, templates_dir, ui_to_api, workflow_controls,
+    template_graph, template_models, templates_dir, ui_graph_classes, ui_to_api, workflow_controls,
     workflow_files,
 )
 
@@ -261,16 +262,24 @@ async def catalog_live(force: bool = False) -> dict:
     info = await object_info()
     for m in cat.get("models") or []:
         for w in m.get("workflows") or []:
-            w.update(runnable=None, run_reason=None, controls=[], needs=[])
+            w.update(runnable=None, run_reason=None, controls=[], needs=[], local_only=None)
+            graph = template_graph(w["template"]) or {}
+            if not info:
+                w["run_reason"] = ("ComfyUI is not answering, so this template's "
+                                   "local-only boundary has not been checked")
+                continue
+            remote = hosted_api_nodes(ui_graph_classes(graph), info)
+            if remote:
+                w.update(runnable=False, local_only=False,
+                         run_reason=("hosted API node(s) are outside MOT Deck's "
+                                     "local-only Generate surface: " + ", ".join(remote)))
+                continue
+            w["local_only"] = True
             if not w["complete"]:
                 w["run_reason"] = "files are missing"
                 w["runnable"] = False
                 continue
-            if not info:
-                w["run_reason"] = ("ComfyUI is not answering, so this template has not "
-                                   "been checked against its node table")
-                continue
-            conv = ui_to_api(template_graph(w["template"]) or {}, info)
+            conv = ui_to_api(graph, info)
             if not conv["ok"]:
                 w.update(runnable=False, run_reason=conv["reason"])
                 continue
@@ -1070,6 +1079,18 @@ async def _generate_workflow(body: dict) -> JSONResponse:
     model, wf = hit
     if model.get("refused"):
         return JSONResponse({"ok": False, "error": model["refused"]}, status_code=409)
+    info = await object_info()
+    if not info:
+        return JSONResponse({"ok": False, "error": (
+            "ComfyUI is not answering, so this template's local-only boundary and "
+            "node conversion cannot be checked. Start it from MOT Deck → Components, "
+            "then try again.")}, status_code=502)
+    graph_ui = template_graph(name) or {}
+    remote = hosted_api_nodes(ui_graph_classes(graph_ui), info)
+    if remote:
+        return JSONResponse({"ok": False, "error": (
+            "hosted API node(s) are outside MOT Deck's local-only Generate surface: "
+            + ", ".join(remote))}, status_code=409)
     if not wf["complete"]:
         miss = [f for f in wf["files"] if not f["present"]]
         return JSONResponse({"ok": False, "error": (
@@ -1087,12 +1108,7 @@ async def _generate_workflow(body: dict) -> JSONResponse:
                                "how": (f"Get “{wf['title']}” — it puts {f['name']} in "
                                        f"models/{f['directory']}/.")} for f in miss]}},
             status_code=409)
-    info = await object_info()
-    if not info:
-        return JSONResponse({"ok": False, "error": (
-            "ComfyUI is not answering, so this template cannot be converted. Start it "
-            "from MOT Deck → Components, then try again.")}, status_code=502)
-    conv = ui_to_api(template_graph(name) or {}, info)
+    conv = ui_to_api(graph_ui, info)
     if not conv["ok"]:
         return JSONResponse({"ok": False, "error": conv["reason"]}, status_code=409)
     graph = conv["graph"]

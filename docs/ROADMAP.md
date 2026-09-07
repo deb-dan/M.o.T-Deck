@@ -10,9 +10,9 @@ than restating rows.
 Current shipped release: **v1.5.87** (see `VERSION`). Written 2026-09-07.
 
 <!-- current-status:start
-in-progress:
+in-progress: A6 U159 U160 U161 U162 U163 U164
 next: P6 P3 P5 S4 S7 U3
-later: A6 U2 U9 U14 U26 U28 U29 U34 U42 U44 U45 U47 U57 U58 U67 U70
+later: U2 U9 U14 U26 U28 U29 U34 U42 U44 U45 U47 U57 U58 U67 U70
 someday: S2 U4 U5 U6 U8 U43 U46 U68
 blocked-later: P1 U1 U72 U91 U139 U142 U144
 blocked-someday: P2
@@ -190,14 +190,21 @@ The corrective v1.5.80 wave is shipped. Its closure checkpoint is U140 in the le
 the U82–U138 rows remain the adversarial incident trail explaining why each first
 candidate was rejected or narrowed, not unfinished release blockers.
 
-U157 is the active third-party update wave. Each dependency is isolated: a pin is only
-a candidate until its exact artifact/source, fresh install path, app integration seams,
-affected human entry, rollback boundary and neighboring consumers pass. OpenCode,
-SearXNG, ComfyUI, VoiceStudio, Odysseus and llama.cpp are being evaluated at the exact
-requested versions/commits; Voicebox's three Git-only dependencies are being made
-reproducible without changing its upstream release. Unsloth and acestep.cpp remain
-measurement-gated high-blast candidates, not bulk-upgrade passengers. The complete
-decision record is `docs/FABLE-v1.5.87-UPSTREAM-UPDATE-WAVE.md`.
+U157 is shipped as v1.5.87, not active work. OpenCode, SearXNG, ComfyUI, VoiceStudio,
+Odysseus and llama.cpp earned their pins independently; Voicebox retained its release
+while its lazy runtime became exact; Unsloth and the newer acestep.cpp stayed held. The
+complete release evidence is `docs/FABLE-v1.5.87-UPSTREAM-UPDATE-WAVE.md`.
+
+The active v1.5.88 candidate is A6/U159–U164. It repairs the reported SDXL→Wan Model/Type
+desynchronization, the ACE-Step post-rename native-library path, and the model-eject
+post-stop 500; proves fresh MiniMax/ACE/SDXL/Wan output from the renamed root; measures
+real MLA, non-Gemma SWA, MLX and vision/projector fit behavior; records evidence-based
+Wan 2.2/MiniMax H3 decisions; and makes Comfy's own `api_node` metadata enforce the
+Generate surface's local-only boundary before a hybrid template offers downloads. It
+does not adopt the slower ACE candidate, promote either broken Wan output, disable an
+optional H3 workflow, add cloud execution, or change the current shared Hermes home. Candidate and measurement
+evidence live in `docs/FABLE-v1.5.88-MEDIA-RELOCATION-FIT-WAVE.md` and
+`docs/research/2026-09-07-a6-real-fit-validation.md`.
 
 The v1.5.81 remaining-reliability wave and v1.5.82 Odysseus-login hotfix are shipped.
 U143 records v1.5.81's full repository, installed-stack, Goose UI, and clean FAT evidence;
@@ -334,8 +341,8 @@ Lower urgency or larger blast radius, queued 🟡 LATER — themes only:
 
 Recorded, not scheduled: Odysseus vision's upstream root cause (U1, needs Debi's word to
 file publicly); `~/.hermes` shared-home isolation ruling (U2); session-creation
-unification across lanes (S2); MiniMax H3 video+audio, refused for now on disk space
-(U8).
+unification across lanes (S2); MiniMax H3 video+audio, which remains optional but does
+not qualify as the requested under-40 GB starter (U8).
 
 ---
 

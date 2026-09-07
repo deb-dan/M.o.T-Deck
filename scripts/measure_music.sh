@@ -263,6 +263,19 @@ ACESTEP_REPO="https://github.com/ServeurpersoCom/acestep.cpp.git"
 ACESTEP_BRANCH="master"
 ACESTEP_GGUF_REPO="Serveurperso/ACE-Step-1.5-GGUF"
 
+trial_acestep_rpath_ok() {
+  local src="$1" bin paths
+  command -v otool >/dev/null 2>&1 || return 1
+  for bin in "$src/build/ace-lm" "$src/build/ace-synth"; do
+    [[ -x "$bin" ]] || return 1
+    paths=$(otool -l "$bin" 2>/dev/null | awk '
+      $1 == "cmd" && $2 == "LC_RPATH" { want = 1; next }
+      want && $1 == "path" { print $2; want = 0 }
+    ') || return 1
+    [[ "$paths" == "@loader_path" ]] || return 1
+  done
+}
+
 do_acestep() {
   preflight
   command -v git >/dev/null 2>&1 || die "git not found — xcode-select --install"
@@ -287,17 +300,51 @@ do_acestep() {
   # and passes -DGGML_BLAS=ON which the docs only ask for on Linux. The upstream
   # macOS line in docs/ARCHITECTURE.md is a bare `cmake ..` — Metal and Accelerate
   # BLAS are auto-enabled there.
-  if [[ ! -x "$src/build/ace-synth" ]]; then
+  if [[ ! -x "$src/build/ace-synth" ]] || ! trial_acestep_rpath_ok "$src"; then
+    local build="$src/build"
+    local backup="$src/.build-rollback.$$"
+    local had_build=0
+    local build_failure=""
     say "building with cmake (Metal + Accelerate auto-enabled on macOS)…"
-    cmake -S "$src" -B "$src/build" -DCMAKE_BUILD_TYPE=Release >/dev/null \
-      || die "cmake configure failed"
-    cmake --build "$src/build" --config Release -j "$(sysctl -n hw.ncpu)" \
-      || die "build failed"
+    [[ ! -e "$backup" ]] || die "refusing ambiguous ACE build backup: $backup"
+    if [[ -d "$build" ]]; then
+      mv "$build" "$backup" || die "could not preserve the previous trial build"
+      had_build=1
+    elif [[ -e "$build" || -L "$build" ]]; then
+      die "refusing non-directory ACE trial build path: $build"
+    fi
+    mkdir -p "$build" || die "could not create the fresh ACE trial build directory"
+    cmake --fresh -S "$src" -B "$build" -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=@loader_path' >/dev/null \
+      || build_failure="cmake configure"
+    if [[ -z "$build_failure" ]]; then
+      cmake --build "$build" --config Release -j "$(sysctl -n hw.ncpu)" \
+        || build_failure="build"
+    fi
+    if [[ -z "$build_failure" ]] && ! trial_acestep_rpath_ok "$src"; then
+      build_failure="relocatable rpath validation"
+    fi
+    if [[ -z "$build_failure" ]] \
+        && { ! "$build/ace-lm" --help >/dev/null 2>&1 \
+             || ! "$build/ace-synth" --help >/dev/null 2>&1; }; then
+      build_failure="relocatable launch validation"
+    fi
+    if [[ -n "$build_failure" ]]; then
+      rm -rf "$build"
+      if [[ "$had_build" -eq 1 ]]; then
+        mv "$backup" "$build" \
+          || die "$build_failure failed; prior build remains at $backup"
+      fi
+      die "$build_failure failed; the previous trial build was restored"
+    fi
+    [[ "$had_build" -eq 0 ]] || rm -rf "$backup"
   else
-    say "reusing existing build at data/music-trial/acestep.cpp/build"
+    say "reusing relocatable build at data/music-trial/acestep.cpp/build"
   fi
   [[ -x "$src/build/ace-lm" && -x "$src/build/ace-synth" ]] \
     || die "build produced no ace-lm/ace-synth — see the cmake output above"
+  trial_acestep_rpath_ok "$src" \
+    || die "trial ACE build is not relocatable: expected only @loader_path"
 
   # The four default GGUFs (README's own table): LM-4B Q8_0 4.2GB, text encoder
   # 748MB, DiT turbo Q8_0 2.4GB, VAE BF16 322MB ≈ 7.7GB. Downloaded into the HF

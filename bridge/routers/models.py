@@ -5,6 +5,7 @@ import base64
 import asyncio
 import os
 import subprocess
+import time
 # ⚠️ `sys` WAS NEVER IMPORTED HERE, and the S28 rebind has referenced `sys.executable`
 # since v1.5.62 (_rebind_odysseus_offline's fallback). It never fired because the
 # Odysseus venv has always existed on this machine, so a NameError sat dormant on the

@@ -460,6 +460,11 @@ _INFO = {
                                          "filename_prefix": ["STRING", {}]}},
                   "python_module": "nodes"},
     "EvilNode": {"input": {"required": {}}, "python_module": "custom_nodes.evil_pack"},
+    "HostedByFlag": {"input": {"required": {}}, "python_module": "nodes",
+                     "api_node": True},
+    "HostedByModule": {"input": {"required": {}},
+                       "python_module": "comfy_api_nodes.nodes_example",
+                       "api_node": False},
 }
 _IDX = [{"title": "Video", "type": "video", "templates": [
     {"name": "famous_t2v", "title": "Famous 5B Text to Video",
@@ -692,6 +697,23 @@ try:
        "Ultralytics, as a gate rather than a paragraph)")
     ok(CUR.dynamic_fence_violations(api, _INFO) == [],
        "…and a stock template passes it, which is what makes the fence usable at all")
+    _hosted = {"1": {"class_type": "HostedByFlag", "inputs": {}},
+               "2": {"class_type": "HostedByModule", "inputs": {}},
+               "3": {"class_type": "KSampler", "inputs": {}}}
+    ok(CUR.hosted_api_nodes(CUR.graph_classes(_hosted), _INFO)
+       == ["HostedByFlag", "HostedByModule"],
+       "the local-only fence follows ComfyUI's api_node/module authority and never "
+       "classifies an ordinary stock node by its marketing name")
+    _hosted_ui = {"nodes": [
+        {"id": 1, "type": "HostedByFlag", "mode": 0},
+        {"id": 2, "type": "HostedByModule", "mode": 0},
+        {"id": 3, "type": "KSampler", "mode": 0},
+        {"id": 4, "type": "HostedByFlag", "mode": 4},
+    ], "links": []}
+    ok(CUR.hosted_api_nodes(CUR.ui_graph_classes(_hosted_ui), _INFO)
+       == ["HostedByFlag", "HostedByModule"],
+       "the same local-only predicate reads catalogue UI graphs, ignores bypassed "
+       "nodes, and does not crash by treating UI nodes as API-map values")
 
     # A SIZE WE HAVE HEAD-VERIFIED IS USED; ONE WE HAVE NOT IS ABSENT.
     CUR.SIZES["https://example.invalid/enc.safetensors"] = 700_000_000
@@ -728,6 +750,12 @@ ok('seen = {r["filename"] for r in out}' in router
 ok("needs_source" in router and "pick one under Source" in router,
    "an image-to-video workflow that has been given no picture REFUSES with the fix, "
    "instead of letting ComfyUI fail on a filename that is not in input/")
-
+ok("hosted_api_nodes(ui_graph_classes(graph), info)" in router
+   and "hosted API node(s) are outside MOT Deck's local-only Generate surface" in router,
+   "catalogue and submit paths share the metadata-backed local-only boundary")
+ok(router.index("remote = hosted_api_nodes", router.index("async def _generate_workflow"))
+   < router.index('if not wf["complete"]', router.index("async def _generate_workflow")),
+   "direct workflow submission proves the local-only boundary BEFORE returning a "
+   "missing-model/download response")
 print(f"\n{checks - fails}/{checks} checks passed")
 sys.exit(1 if fails else 0)

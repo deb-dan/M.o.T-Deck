@@ -493,6 +493,9 @@ def test_relocated_venv_repair_rolls_back_every_changed_file_after_import_failur
 
 def test_ship_repairs_repo_before_gate_and_snapshot_after_scripts_copy():
     ship = open(SHIP, encoding="utf-8").read()
+    owned_block = ship[ship.index("OWNED_VENV_ARGS=("):ship.index(")", ship.index("OWNED_VENV_ARGS=("))]
+    assert "--owned-venv comfyui-venv" in owned_block
+    assert "--owned-venv music-venv" in owned_block
     repo_call = '"$VENV_REPAIR_PY" "$ROOT/scripts/repair_relocated_venvs.py" --root "$ROOT" "${OWNED_VENV_ARGS[@]}"'
     snapshot_call = ('"$VENV_REPAIR_PY" "$DST/scripts/repair_relocated_venvs.py" '
                      '--root "$DST" "${OWNED_VENV_ARGS[@]}"')

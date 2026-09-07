@@ -50,7 +50,9 @@ import time
 from pathlib import Path
 
 from .appctx import ROOT
-from .comfymeta import SIZES, digest_known, size_known, sizes_load, sizes_save
+from .comfymeta import (
+    SIZES, digest_known, hosted_api_nodes, size_known, sizes_load, sizes_save,
+)
 from .comfysubgraph import expand_subgraphs
 
 # ── constants ────────────────────────────────────────────────────────────────
@@ -80,10 +82,11 @@ ALLOWED_NODES = frozenset({
 # viable from the LTX / Wan / Qwen families, Apache preferred, licence READ not tagged).
 #
 # The candidate space is not "every model on HuggingFace" — it is "every model a STOCK,
-# VENDORED template can already drive". Of the 517 templates in our pinned
-# comfyui-workflow-templates 0.11.48 only 78 still carry the `properties.models`
+# VENDORED template can already drive". Of the 553 templates in our pinned
+# comfyui-workflow-templates 0.11.55, 220 currently carry enough
+# `properties.models`
 # registry (the newest have moved to the asset system, DISABLED at our pin —
-# `GET /features` → `"assets": false`). Within those 78:
+# `GET /features` → `"assets": false`). Within those 220:
 #
 #   · smallest VIDEO set with a usable registry … Wan 2.1 T2V 1.3B  →  9.83 GB
 #   · smallest IMAGE set with a usable registry … SDXL base 1.0     →  6.94 GB
@@ -763,7 +766,7 @@ def catalog() -> dict:
         if not g or not g.get("nodes"):
             continue
         # THE ENTRY CONDITION IS THE REGISTRY, NOT THE FILE LIST: a template with no
-        # `properties.models` at all is one of the ~440 that moved to the asset system,
+        # `properties.models` at all is one of the 333 that moved to the asset system,
         # which is DISABLED at our pin. Offering it would be offering a download we
         # cannot perform.
         expanded = expand_subgraphs(g)
@@ -930,6 +933,13 @@ def build_graph(pick_id: str, mode: str, p: dict) -> dict:
 
 def graph_classes(g: dict) -> set:
     return {str(n.get("class_type")) for n in g.values()}
+
+
+def ui_graph_classes(g: dict) -> set:
+    """Executable class names from an upstream UI graph, including subgraphs."""
+    expanded = expand_subgraphs(g)
+    execution = expanded["graph"] if expanded["ok"] else g
+    return {str(n.get("type") or "") for n in _active_nodes(execution)}
 
 
 def graph_steps(g: dict) -> "int | None":

@@ -739,7 +739,7 @@ check("the installer writes the panel-viewable install log",
       "data/logs/music-install.log" in SH)
 check("the acestep build uses cmake DIRECTLY, never upstream's Linux-only buildcpu.sh",
       "buildcpu.sh" in SH and "NOT ./buildcpu.sh" in SH and "cmake -S" not in SH
-      and '"$cmake_bin" -S' in SH)
+      and '"$cmake_bin" --fresh -S' in SH)
 check("NEVER launch upstream's server.sh (it binds 0.0.0.0)", "server.sh" not in SH)
 check("the minimax venv is deliberately NOT data/mlx-venv",
       "data/music-venv" in SH and "mlx-venv" in SH)

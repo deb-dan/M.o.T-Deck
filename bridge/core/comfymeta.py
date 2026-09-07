@@ -74,4 +74,23 @@ def digest_known(url: "str | None") -> "str | None":
     return digest if re.fullmatch(r"[0-9a-f]{64}", digest) else None
 
 
+def hosted_api_nodes(classes: set[str], info: dict) -> list[str]:
+    """Return classes that ComfyUI itself identifies as hosted API nodes.
+
+    This is deliberately metadata-backed rather than a vendor/model-name deny-list.
+    ComfyUI's first-party hosted nodes are stock from a supply-chain perspective, but
+    they are outside MOT Deck's local-only Generate contract.
+    """
+    out = []
+    for cls in classes:
+        spec = (info or {}).get(cls)
+        if not isinstance(spec, dict):
+            continue
+        module = str(spec.get("python_module") or "")
+        if spec.get("api_node") is True or module == "comfy_api_nodes" \
+                or module.startswith("comfy_api_nodes."):
+            out.append(cls)
+    return sorted(out)
+
+
 sizes_load()

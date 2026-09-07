@@ -1193,7 +1193,7 @@ function paint(id, html) {
   }
 }
 function flushPending() {
-  ['railbody', 'keyrow', 'caps', 'statusline', 'stage-body', 'thumbs', 'rmeta',
+  ['railbody', 'picker', 'keyrow', 'caps', 'statusline', 'stage-body', 'thumbs', 'rmeta',
    'mlegend', 'refusal'].forEach(id => {
     const el = $(id);
     if (el && el._pending != null) {
@@ -1349,6 +1349,19 @@ function workflowVerdict(w, dl) {
              line:(dl.done_h || '?') + ' of ' + (dl.total_h || '?'),
              hedge:'Nothing is reported as here until the bytes match what the server '
                  + 'declared. Cancelling keeps what landed; the next attempt resumes.' };
+  }
+  if (w.local_only === false) {
+    return { chip:'not local', cls:'c-warn', blocked:true,
+             line:w.run_reason || 'this workflow depends on a hosted API.',
+             hedge:'Generate is a local-model surface. No cloud provider, credential '
+                 + 'or hosted execution is configured here.' };
+  }
+  if (Object.prototype.hasOwnProperty.call(w, 'local_only') && w.local_only === null) {
+    return { chip:'local check pending', cls:'c-dim', blocked:true,
+             line:w.run_reason || 'the engine has not confirmed this workflow is local.',
+             hedge:'Start ComfyUI in MOT Deck → Components and press Refresh. No model '
+                 + 'download is offered until ComfyUI confirms the workflow uses no '
+                 + 'hosted API nodes.' };
   }
   if (!w.complete) {
     const known = w.missing_h;
@@ -2361,7 +2374,14 @@ document.addEventListener('change', (e) => {
     readForm();
     S.form.model = e.target.value;
     S.form.workflow = null; S.form.source = null; S.sources = null;
-    resetUntouched(); S.validation = null; saveView(); render();
+    resetUntouched(); S.validation = null; saveView();
+    /* `paint()` correctly protects a focused SELECT from being replaced beneath an
+       open native menu. A `change` event means that menu has committed its choice,
+       though, and keeping the model select focused would defer the Type repaint while
+       the rest of the page already showed the new model. End that completed
+       interaction before rendering so Model + Type remain one atomic visible choice. */
+    if (e.target.blur) e.target.blur();
+    render();
   } else if (id === 'p-wf') {
     readForm();
     S.form.workflow = e.target.value;

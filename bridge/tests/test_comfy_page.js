@@ -921,6 +921,10 @@ const WF_T2V = Object.assign({}, WF_SDXL, {
 const WF_HY = Object.assign({}, WF_REFINER, {
   id:'hunyuanvideo_t2v', title:'HunyuanVideo Text to Video', kind:'video',
   missing:['hunyuan_video_720.safetensors'], missing_bytes:null, missing_h:null });
+const WF_HOSTED = Object.assign({}, WF_REFINER, {
+  id:'hybrid_hosted_workflow', title:'Hybrid Hosted Workflow',
+  local_only:false, runnable:false,
+  run_reason:'hosted API node(s) are outside MOT Deck\'s local-only Generate surface: HostedNode' });
 const CAT = { ok:true, templates:78, reason:null, models:[
   { id:'m:sdxl', title:'SDXL', curated:true, installed:true, ready:1, workflow_count:2,
     kinds:['image'], on_disk_bytes:6938078334, refused:null,
@@ -986,7 +990,17 @@ for (const v of [pick.M.workflowVerdict(WF_SDXL, null),
 ok(/refused here/.test(runPage(STATE(), GAL,
      withCat((S) => { S.form.model = 'm:hunyuan_video'; })).markup),
    'a REFUSED family is listed and says so — an absent row reads as a bug in the scan');
-
+const hostedVerdict = pick.M.workflowVerdict(WF_HOSTED, null);
+ok(hostedVerdict.chip === 'not local' && hostedVerdict.blocked
+   && !hostedVerdict.act && /HostedNode/.test(hostedVerdict.line),
+   'a mixed template with Comfy-declared hosted API nodes offers no local-weight download or cloud execution');
+const unknownLocality = pick.M.workflowVerdict(Object.assign({}, WF_REFINER, {
+  local_only:null,
+  run_reason:'ComfyUI is not answering, so locality has not been checked',
+}), null);
+ok(unknownLocality.chip === 'local check pending' && unknownLocality.blocked
+   && !unknownLocality.act && /No model download/.test(unknownLocality.hedge),
+   'an offline engine cannot prove locality, so an incomplete hybrid workflow is not offered as a download');
 // WALKED DEFECT (2026-08-29, catalogue era): the write-back is aimed at the workflow
 // that RAN. The page can legitimately open on SDXL while the last finished job was a
 // Wan clip, and the unguarded version put 576×320 · 10 steps into SDXL's fields —
@@ -1050,6 +1064,15 @@ ok(sw2.M.S.form.width === 1024 && sw2.M.S.form.height === null
 ok(runPage(STATE(), GAL, withCat((S) => {
      S.form.model = 'm:wan2.1'; S.form.workflow = WF_CAM.id; })).M.wfKind() === 'video',
    'the workflow IS the mode — a discovered template’s kind is not a second choice');
+/* WALKED DEFECT (2026-09-07): choosing Wan repainted its files/settings immediately,
+   but the Type select stayed on SDXL. `paint()` was protecting the still-focused model
+   SELECT and `flushPending()` did not include the picker at all. The completed-change
+   boundary must end focus before render, with a blur-flush fallback for any deferred
+   picker markup. */
+ok(/if \(e\.target\.blur\) e\.target\.blur\(\);\s*render\(\);/.test(bodyScript),
+   'committing a model choice ends the native select interaction before repainting Type');
+ok(/\['railbody', 'picker', 'keyrow'/.test(bodyScript),
+   'a picker repaint deferred for focus safety is included in the blur flush');
 // the curated Wan keeps its two modes, and its measured defect still rides the choice
 const wanCur = runPage(STATE(), GAL, withCat((S) => {
   S.form.model = 'm:wan2.1'; S.form.workflow = 'text_to_video_wan'; }));

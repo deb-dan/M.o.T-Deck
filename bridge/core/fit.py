@@ -405,6 +405,86 @@ def parse_oracle(text: str) -> "dict | None":
 
 
 # ── MLX ──────────────────────────────────────────────────────────────────────
+MLX_PREFILL_CHUNK = 2048
+
+
+def _mlx_language_config(conf: dict) -> dict:
+    """Return the language shape without pretending every HF config is flat.
+
+    Multimodal Qwen 3.5/3.8 repositories put the actual decoder contract under
+    ``text_config``.  Reading only the outer wrapper priced their cache as zero on the
+    user's real 27B MLX model.  Unknown/non-dict nesting remains an empty shape and is
+    handled by the caller's explicitly labelled fallback.
+    """
+    if not isinstance(conf, dict):
+        return {}
+    nested = conf.get("text_config")
+    return nested if isinstance(nested, dict) else conf
+
+
+def _mlx_parts(conf: dict, weights: int, ctx: int) -> dict:
+    """Price MLX cache/state and bounded prefill work from published model shape.
+
+    The prefill term follows the pinned mlx-lm server's 2,048-token chunk rather than
+    scaling temporary activations to an entire 256k context.  Qwen 3.5's mixed
+    ``layer_types`` are read explicitly: only full-attention layers grow KV; its
+    linear-attention layers retain the float32 gated-delta state and short convolution
+    state implemented by ``mlx_lm.models.qwen3_5``.  If those exact fields are absent,
+    the older all-attention calculation remains the conservative fallback.
+    """
+    c = _mlx_language_config(conf)
+    layers = int(c.get("num_hidden_layers") or 0)
+    q_heads = int(c.get("num_attention_heads") or 0)
+    kv_heads = int(c.get("num_key_value_heads") or q_heads or 0)
+    hidden = int(c.get("hidden_size") or 0)
+    head_dim = int(c.get("head_dim") or 0) or (hidden // max(1, q_heads))
+    layer_types = c.get("layer_types")
+    attention_layers = layers
+    linear_layers = 0
+    if (isinstance(layer_types, list) and len(layer_types) == layers
+            and all(isinstance(kind, str) for kind in layer_types)):
+        attention_layers = sum(kind == "full_attention" for kind in layer_types)
+        linear_layers = sum(kind == "linear_attention" for kind in layer_types)
+        # A vocabulary we do not understand must not quietly make layers disappear.
+        if attention_layers + linear_layers != layers:
+            attention_layers, linear_layers = layers, 0
+
+    kv = int(attention_layers * kv_heads * head_dim * 2 * 2.0 * int(ctx))
+    recurrent = 0
+    if linear_layers:
+        key_heads = int(c.get("linear_num_key_heads") or 0)
+        value_heads = int(c.get("linear_num_value_heads") or 0)
+        key_dim = int(c.get("linear_key_head_dim") or 0)
+        value_dim = int(c.get("linear_value_head_dim") or 0)
+        kernel = int(c.get("linear_conv_kernel_dim") or 0)
+        if key_heads and value_heads and key_dim and value_dim and kernel:
+            # gated_delta.py creates [B,Hv,Dv,Dk] in float32. qwen3_5.py keeps
+            # (kernel-1) × (2*key-width + value-width) convolution values in the
+            # model activation dtype; the shipped model is bf16, hence two bytes.
+            delta = value_heads * value_dim * key_dim * 4
+            conv_width = 2 * key_heads * key_dim + value_heads * value_dim
+            conv = max(0, kernel - 1) * conv_width * 2
+            recurrent = int(linear_layers * (delta + conv))
+        else:
+            # A declared stateful layer with an incomplete state shape must never be
+            # priced as zero. Treat every layer as ordinary full attention instead;
+            # this is deliberately conservative and keeps the estimate actionable.
+            attention_layers, linear_layers = layers, 0
+            kv = int(layers * kv_heads * head_dim * 2 * 2.0 * int(ctx))
+
+    # Ten percent remains the cross-architecture lazy-evaluation floor.  The second
+    # term is the maximum activation slab observed at the pinned server's bounded
+    # prefill chunk; unlike the old constant, it responds to real architecture shape.
+    activation = int(min(max(1, int(ctx)), MLX_PREFILL_CHUNK)
+                     * layers * hidden * 2) if layers and hidden else 0
+    compute = int(weights * 0.10) + activation
+    return {"kv_bytes": kv + recurrent, "compute_bytes": compute,
+            "attention_layers": attention_layers,
+            "linear_layers": linear_layers,
+            "recurrent_bytes": recurrent,
+            "prefill_bytes": activation}
+
+
 def mlx_estimate(path: str, settings: dict) -> "dict | None":
     """Weights + KV + lazy-eval headroom for an MLX model directory.
 
@@ -428,26 +508,22 @@ def mlx_estimate(path: str, settings: dict) -> "dict | None":
         return None
     cfgp = os.path.join(d, "config.json")
     kv = 0
+    parts = None
     try:
         with open(cfgp, "r", encoding="utf-8") as fh:
             conf = _json.load(fh)
-        layers = int(conf.get("num_hidden_layers") or 0)
-        kvh = int(conf.get("num_key_value_heads") or conf.get("num_attention_heads") or 0)
-        hd = int(conf.get("head_dim") or 0) or (
-            int(conf.get("hidden_size") or 0) // max(1, int(conf.get("num_attention_heads") or 1)))
         ctx = int(settings.get("ctx") or 8192)
-        kvq = str(settings.get("kv_quant") or "").lower()
-        elem = 1.0625 if kvq in ("q8_0", "q4_0") else 2.0
-        kv = int(layers * kvh * hd * 2 * elem * ctx)
+        parts = _mlx_parts(conf, weights, ctx)
+        kv = parts["kv_bytes"]
     except (OSError, TypeError, ValueError, _json.JSONDecodeError):
         # TypeError is the U23 class arriving on the MLX side: config.json is written
         # by somebody else too, and `num_key_value_heads` is a per-layer list in more
         # than one published repo. A KV of 0 is honest here — the weights term still
         # carries the number, and mlx_estimate is already labelled a formula.
         kv = 0
-    head = int(weights * 0.10)
-    return {"weights_bytes": weights, "kv_bytes": kv, "compute_bytes": head,
-            "total_bytes": weights + kv + head, "source": "formula",
+    compute = parts["compute_bytes"] if parts is not None else int(weights * 0.10)
+    return {"weights_bytes": weights, "kv_bytes": kv, "compute_bytes": compute,
+            "total_bytes": weights + kv + compute, "source": "formula",
             "note": "MLX weights stay fully resident — no memory-mapped relief."}
 
 
@@ -976,7 +1052,7 @@ def remote_mlx_fit(conf: "dict | None", total_bytes: int, bud: dict,
                 "copy": {"chip": "No estimate",
                          "line": "The hub did not list this repo's weight sizes, so "
                                  "there is no honest number to show."}}
-    c = conf if isinstance(conf, dict) else {}
+    c = _mlx_language_config(conf if isinstance(conf, dict) else {})
     use = int(ctx or DEFAULT_CTX)
     cap = 0
     for k in ("max_position_embeddings", "max_seq_len"):
@@ -986,18 +1062,14 @@ def remote_mlx_fit(conf: "dict | None", total_bytes: int, bud: dict,
             pass
     if cap:
         use = min(use, cap)
-    kv = 0
+    kv = compute = 0
     try:
-        layers = int(c.get("num_hidden_layers") or 0)
-        kvh = int(c.get("num_key_value_heads") or c.get("num_attention_heads") or 0)
-        hd = int(c.get("head_dim") or 0) or (
-            int(c.get("hidden_size") or 0) // max(1, int(c.get("num_attention_heads") or 1)))
-        kv = int(layers * kvh * hd * 2 * 2.0 * use)
+        parts = _mlx_parts(c, tb, use)
+        kv, compute = parts["kv_bytes"], parts["compute_bytes"]
     except (TypeError, ValueError, ZeroDivisionError):
-        kv = 0
-    head = int(tb * 0.10)
-    est = {"weights_bytes": tb, "kv_bytes": kv, "compute_bytes": head,
-           "total_bytes": tb + kv + head, "source": "formula", "oracle": False,
+        kv, compute = 0, int(tb * 0.10)
+    est = {"weights_bytes": tb, "kv_bytes": kv, "compute_bytes": compute,
+           "total_bytes": tb + kv + compute, "source": "formula", "oracle": False,
            "known": True}
     need = int(est["total_bytes"])
     verdict = band(need, int(b.get("budget_bytes") or 0))

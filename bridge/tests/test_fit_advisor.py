@@ -41,6 +41,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -346,6 +347,48 @@ for _v in ([8, 8, 4], "eight", {"a": 1}, None):
             _mlxcrash.append(f"{_k}={_v!r}: {type(_e).__name__}")
 check(f"…and the MLX config reader survives the same shapes (its except tuple was "
       f"missing TypeError) — {len(_mlxcrash)} crashers", not _mlxcrash)
+_nested = {
+    "text_config": {
+        "num_hidden_layers": 64, "num_attention_heads": 24,
+        "num_key_value_heads": 4, "head_dim": 256, "hidden_size": 5120,
+        "max_position_embeddings": 262144,
+        "layer_types": ["linear_attention"] * 3 + ["full_attention"],
+        "linear_num_key_heads": 16, "linear_num_value_heads": 48,
+        "linear_key_head_dim": 128, "linear_value_head_dim": 128,
+        "linear_conv_kernel_dim": 4,
+    }
+}
+_nested["text_config"]["layer_types"] *= 16
+_nfit = F.remote_mlx_fit(_nested, 14 * F.GIB, {"budget_bytes": 60 * F.GIB},
+                         ctx=4096)
+_expected_kv = (16 * 4 * 256 * 2 * 2 * 4096
+                + 48 * (48 * 128 * 128 * 4
+                        + 3 * (2 * 16 * 128 + 48 * 128) * 2))
+check("a nested Qwen 3.5 MLX config prices only its 16 full-attention KV layers "
+      "plus all 48 recurrent states, rather than pricing zero or 64 KV layers",
+      _nfit["breakdown"]["kv_bytes"] == _expected_kv)
+_incomplete_linear = json.loads(json.dumps(_nested))
+del _incomplete_linear["text_config"]["linear_value_head_dim"]
+_fallback_fit = F.remote_mlx_fit(_incomplete_linear, 14 * F.GIB,
+                                 {"budget_bytes": 60 * F.GIB}, ctx=4096)
+check("a mixed-attention config missing one state dimension prices every layer as "
+      "ordinary attention rather than silently pricing its 48 linear layers as zero",
+      _fallback_fit["breakdown"]["kv_bytes"]
+      == 64 * 4 * 256 * 2 * 2 * 4096)
+check("MLX prefill work is bounded by the pinned server's 2,048-token chunk and is "
+      "added to—not substituted for—the cross-architecture headroom",
+      _nfit["breakdown"]["compute_bytes"]
+      == int(14 * F.GIB * 0.10) + 2048 * 64 * 5120 * 2)
+with tempfile.TemporaryDirectory() as _bad_mlx_tmp:
+    _bad_mlx = Path(_bad_mlx_tmp)
+    (_bad_mlx / "config.json").write_text("{not-json")
+    (_bad_mlx / "weights.safetensors").write_bytes(b"x" * 4096)
+    _bad_fit = F.mlx_estimate(str(_bad_mlx), {"ctx": 4096})
+    check("a malformed MLX config degrades to weights plus the labelled conservative "
+          "headroom instead of raising from an uninitialized architecture breakdown",
+          _bad_fit is not None
+          and _bad_fit["kv_bytes"] == 0
+          and _bad_fit["compute_bytes"] == int(4096 * 0.10))
 _MLXSRC = (ROOT / "bridge" / "core" / "fit.py").read_text()
 check("mlx_estimate catches TypeError too, so a list in config.json is a KV of 0 and "
       "not a 500 on the models page",

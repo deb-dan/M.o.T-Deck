@@ -243,6 +243,24 @@ def test_acestep_weights_use_the_recorded_snapshot_not_huggingface_main():
     assert 'refusing to replace non-symlink model file' in s
 
 
+def test_acestep_native_build_is_relocatable_across_live_root_and_fat_seed():
+    s = open(os.path.join(ROOT, "scripts", "install_music.sh"), encoding="utf-8").read()
+    assert "acestep_rpath_ok" in s
+    assert '"$cmake_bin" --fresh -S "$src" -B "$build"' in s
+    assert "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON" in s
+    assert "-DCMAKE_INSTALL_RPATH=@loader_path" in s
+    assert '[[ "$paths" == "@loader_path" ]]' in s
+    assert "relocatable ace-lm launch check failed" in s
+    assert "relocatable ace-synth launch check failed" in s
+    assert "Application Support/MOT Deck/data/acestep/src/build" not in s
+    assert 'mv "$build" "$backup"' in s
+    assert 'mv "$backup" "$build"' in s
+    assert 'prior_sha="$have"' in s
+    assert 'git -C "$src" checkout -q "$prior_sha"' in s
+    assert 'refusing to move its pin' in s
+    assert 'build_failure="relocatable rpath validation"' in s
+
+
 def test_comfyui_fresh_base_has_every_directory_v0345_reads_at_boot():
     """An existing base already has these paths and masks the first-install failure.
     ComfyUI v0.34.5 enumerates custom_nodes before it creates the directory itself."""

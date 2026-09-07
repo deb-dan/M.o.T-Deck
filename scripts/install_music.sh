@@ -53,6 +53,26 @@ ACESTEP_GGUFS=(vae-BF16.gguf
                acestep-5Hz-lm-4B-Q8_0.gguf
                acestep-v15-turbo-Q8_0.gguf)
 
+# acestep.cpp's CMake defaults write the build directory into each Mach-O as an
+# absolute LC_RPATH.  That happened to work until the product-root migration moved
+# data/acestep from Application Support/Harness to Application Support/MOT Deck; the
+# binaries remained executable files but dyld looked for libggml in the retired root.
+# It would also make a FAT seed built by one macOS user fail for another.  Require the
+# only relationship that is actually true: ace-lm/ace-synth and their libggml dylibs
+# travel together in build/, so @loader_path is the relocatable runtime-library root.
+acestep_rpath_ok() {
+  local bin paths
+  command -v otool >/dev/null 2>&1 || return 1
+  for bin in "$ACE/src/build/ace-lm" "$ACE/src/build/ace-synth"; do
+    [[ -x "$bin" ]] || return 1
+    paths=$(otool -l "$bin" 2>/dev/null | awk '
+      $1 == "cmd" && $2 == "LC_RPATH" { want = 1; next }
+      want && $1 == "path" { print $2; want = 0 }
+    ') || return 1
+    [[ "$paths" == "@loader_path" ]] || return 1
+  done
+}
+
 preflight() {
   [[ "$(uname -s)" == "Darwin" ]] || die "the music engines are Apple-Silicon only (Metal/MLX)."
   [[ "$(uname -m)" == "arm64" ]] || die "Apple Silicon only (uname -m says $(uname -m))."
@@ -193,6 +213,8 @@ do_acestep() {
   say "weights: ${ACESTEP_GGUF_REPO} @ ${gguf_pin:0:12}"
 
   local src="$ACE/src"
+  local pin_moved=0
+  local prior_sha=""
   mkdir -p "$ACE"
   if [[ ! -d "$src/.git" ]]; then
     say "fetching acestep.cpp at the pinned commit (shallow)…"
@@ -216,6 +238,9 @@ do_acestep() {
     local have
     have=$(git -C "$src" rev-parse HEAD)
     if [[ "$have" != "$sha" ]]; then
+      [[ -z "$(git -C "$src" status --porcelain --untracked-files=no)" ]] \
+        || die "acestep.cpp has local tracked changes; refusing to move its pin"
+      prior_sha="$have"
       say "clone is at ${have:0:12}, pin is ${sha:0:12} — moving it…"
       git -C "$src" fetch --depth 1 origin "$sha" >/dev/null 2>&1 \
         || git -C "$src" fetch origin >/dev/null 2>&1 \
@@ -223,24 +248,90 @@ do_acestep() {
       git -C "$src" checkout -q "$sha" || git -C "$src" checkout -q FETCH_HEAD \
         || die "could not check out $sha"
       git -C "$src" submodule update --init --recursive --depth 1 || true
-      rm -rf "$src/build"      # a pin move invalidates the build
+      pin_moved=1               # keep the prior build until its replacement validates
     else
       say "clone already at the pin."
     fi
   fi
 
-  if [[ ! -x "$src/build/ace-synth" || ! -x "$src/build/ace-lm" ]]; then
+  if [[ "$pin_moved" -eq 1 || ! -x "$src/build/ace-synth" || ! -x "$src/build/ace-lm" ]] \
+      || ! acestep_rpath_ok; then
+    if [[ -x "$src/build/ace-synth" || -x "$src/build/ace-lm" ]]; then
+      say "existing build is not relocatable — relinking with @loader_path…"
+    fi
     say "building with cmake (Metal + Accelerate auto-enabled on macOS)…"
     # NOT ./buildcpu.sh — it calls `nproc` (Linux-only) and forces -DGGML_BLAS=ON.
-    "$cmake_bin" -S "$src" -B "$src/build" -DCMAKE_BUILD_TYPE=Release \
-      || die "cmake configure failed"
-    "$cmake_bin" --build "$src/build" --config Release -j "$(sysctl -n hw.ncpu)" \
-      || die "build failed"
+    # BUILD_WITH_INSTALL_RPATH suppresses CMake's automatic absolute build-tree rpath;
+    # merely setting BUILD_RPATH adds @loader_path *beside* the absolute path and
+    # leaves the seed non-relocatable.
+    # `--fresh` is part of the relocation contract, not merely build tidiness:
+    # CMakeCache.txt records the absolute source/build roots. After a live-root rename
+    # CMake otherwise refuses to reconfigure before it can repair the stale Mach-O
+    # rpath. CMake owns and regenerates this cache; source, weights and user outputs
+    # are outside the fresh-build operation.
+    # A fresh configure removes CMakeCache.txt/CMakeFiles, but it does not remove every
+    # generated Metal input. One such .s file retained an .incbin path to the retired
+    # live root after the product rename. Build from a genuinely empty, exact directory
+    # while preserving the last build for rollback; do not pick individual cache files.
+    local build="$src/build"
+    local backup="$src/.build-rollback.$$"
+    local had_build=0
+    local build_failure=""
+    [[ ! -e "$backup" ]] || die "refusing ambiguous ACE build backup: $backup"
+    if [[ -d "$build" ]]; then
+      mv "$build" "$backup" || die "could not preserve the previous ACE build"
+      had_build=1
+    elif [[ -e "$build" || -L "$build" ]]; then
+      die "refusing non-directory ACE build path: $build"
+    fi
+    mkdir -p "$build" || die "could not create a fresh ACE build directory"
+
+    "$cmake_bin" --fresh -S "$src" -B "$build" -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=@loader_path' \
+      || build_failure="cmake configure"
+    if [[ -z "$build_failure" ]]; then
+      "$cmake_bin" --build "$build" --config Release -j "$(sysctl -n hw.ncpu)" \
+        || build_failure="build"
+    fi
+    if [[ -z "$build_failure" ]] \
+        && [[ ! -x "$build/ace-lm" || ! -x "$build/ace-synth" ]]; then
+      build_failure="binary output validation"
+    fi
+    if [[ -z "$build_failure" ]] && ! acestep_rpath_ok; then
+      build_failure="relocatable rpath validation"
+    fi
+    if [[ -z "$build_failure" ]] && ! "$build/ace-lm" --help >/dev/null 2>&1; then
+      build_failure="relocatable ace-lm launch validation"
+    fi
+    if [[ -z "$build_failure" ]] && ! "$build/ace-synth" --help >/dev/null 2>&1; then
+      build_failure="relocatable ace-synth launch validation"
+    fi
+    if [[ -n "$build_failure" ]]; then
+      rm -rf "$build"  # exact app-generated replacement that just failed validation
+      if [[ "$had_build" -eq 1 ]]; then
+        mv "$backup" "$build" || die "$build_failure failed; prior build backup remains at $backup"
+      fi
+      if [[ "$pin_moved" -eq 1 && -n "$prior_sha" ]]; then
+        git -C "$src" checkout -q "$prior_sha" \
+          && git -C "$src" submodule update --init --recursive --depth 1 \
+          || die "$build_failure failed; build restored but source checkout could not return to $prior_sha"
+      fi
+      die "$build_failure failed; the previous ACE build was restored"
+    fi
+    if [[ "$had_build" -eq 1 ]]; then
+      rm -rf "$backup" # exact app-generated prior build; replacement is now launch-verified
+    fi
   else
     say "reusing the existing build."
   fi
   [[ -x "$src/build/ace-lm" && -x "$src/build/ace-synth" ]] \
     || die "build produced no ace-lm/ace-synth — see the cmake output above"
+  acestep_rpath_ok \
+    || die "acestep build is not relocatable: ace-lm/ace-synth must use only @loader_path"
+  "$src/build/ace-lm" --help >/dev/null 2>&1 \
+    || die "relocatable ace-lm launch check failed"
+  "$src/build/ace-synth" --help >/dev/null 2>&1 \
+    || die "relocatable ace-synth launch check failed"
 
   ensure_venv
   ensure_hub
