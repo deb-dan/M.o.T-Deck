@@ -6,6 +6,7 @@ import subprocess
 
 import pytest
 
+import scripts.update_seeded_vendor as updater
 from scripts.update_seeded_vendor import Refusal, apply
 
 
@@ -93,3 +94,32 @@ def test_symlink_parent_escape_refuses(tmp_path):
     with pytest.raises(Refusal, match="symlink parent"):
         apply(repo, live, old, new, tmp_path / "backups", False)
     assert not (outside / "owned.txt").exists()
+
+
+def test_postcondition_failure_rolls_back_every_planned_path(tmp_path, monkeypatch):
+    repo, live, old, new = _fixture(tmp_path)
+    (live / "data").mkdir()
+    (live / "data" / "user.db").write_text("mine")
+    real_read = updater._read_live
+    new_tree = updater._tree(repo, new)
+    injected = False
+
+    def fail_one_postcondition(path):
+        nonlocal injected
+        value = real_read(path)
+        if (not injected and path.name == "change.txt"
+                and updater._same(value, new_tree["change.txt"])):
+            injected = True
+            return {"kind": "file", "mode": 0o644, "data": b"not-the-new-tree\n"}
+        return value
+
+    monkeypatch.setattr(updater, "_read_live", fail_one_postcondition)
+    with pytest.raises(Refusal, match="post-write verification failed"):
+        apply(repo, live, old, new, tmp_path / "backups", False)
+
+    assert injected
+    assert (live / "change.txt").read_text() == "old\n"
+    assert (live / "retire.txt").read_text() == "retire\n"
+    assert not (live / "added.txt").exists()
+    assert (live / "bin.sh").stat().st_mode & 0o111
+    assert (live / "data" / "user.db").read_text() == "mine"

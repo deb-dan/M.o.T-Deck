@@ -639,6 +639,13 @@ build:
   voicebox_linacodec_pin: "c0ae7c7285e121475c27592cfbb600624b714290"
   voicebox_luxtts_pin: "28ae6a61151684fffc9d1a7aa15eafa02286fe0b"
   voicebox_qwen3_tts_pin: "022e286b98fbec7e1e916cb940cdf532cd9f488e"
+  # mlx-audio is installed --no-deps because its Transformers 5 floor conflicts with
+  # Voicebox's tested <=4.57.6 graph. These direct runtime dependencies therefore have
+  # to be explicit: a fresh v0.5.0 venv otherwise starts green but /transcribe fails
+  # with ModuleNotFoundError: mlx_lm (reproduced on the real cached Whisper model).
+  voicebox_mlx_lm_pin: "0.31.1"
+  voicebox_sentencepiece_pin: "0.2.2"
+  voicebox_sounddevice_pin: "0.5.3"
   # ── MUSIC LANE (FABLE-MUSIC-LANE-SPEC, 2026-08-20) ──────────────────────────
   # Both engines were MEASURED on Debi's Mac before adoption (numbers in
   # docs/handoff/MUSIC-MEASUREMENT-RUNBOOK.md) and both passed the ear test, so both

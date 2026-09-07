@@ -221,7 +221,19 @@ def apply(repo: Path, destination: Path, old: str, new: str, backup_root: Path, 
     }
     (backup / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
-    completed = []
+    def restore_pre_transaction_state() -> None:
+        # Restore the full planned set, not merely operations that returned.  An
+        # atomic replace can succeed and a following fsync can fail, so a path may
+        # have changed even though its write call raised before being recorded as
+        # completed.
+        for name in reversed(changed):
+            target = destination / name
+            before = live_before[name]
+            if target.exists() or target.is_symlink():
+                target.unlink()
+            if before is not None:
+                _atomic_write(target, before)
+
     try:
         for name in changed:
             target = destination / name
@@ -229,24 +241,14 @@ def apply(repo: Path, destination: Path, old: str, new: str, backup_root: Path, 
                 _atomic_write(target, new_tree[name])
             elif target.exists() or target.is_symlink():
                 target.unlink()
-            completed.append(name)
+        # Postcondition belongs to the transaction.  A failed verification must
+        # restore the precise pre-upgrade tree, not merely point at the backup.
+        for name in changed:
+            if not _same(_read_live(destination / name), new_tree.get(name)):
+                raise Refusal(f"post-write verification failed for {name}; backup: {backup}")
     except Exception:
-        # Restore every touched path to its precise pre-transaction state. Newly
-        # introduced paths are removed; replaced/retired paths come from the backup.
-        for name in reversed(completed):
-            target = destination / name
-            before = live_before[name]
-            if target.exists() or target.is_symlink():
-                target.unlink()
-            if before is not None:
-                _atomic_write(target, before)
+        restore_pre_transaction_state()
         raise
-
-    # Postcondition: all Git-owned new bytes match, while untracked paths were never
-    # enumerated for mutation in the first place.
-    for name in changed:
-        if not _same(_read_live(destination / name), new_tree.get(name)):
-            raise Refusal(f"post-write verification failed for {name}; backup: {backup}")
     return summary, backup
 
 

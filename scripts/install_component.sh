@@ -545,6 +545,35 @@ elif [[ "$NAME" == "voicebox" ]]; then
     # requirements-mlx.txt deliberately omits mlx-audio (it declares transformers>=5,
     # which fights the transformers<=4.57.6 cap) — upstream installs it --no-deps after.
     vb_pip --no-deps "mlx-audio==0.4.1"
+    # requirements-mlx.txt claims mlx-lm and sounddevice arrive through the base
+    # graph, but a clean v0.5.0 build proves they do not. mlx-audio itself declares
+    # these exact versions. Keep mlx-lm --no-deps so pip cannot replace Voicebox's
+    # tested Transformers <=4.57.6 stack with the incompatible Transformers 5 line.
+    VB_MLX_LM_PIN="$(_build_pin voicebox_mlx_lm_pin)"
+    VB_SENTENCEPIECE_PIN="$(_build_pin voicebox_sentencepiece_pin)"
+    VB_SOUNDDEVICE_PIN="$(_build_pin voicebox_sounddevice_pin)"
+    for _pin in "$VB_MLX_LM_PIN" "$VB_SENTENCEPIECE_PIN" "$VB_SOUNDDEVICE_PIN"; do
+      [[ "$_pin" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+        echo "ERROR: every build.voicebox_* runtime pin must be an exact X.Y.Z version"
+        exit 1
+      }
+    done
+    vb_pip --no-deps "mlx-lm==$VB_MLX_LM_PIN"
+    vb_pip "sentencepiece==$VB_SENTENCEPIECE_PIN" \
+           "sounddevice==$VB_SOUNDDEVICE_PIN"
+    "$VB_VENV/bin/python" - <<PY
+import importlib.metadata as metadata
+expected = {
+    "mlx-lm": "$VB_MLX_LM_PIN",
+    "sentencepiece": "$VB_SENTENCEPIECE_PIN",
+    "sounddevice": "$VB_SOUNDDEVICE_PIN",
+}
+for package, wanted in expected.items():
+    got = metadata.version(package)
+    if got != wanted:
+        raise SystemExit(f"{package} installed as {got}, expected {wanted}")
+print("[motdeck] Voicebox MLX runtime versions verified.")
+PY
   fi
   # Qwen3-TTS from Git (upstream installs this over the PyPI qwen-tts requirement).
   # --force-reinstall is required: without it pip may retain a same-version PyPI or old

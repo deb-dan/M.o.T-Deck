@@ -92,6 +92,30 @@ def test_all_voicebox_git_dependencies_are_exact_and_verified():
     assert 'vb_pip "git+https://github.com/QwenLM/Qwen3-TTS.git"' not in src
 
 
+def test_voicebox_mlx_runtime_dependencies_are_explicit_and_verified():
+    """mlx-audio is deliberately installed without dependencies to retain Voicebox's
+    Transformers 4 line. Every direct dependency its live STT path needs must then be
+    installed explicitly; a green server is not proof that lazy model loading works."""
+    c = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
+    build = c["build"]
+    expected = {
+        "voicebox_mlx_lm_pin": "mlx-lm",
+        "voicebox_sentencepiece_pin": "sentencepiece",
+        "voicebox_sounddevice_pin": "sounddevice",
+    }
+    src = _read(INSTALLER)
+    for key, package in expected.items():
+        value = str(build.get(key) or "")
+        assert len(value.split(".")) == 3 and all(
+            part.isdigit() for part in value.split(".")), (
+            f"build.{key} must be an exact X.Y.Z version")
+        assert f'"{package}==' in src, f"installer does not install {package} explicitly"
+        assert f'_build_pin {key})' in src, f"installer does not read build.{key}"
+    assert 'vb_pip --no-deps "mlx-lm==' in src, (
+        "mlx-lm dependency resolution would upgrade Transformers beyond Voicebox's cap")
+    assert "Voicebox MLX runtime versions verified" in src
+
+
 def test_upstream_bare_git_lines_are_the_exact_shape_the_installer_rewrites():
     """If upstream changes or adds a VCS dependency, the install must fail closed
     until that source is reviewed and pinned; this test makes the present premise

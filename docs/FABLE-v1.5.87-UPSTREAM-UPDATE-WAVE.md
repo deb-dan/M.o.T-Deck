@@ -1,6 +1,8 @@
 # v1.5.87 upstream update wave — decision and evidence contract
 
-Status: candidate work in progress. A manifest pin is not a release claim.
+Status: shipped and verified. A manifest pin was not treated as a release claim; the
+accepted candidates below earned the release only after their affected installed and
+human-entry journeys passed on the real stack.
 
 ## Non-negotiable boundaries
 
@@ -142,3 +144,76 @@ Status: candidate work in progress. A manifest pin is not a release claim.
   shared state. Isolation gives clean ownership but separates history/channels. The
   recommended future shape is an isolated home plus explicit optional import; no silent
   migration occurs without the user's ruling.
+
+## Release evidence — v1.5.87
+
+### Accepted updates
+
+- **OpenCode 1.18.29:** the installed managed route opened its own workspace composer,
+  preserved the local llama.cpp provider and eight-model catalogue, and completed a real
+  human-surface turn with the exact response `OPENCODE-1.18.29-REAL-OK`. Its upstream UI
+  still displays its selected Parable alias while the single resident runner served the
+  loaded Qwen3.8 27B; MOT Deck's existing mismatch evidence names that truth and routes
+  to Models. No user project was added or changed.
+- **Odysseus dev `934d23c0`:** rebuilt environment, managed native authentication
+  handoff, authenticated root, Direct Chat, Agent and durable history all passed. A real
+  Agent turn returned `AGENT-B10827-OK`; requested and actually served model evidence
+  remained distinct. Settings, sessions, uploads and protected key bytes were conserved.
+  This upstream pin does not close U72, U139 or U142.
+- **SearXNG `c7f3080a`:** rebuilt with `curl_cffi==0.16.1`; its private JSON search
+  returned real multi-engine results and the bridge search seam remained live. Existing
+  settings were not replaced.
+- **VoiceStudio v0.5.1:** version/readiness, native Launchpad, seven MCP tools, voice
+  catalogue and real OmniVoice synthesis passed. The produced 24 kHz WAV was then used
+  as a real cross-component Voicebox transcription input.
+- **ComfyUI v0.34.5:** clean-base directory preflight, 916-node discovery, native graph
+  UI, a real 96×64 PNG, and a real 128×128 five-frame H.264 video passed. The video ran
+  through MOT Deck's Generate API in 23.5 seconds, measured a 6.41 GB process peak, and
+  was ingested as `motdeck/video_00001_.mp4`. Model, input, output and user roots were
+  never replaced.
+- **llama.cpp b10827:** the exact digest-gated Apple-Silicon archive reports build 10827.
+  API-key-file 401/200 behavior, authenticated model/metrics, the current 27B plus its
+  real projector, raw chat, Direct Chat, Agent, Hermes, basic vision input, status truth,
+  stop/restart and same-model restoration passed. The harder OCR fixture's `5729` was
+  misread as `5730`; that was not counted as a pass. An unambiguous large `MOT` fixture
+  proved the multimodal path without inflating the OCR claim.
+
+### Retained version, hardened graph
+
+- **Voicebox stays v0.5.0.** Its three Git-only dependencies are now exact and their
+  installed PEP 610 provenance is verified. The real Whisper journey exposed a separate
+  upstream packaging hole: a freshly rebuilt server was green, but lazy model loading
+  failed because `mlx_lm`, `sentencepiece` and `sounddevice` were not installed by the
+  declared base graph. MOT Deck now pins and verifies `mlx-lm==0.31.1`,
+  `sentencepiece==0.2.2` and `sounddevice==0.5.3`; `mlx-lm` is installed without
+  dependency resolution so it cannot replace Voicebox's tested Transformers 4 line.
+  A real cached Whisper Medium transcription then completed over the VoiceStudio WAV.
+  Existing upstream resolver conflicts remain honestly documented; a green server is no
+  longer accepted as proof of lazy STT readiness.
+
+### Researched holds
+
+- **Unsloth remains v0.1.804-beta.** The proposed beta changes 1,386 files and roughly
+  176k added lines. A help path and compatible flags do not prove its SPA, isolated home,
+  login and meaningful train/inference action; the blast radius therefore failed the
+  update gate rather than being hidden beneath the release.
+- **acestep.cpp remains `9761469`.** The candidate changes its entire ggml submodule.
+  It remains held until the same prompts, settings and weights can be compared for audio
+  quality, artifacts, runtime, peak memory and format. Source recency is not an audio A/B.
+
+### Transaction and preservation evidence
+
+- `scripts/update_seeded_vendor.py` updates only Git-owned paths between exact old/new
+  trees, refuses local collisions, preserves untracked paths, backs up replaced bytes,
+  and now rolls the whole planned set back if either a write or its final byte-for-byte
+  postcondition fails. The postcondition failure is injected permanently in the suite.
+- Grouped manifest migrations are compare-and-swap transactions; mixed or operator-
+  customized old/new groups refuse rather than guess.
+- Pre/post SHA-256 remained identical for `data/.env.local`, `data/models.json`, and
+  `data/nav.json`. The current runner pin and served model returned to the same Qwen3.8
+  27B after the Comfy video memory window. All ten components finished installed,
+  running and healthy.
+- Complete release gate: **570 contracts passed, four existing checkout-local Aider
+  cases skipped; 716 repository tests passed with two deprecation warnings; every
+  JavaScript suite passed.** The four skips are not candidate tests and no U157 test was
+  skipped.

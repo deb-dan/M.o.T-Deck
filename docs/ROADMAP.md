@@ -7,10 +7,10 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current shipped release: **v1.5.86** (see `VERSION`). Written 2026-09-07.
+Current shipped release: **v1.5.87** (see `VERSION`). Written 2026-09-07.
 
 <!-- current-status:start
-in-progress: U157
+in-progress:
 next: P6 P3 P5 S4 S7 U3
 later: A6 U2 U9 U14 U26 U28 U29 U34 U42 U44 U45 U47 U57 U58 U67 U70
 someday: S2 U4 U5 U6 U8 U43 U46 U68
@@ -265,7 +265,20 @@ signed FAT archive/manifest audit passed. The exact premises, adversarial bounda
 release evidence are in `docs/FABLE-v1.5.86-LOCAL-TRUTH-WAVE.md`; U153–U156 carry the
 release and incident closures.
 
-The immediate queue after U157 is P6 stem separation (the next user-selected product slice),
+v1.5.87 is shipped. It advances six independently gated upstream seams: OpenCode
+1.18.29, Odysseus dev@934d23c, SearXNG c7f3080, VoiceStudio 0.5.1, ComfyUI 0.34.5 and
+llama.cpp b10827. Voicebox stays on 0.5.0 while its three Git sources and three lazy MLX
+runtime dependencies become exact and installed-proven. Unsloth and acestep.cpp were
+researched and deliberately held: their high-blast changes did not satisfy the required
+meaningful-product/audio-A/B evidence. The installed journeys covered OpenCode, managed
+Odysseus login plus Agent history, real search, native VoiceStudio plus TTS, Voicebox
+MCP plus real Whisper STT, native Comfy plus fresh image/video, and Direct/Agent/Hermes/
+vision turns on the new runner. Protected secrets, registry and navigation hashes stayed
+identical, the current 27B was restored, and all ten components finished healthy. Exact
+candidate, rejection and release evidence: `docs/FABLE-v1.5.87-UPSTREAM-UPDATE-WAVE.md`
+(U157/U158).
+
+The immediate queue is P6 stem separation (the next user-selected product slice),
 then P3 Voice Chat, P5's remaining ComfyUI Audio/SFX and measured-video scope, S4 fit-engine spawn gates, S7's Wan bf16
 colour A/B, and U3's still-unconfirmed token revocation. P4 is closed: Goose CLI and
 Goose UI already ship. The machine-readable current-status block above is checked
