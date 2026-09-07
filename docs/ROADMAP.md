@@ -10,8 +10,8 @@ than restating rows.
 Current version: **v1.5.85** (see `VERSION`). Written 2026-09-07.
 
 <!-- current-status:start
-in-progress: S1 S12 S15 S16 S23 S34 A1 A2 A4 U151
-next: P3 P5 P6 S4 S7 U3
+in-progress:
+next: P6 P3 P5 S4 S7 U3
 later: S3 S5 S6 S10 S13 S17 S18 S19 S20 S26 S27 S30 A3 A5 A6 U2 U7 U9 U14 U26 U28 U29 U32 U33 U34 U36 U39 U41 U42 U44 U45 U47 U57 U58 U65 U67 U70
 someday: S2 U4 U5 U6 U8 U43 U46 U68
 blocked-later: P1 U1 U72 U91 U139 U142 U144
@@ -217,28 +217,34 @@ conserved. The final clean committed FAT build carries the exact new volume/bund
 identity with `dirty_files=0`. U150 is closed by the detailed ledger and identity
 inventory evidence.
 
-The current v1.5.85 candidate is closing the following local wave. It remains **in
-progress**, not done, until the repository gate, affected installed-shell journeys,
-final ship, and clean FAT installer verification all pass:
+v1.5.85 closes the local usability and seed-ownership wave. Native WebKit JavaScript
+dialogs now have explicit alert/accept/cancel/value-return paths; LOffice binds each
+Agent session to a canonical tool-catalog hash and visibly rolls over only when that
+catalog changes; Agent and Hermes accept bounded typed documents while Direct Chat
+continues to refuse them honestly; and the capability strip now describes the selected
+lane rather than leaking Odysseus claims into Chat or Hermes. Help covers the new
+attachments, LOffice rollover, shortcuts, memory and fit meanings. Repeated prose was
+demoted into chips, titles, disclosures and Help without deleting policy, diagnostics,
+or the existing composer/session-divider interactions. The Office operation schema is
+generated from the validator's tables, and paginated reads return exact bounded and
+continuation ranges.
 
-- **S12:** native WebKit `alert`, `confirm`, and `prompt`, including cancellation.
-- **S23:** a manifest-derived optional-component absence matrix across actual card and
-  placeholder renderers, navigation, Help, Capabilities, Models, and first-run logic.
-- **S1:** a visible fresh-session rollover when LOffice's real tool catalog changes.
-- **A1/A2/A4:** Help coverage, typed non-image Chat/Agent/Hermes attachments, and
-  lane-specific capability truth.
-- **S15/S16:** copy demotion without deleting policy, diagnostics, hover disclosures, or
-  the existing composer/resize affordances.
-- **S34:** Office operation schema generated from the validator's own tables plus exact,
-  continuation-friendly paginated reads.
-- **U151:** test-free FAT runtime seeds, deterministic seed ownership manifests, and
-  exact-digest-only cleanup of historical test residue.
+Partial-install behavior is now exercised as a manifest-derived matrix over every
+optional component's real card, placeholder, navigation, Help, Capabilities, Models and
+first-run contracts. This is intentionally a non-destructive matrix—not nine physical
+uninstalls of a working machine. FAT runtime seeds now exclude tests and carry a
+deterministic per-file SHA-256 ownership manifest. Upgrade cleanup deletes only an exact
+path+digest from immutable prior release manifests; the live upgrade removed 48 proven
+files on its first pass, preserved every modified/unknown remnant with a reason, and a
+second pass removed zero. A clean mounted release artifact contained no test roots and
+recorded `dirty_files=0`; the distributable is rebuilt after this closure record so its
+seed also carries the normalized roadmap. U152 carries the full release evidence.
 
-After that release, the immediate queue is P6 stem separation (the next user-selected
-product slice), P3 Voice Chat, P5 ComfyUI Video/Audio, S4 fit-engine spawn gates, S7's
-Wan bf16 colour A/B, and U3's still-unconfirmed token revocation. P4 is closed: Goose
-CLI and Goose UI already ship. The machine-readable current-status block above is
-checked against the authoritative index in `docs/UNFORGET.md` on every gate.
+The immediate queue is now P6 stem separation (the next user-selected product slice),
+then P3 Voice Chat, P5 ComfyUI Video/Audio, S4 fit-engine spawn gates, S7's Wan bf16
+colour A/B, and U3's still-unconfirmed token revocation. P4 is closed: Goose CLI and
+Goose UI already ship. The machine-readable current-status block above is checked
+against the authoritative index in `docs/UNFORGET.md` on every gate.
 
 ## Later
 
