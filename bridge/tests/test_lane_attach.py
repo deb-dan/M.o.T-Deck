@@ -528,6 +528,14 @@ def test_flows():
     check("hermes lane, NO image: no image.attach_bytes is sent",
           r.status_code == 200
           and not [c for c in hcalls if c[0] == "image.attach_bytes"])
+    check("hermes lane, an empty session creates and submits one real turn",
+          [c[0] for c in hcalls].count("session.create") == 1
+          and [c[0] for c in hcalls].count("prompt.submit") == 1
+          and '"type": "hermes_session"' in r.text
+          and '"id": "gw1"' in r.text
+          and '"stored_id": "st1"' in r.text)
+    check("…without hiding a closure failure behind a nominal HTTP 200",
+          '"type": "proxy_error"' not in r.text and "[DONE]" in r.text)
 
     hcalls.clear()
     r = client.post("/api/hermes/chat", json={"session_id": "gw1", "message": "what is this",

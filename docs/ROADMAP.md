@@ -10,7 +10,7 @@ than restating rows.
 Current release candidate: **v1.5.86** (see `VERSION`). Written 2026-09-07.
 
 <!-- current-status:start
-in-progress: S5 S6 S10 S13 S17 S18 S19 S20 S26 S27 S30 A3 A5 U7 U33 U36 U39 U41 U65 U153
+in-progress: S5 S6 S10 S13 S17 S18 S19 S20 S26 S27 S30 A3 A5 U7 U33 U36 U39 U41 U65 U153 U154
 next: P6 P3 P5 S4 S7 U3
 later: A6 U2 U9 U14 U26 U28 U29 U34 U42 U44 U45 U47 U57 U58 U67 U70
 someday: S2 U4 U5 U6 U8 U43 U46 U68

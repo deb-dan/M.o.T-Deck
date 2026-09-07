@@ -684,9 +684,11 @@ async def hermes_chat(req: Request) -> StreamingResponse:
     created = False
     if not sid:
         try:
-            res = await _HERMES.rpc("session.create", {"source": HERMES_SESSION_SOURCE})
-            sid = str(res.get("session_id") or "")
-            stored_sid = stored_sid or str(res.get("stored_session_id") or "")
+            created_result = await _HERMES.rpc(
+                "session.create", {"source": HERMES_SESSION_SOURCE})
+            sid = str(created_result.get("session_id") or "")
+            stored_sid = stored_sid or str(
+                created_result.get("stored_session_id") or "")
             created = True
         except Exception as exc:  # noqa: BLE001
             return StreamingResponse(_single_error(str(exc)[:300]),
@@ -708,7 +710,7 @@ async def hermes_chat(req: Request) -> StreamingResponse:
         q = None
         try:
             if created:
-                yield f'data: {_json.dumps({"type": "hermes_session", "id": sid, "stored_id": str(res.get("stored_session_id") or "")})}\n\n'
+                yield f'data: {_json.dumps({"type": "hermes_session", "id": sid, "stored_id": stored_sid})}\n\n'
             # ⚠️ WHO IS THE OFFICE CHANGESET FOR. An MCP tools/call carries the MCP
             # TRANSPORT's session id, and Hermes keeps ONE MCP client per process, so
             # that id is identical for every conversation and useless as a key. This is
@@ -740,16 +742,16 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                 # may mint a new one. Retarget every turn-store alias before submit.
                 _HERMES.close_queue(sid)
                 if stored_sid:
-                    res = await _HERMES.rpc("session.resume", {
+                    retry_result = await _HERMES.rpc("session.resume", {
                         "session_id": stored_sid, "source": HERMES_SESSION_SOURCE})
-                    sid = str(res.get("session_id") or "")
-                    stored_sid = str(res.get("session_key") or res.get("resumed")
-                                     or stored_sid)
+                    sid = str(retry_result.get("session_id") or "")
+                    stored_sid = str(retry_result.get("session_key")
+                                     or retry_result.get("resumed") or stored_sid)
                 else:
-                    res = await _HERMES.rpc("session.create", {
+                    retry_result = await _HERMES.rpc("session.create", {
                         "source": HERMES_SESSION_SOURCE})
-                    sid = str(res.get("session_id") or "")
-                    stored_sid = str(res.get("stored_session_id") or "")
+                    sid = str(retry_result.get("session_id") or "")
+                    stored_sid = str(retry_result.get("stored_session_id") or "")
                 if not sid or not stored_sid:
                     raise RuntimeError("Hermes retry returned no durable live/stored identity")
                 HERMES_TURNS.rebind(turn_ref, sid=sid, stored_sid=stored_sid)

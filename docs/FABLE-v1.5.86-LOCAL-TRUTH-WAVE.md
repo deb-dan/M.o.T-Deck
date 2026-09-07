@@ -55,6 +55,11 @@ intentionally not changed.
 - Agent has a persisted per-turn web-search choice. It remains separate from Browse and
   cannot turn search on when the global capability is unavailable. Direct Chat and Hermes
   never receive the Agent-only flag.
+- The installed attachment journey exposed U154: an empty-session Hermes request created
+  valid durable IDs but failed inside the stream producer before submission because one
+  Python closure name was shared with the stale-session retry branch. Creation and retry
+  results are now distinct. The regression fence proves one create, one submit, both IDs,
+  a terminal frame and no hidden error; a nominal HTTP 200 alone is explicitly insufficient.
 
 ## 5. LOffice durability and human ribbon journey — U7 / U33 / U41
 
