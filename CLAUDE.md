@@ -56,7 +56,9 @@
 > retired-root rpath is repaired transactionally, Generate's Model/Type transaction is
 > coherent, model Eject restores exact state, real MLA/SWA/MLX/projector receipts
 > calibrate advisory fit truth, and hosted Comfy nodes are refused by authoritative
-> engine metadata without adding cloud execution. U159–U164 and
+> engine metadata without adding cloud execution. U165 also makes the native app
+> bundle derive its Finder/Get Info version from the same top-level `VERSION` truth.
+> U159–U165 and
 > `docs/FABLE-v1.5.88-MEDIA-RELOCATION-FIT-WAVE.md` carry the full evidence.
 > Exact-once Direct-history writes remain U139;
 > shell execution confinement remains U72; non-LM-Studio source adapters remain conditional

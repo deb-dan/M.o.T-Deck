@@ -460,15 +460,15 @@ fi
 # is THE way code reaches the app, and build_app.sh only runs on a full fat rebuild.
 # Idempotent: the block is a no-op once the keys already say MOT Deck.
 _APP_NAME="MOT Deck"
+_plist_put() {   # <key> <value> — Set if present, Add if not; loud only if both fail
+  /usr/libexec/PlistBuddy -c "Set :$1 $2" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
+    || /usr/libexec/PlistBuddy -c "Add :$1 string $2" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
+    || echo "[ship] WARN: could not set $1"
+}
 _HAVE_NAME="$(/usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" \
                 "$APP/Contents/Info.plist" 2>/dev/null || true)"
 if [[ "$_HAVE_NAME" != "$_APP_NAME" ]]; then
   echo "[ship] app name → $_APP_NAME (Dock hover + the menu bar)"
-  _plist_put() {   # <key> <value> — Set if present, Add if not; loud only if both fail
-    /usr/libexec/PlistBuddy -c "Set :$1 $2" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
-      || /usr/libexec/PlistBuddy -c "Add :$1 string $2" "$APP/Contents/Info.plist" >/dev/null 2>&1 \
-      || echo "[ship] WARN: could not set $1 — the app may still show its old name"
-  }
   # CFBundleDisplayName is what the Dock/Finder read; CFBundleName is what the MENU BAR
   # reads (and it must agree, or the app menu says one thing while hover says another —
   # the incoherence this slice exists to end). The mic prompt names the app to the user
@@ -484,6 +484,26 @@ if [[ "$_HAVE_NAME" != "$_APP_NAME" ]]; then
   mkdir -p "$APP/Contents/Resources/en.lproj"
   printf 'CFBundleDisplayName = "%s";\nCFBundleName = "%s";\n' \
          "$_APP_NAME" "$_APP_NAME" > "$APP/Contents/Resources/en.lproj/InfoPlist.strings"
+  _MARK_CHANGED=1
+  _RESIGN=1
+fi
+
+# Finder/Get Info reads the bundle version, while the panel reads ROOT/VERSION. Both
+# must name the same release. This is synchronization at a packaging boundary, not a
+# second source: VERSION is read here and the postcondition is verified immediately.
+_RELEASE_VERSION="$(tr -d '\r\n' < "$ROOT/VERSION")"
+[[ "$_RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo "[ship] ERROR: VERSION is not a dotted release number: $_RELEASE_VERSION"; exit 1; }
+_HAVE_BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
+                         "$APP/Contents/Info.plist" 2>/dev/null || true)"
+if [[ "$_HAVE_BUNDLE_VERSION" != "$_RELEASE_VERSION" ]]; then
+  echo "[ship] app bundle version → $_RELEASE_VERSION"
+  _plist_put CFBundleVersion "$_RELEASE_VERSION"
+  _plist_put CFBundleShortVersionString "$_RELEASE_VERSION"
+  _AFTER_BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c \
+      "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist" 2>/dev/null || true)"
+  [[ "$_AFTER_BUNDLE_VERSION" == "$_RELEASE_VERSION" ]] || {
+    echo "[ship] ERROR: installed app bundle version did not update"; exit 1; }
   _MARK_CHANGED=1
   _RESIGN=1
 fi

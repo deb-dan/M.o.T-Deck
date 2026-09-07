@@ -152,9 +152,22 @@ never treated as local. This adds no cloud provider, credential, model or networ
 execution. Local Comfy workflows, including optional user-acquired models, retain their
 existing discovery and execution behavior.
 
+## U165 — native bundle version truth
+
+The first mounted FAT candidate was rejected even though its seed, panel and `VERSION`
+file all said 1.5.88: macOS `Info.plist` still advertised the original shell prototype
+number, `0.1`, through both bundle-version keys. Finder/Get Info and crash metadata would
+therefore disagree with the running product.
+
+`build_app.sh` now validates and reads the one top-level `VERSION` truth into both
+`CFBundleVersion` and `CFBundleShortVersionString`. `ship.sh` performs the same derived
+update on an installed bundle, verifies the postcondition, and re-signs only when the
+metadata changed. A contract rejects a literal second version or a missing packaging
+handoff. The corrected app and mounted FAT archive both report 1.5.88.
+
 ## Release acceptance — v1.5.88
 
-- The complete shipping gate passed: 576 contract checks with only the four declared
+- The complete shipping gate passed: 577 contract checks with only the four declared
   checkout-local Aider skips; 716 repository tests with two upstream deprecation
   warnings; every JavaScript suite; Bash 3.2 syntax; Swift parse; line/byte ceilings;
   identity and canonical-root guards.
@@ -172,6 +185,7 @@ existing discovery and execution behavior.
 - `motdeck.yaml`, `models.json`, `nav.json` and `.env.local` match their pre-journey
   digests byte-for-byte. No model file, layout, credential, third-party source file, or
   archived project was changed.
-- The final release was committed and pushed before the clean FAT build. The mounted
-  archive was checked against its seed ownership manifest and surfaced as
-  `dist/MOT Deck.dmg`.
+- The first mounted FAT candidate was rejected for U165's stale native bundle version.
+  The corrected release was committed and pushed before rebuilding. The final mounted
+  archive reports 1.5.88, matches all 12,532 seed-manifest file digests, carries no
+  runtime tests or macOS metadata, and is surfaced as `dist/MOT Deck.dmg`.

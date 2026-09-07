@@ -29,6 +29,14 @@ APP="dist/MOT Deck.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
+# VERSION is the one product release number (U56). The native bundle is another public
+# reader of that fact: Finder/Get Info and crash reports inspect Info.plist rather than
+# the bridge endpoint. Refuse a malformed/missing value instead of minting a second,
+# stale shell version.
+RELEASE_VERSION="$(tr -d '\r\n' < VERSION)"
+[[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo "ERROR: VERSION is not a dotted release number: $RELEASE_VERSION"; exit 1; }
+
 # bake MOT Deck location + build-kind into the binary so the app works from anywhere.
 # fatBuild=true routes main.swift to the offline first-run provisioner and resolves the
 # runtime root to ~/Library/Application Support/MOT Deck (dev/portable path untouched).
@@ -48,7 +56,7 @@ swiftc -O app/main.swift app/Config.swift -o "$APP/Contents/MacOS/MOTDeck"
 # A fresh fat install gets it from here; an existing install gets it from ship.sh's
 # bundle step (which also writes the localized name — see the long note there on why
 # CFBundleDisplayName alone is not reliably honoured when it differs from the filename).
-cat > "$APP/Contents/Info.plist" <<'EOF'
+cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -56,8 +64,8 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
   <key>CFBundleName</key><string>MOT Deck</string>
   <key>CFBundleDisplayName</key><string>MOT Deck</string>
   <key>CFBundleIdentifier</key><string>local.motdeck.app</string>
-  <key>CFBundleVersion</key><string>0.1</string>
-  <key>CFBundleShortVersionString</key><string>0.1</string>
+  <key>CFBundleVersion</key><string>$RELEASE_VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$RELEASE_VERSION</string>
   <key>CFBundleExecutable</key><string>MOTDeck</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleDevelopmentRegion</key><string>en</string>

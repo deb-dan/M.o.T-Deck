@@ -200,7 +200,9 @@ desynchronization, the ACE-Step post-rename native-library path, and the model-e
 post-stop 500; proves fresh MiniMax/ACE/SDXL/Wan output from the renamed root; measures
 real MLA, non-Gemma SWA, MLX and vision/projector fit behavior; records evidence-based
 Wan 2.2/MiniMax H3 decisions; and makes Comfy's own `api_node` metadata enforce the
-Generate surface's local-only boundary before a hybrid template offers downloads. It
+Generate surface's local-only boundary before a hybrid template offers downloads. U165
+also makes Finder/Get Info derive the native bundle version from the same `VERSION`
+truth as the panel and FAT seed. It
 does not adopt the slower ACE candidate, promote either broken Wan output, disable an
 optional H3 workflow, add cloud execution, or change the current shared Hermes home. Release and measurement
 evidence live in `docs/FABLE-v1.5.88-MEDIA-RELOCATION-FIT-WAVE.md` and

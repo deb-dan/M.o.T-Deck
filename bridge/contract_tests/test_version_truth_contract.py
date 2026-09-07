@@ -107,6 +107,17 @@ def test_the_fat_seed_still_carries_version():
     assert "VERSION" in code, "the fat seed stopped shipping VERSION (v1.5.70 fix)"
 
 
+def test_native_bundle_versions_are_derived_from_the_same_version_file():
+    build = _code(os.path.join(ROOT, "scripts", "build_app.sh"))
+    ship = _code(os.path.join(ROOT, "scripts", "ship.sh"))
+    assert 'RELEASE_VERSION="$(tr -d' in build and '<string>$RELEASE_VERSION</string>' in build
+    assert "CFBundleShortVersionString</key><string>0.1" not in build
+    assert '_RELEASE_VERSION="$(tr -d' in ship
+    assert '_plist_put CFBundleVersion "$_RELEASE_VERSION"' in ship
+    assert '_plist_put CFBundleShortVersionString "$_RELEASE_VERSION"' in ship
+    assert "installed app bundle version did not update" in ship
+
+
 # ── 5. the endpoint, and graceful absence ────────────────────────────────────
 def test_api_version_serves_the_version_file_and_degrades_honestly(tmp_path, monkeypatch):
     from bridge.core import procs
