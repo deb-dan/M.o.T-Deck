@@ -1359,9 +1359,16 @@ function workflowVerdict(w, dl) {
              hedge:(w.no_url && w.no_url.length
                     ? 'Upstream publishes no download link for '
                       + w.no_url.join(', ') + ' — put it in models/ yourself.'
-                    : 'Downloaded into the ComfyUI models folder and checked against '
-                      + 'the size the server declares. Upstream pins no sha256 for '
-                      + 'these, so that is the check they get.') };
+                    : ((w.digest_verified || []).length && !(w.size_only || []).length
+                      ? 'Downloaded into the ComfyUI models folder and checked against '
+                        + 'Hugging Face’s declared size and Git-LFS content SHA-256.'
+                      : (w.digest_verified || []).length
+                        ? 'Hugging Face files get size + Git-LFS SHA-256 checks; '
+                          + 'other sources get only their declared size. Each download '
+                          + 'states its actual verification.'
+                        : 'Downloaded into the ComfyUI models folder and checked '
+                          + 'against the size the server declares. This source exposes '
+                          + 'no authoritative content digest, so no hash is implied.')) };
   }
   if (w.runnable === false) {
     return { chip:'not runnable here', cls:'c-warn', blocked:true,

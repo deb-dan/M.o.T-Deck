@@ -50,6 +50,8 @@ import time
 from pathlib import Path
 
 from .appctx import ROOT
+from .comfymeta import SIZES, digest_known, size_known, sizes_load, sizes_save
+from .comfysubgraph import expand_subgraphs
 
 # ── constants ────────────────────────────────────────────────────────────────
 DISK_HEADROOM = 2 * 1024 ** 3   # "leaves ~X" is measured against this reserve
@@ -318,6 +320,9 @@ def template_models(name: str) -> "list | None":
     g = template_graph(name)
     if g is None:
         return None
+    expanded = expand_subgraphs(g)
+    if expanded["ok"]:
+        g = expanded["graph"]
     out, seen = [], set()
     for node in g.get("nodes") or []:
         for m in ((node.get("properties") or {}).get("models") or []):
@@ -497,43 +502,6 @@ def measure_note(pick_id: str, mode: str) -> str:
             + (f" · {m['label']}" if m.get("label") else ""))
 
 
-# ══ THE SIZE CACHE — HEAD-verified, never guessed ════════════════════════════
-# A file we have NOT downloaded has no size on disk, and the vendored registry does not
-# carry one. The honest answers are therefore exactly two: the number a HEAD request
-# gave us (cached here forever, keyed by URL), or NOTHING. There is no third branch
-# where a plausible size is printed — a wrong size under a Get button is the LIE class
-# at its most expensive. The router owns the HTTP; this half owns the memory.
-SIZES: dict = {}
-
-
-def _sizes_path() -> Path:
-    return state_dir() / "sizes.json"
-
-
-def sizes_load() -> None:
-    try:
-        d = json.loads(_sizes_path().read_text(encoding="utf-8"))
-        if isinstance(d, dict):
-            SIZES.update({k: v for k, v in d.items() if isinstance(v, int)})
-    except (OSError, ValueError):
-        pass
-
-
-def sizes_save() -> None:
-    try:
-        state_dir().mkdir(parents=True, exist_ok=True)
-        tmp = str(_sizes_path()) + ".motdeck-tmp"
-        with open(tmp, "w") as f:
-            json.dump(SIZES, f, indent=2, sort_keys=True)
-        os.replace(tmp, _sizes_path())
-    except OSError:
-        pass
-
-
-def size_known(url: "str | None") -> "int | None":
-    return SIZES.get(url) if url else None
-
-
 # ══ THE CATALOG — discovered, not typed ══════════════════════════════════════
 #
 # ⚠️ WHY A CATALOG AT ALL (Debi, 2026-08-29): "if one deletes models, it should be
@@ -577,7 +545,7 @@ PRIMARY_DIRS = ("diffusion_models", "checkpoints", "unet")
 # Nodes the FRONTEND owns: they carry no execution and are not in /object_info. Dropping
 # them is not a compromise — ComfyUI drops them too when it converts to API format.
 FRONTEND_ONLY = frozenset({"MarkdownNote", "Note", "Reroute", "PrimitiveNode",
-                           "PreviewAny", "easy showAnything"})
+                           "easy showAnything"})
 
 # ⚠️ THE STANDING REFUSAL, ENFORCED HERE RATHER THAN BY OMISSION. HunyuanVideo has no EU
 # licence grant (spec §Debi's locked answers), so it is refused whatever the disk says —
@@ -636,6 +604,9 @@ def _active_nodes(g: dict) -> list:
 
 def graph_weight_files(g: dict) -> list:
     """[(node id, class, filename)] for every weight file an ACTIVE loader names."""
+    expanded = expand_subgraphs(g)
+    if expanded["ok"]:
+        g = expanded["graph"]
     out = []
     for n in _active_nodes(g):
         cls = n.get("type")
@@ -651,12 +622,15 @@ def graph_weight_files(g: dict) -> list:
 def workflow_files(name: str, g: "dict | None" = None) -> "list | None":
     """The files this workflow REALLY needs, with the registry's URL where it has one.
 
-    Each row: {directory, name, url, present, state, bytes, size_source}. `bytes` is
-    the size on disk when the file is here, the HEAD-cached size when it is not and we
-    have asked, and None otherwise — never a guess."""
+    Each row includes path, URL, presence, byte size and any source-qualified digest.
+    `bytes` is the size on disk when the file is here, the HEAD-cached size when it is
+    not and we have asked, and None otherwise — never a guess."""
     g = g if g is not None else template_graph(name)
     if g is None:
         return None
+    expanded = expand_subgraphs(g)
+    if expanded["ok"]:
+        g = expanded["graph"]
     reg = {}
     for node in g.get("nodes") or []:
         for m in ((node.get("properties") or {}).get("models") or []):
@@ -673,7 +647,9 @@ def workflow_files(name: str, g: "dict | None" = None) -> "list | None":
         dest = models_dir() / directory / fn
         row = {"directory": directory, "name": fn, "url": url,
                "present": False, "state": "absent", "bytes": None,
-               "size_source": None, "loader": cls}
+               "size_source": None, "sha256": digest_known(url),
+               "digest_source": ("Hugging Face LFS" if digest_known(url) else None),
+               "loader": cls}
         try:
             row["bytes"] = dest.stat().st_size
             row["present"] = True
@@ -704,7 +680,9 @@ def workflow_kind(row: dict, g: "dict | None") -> str:
     t = (row.get("category_type") or "").lower()
     if t in ("image", "video", "audio", "3d"):
         return t
-    for n in (_active_nodes(g or {}) or []):
+    expanded = expand_subgraphs(g or {})
+    execution_graph = expanded["graph"] if expanded["ok"] else (g or {})
+    for n in (_active_nodes(execution_graph) or []):
         c = str(n.get("type") or "")
         if c.startswith("SaveVideo") or c.startswith("SaveAnimated"):
             return "video"
@@ -726,7 +704,9 @@ def workflow_inputs(row: dict, g: "dict | None") -> list:
     want = {"LoadImage": "image", "LoadImageMask": "image", "LoadVideo": "video",
             "LoadAudio": "audio"}
     out = []
-    for n in _active_nodes(g or {}):
+    expanded = expand_subgraphs(g or {})
+    execution_graph = expanded["graph"] if expanded["ok"] else (g or {})
+    for n in _active_nodes(execution_graph):
         k = want.get(str(n.get("type") or ""))
         if k:
             out.append({"node": n.get("id"), "kind": k, "class": n.get("type")})
@@ -786,7 +766,10 @@ def catalog() -> dict:
         # `properties.models` at all is one of the ~440 that moved to the asset system,
         # which is DISABLED at our pin. Offering it would be offering a download we
         # cannot perform.
-        if not any((n.get("properties") or {}).get("models") for n in g["nodes"]):
+        expanded = expand_subgraphs(g)
+        registry_graph = expanded["graph"] if expanded["ok"] else g
+        if not any((n.get("properties") or {}).get("models")
+                   for n in registry_graph["nodes"]):
             continue
         files = workflow_files(p.stem, g)
         if not files:
@@ -813,6 +796,8 @@ def catalog() -> dict:
             "missing_bytes": missing_bytes,
             "missing_h": gb(missing_bytes) if missing_bytes is not None else None,
             "unknown_sizes": [f["name"] for f in missing if f["bytes"] is None],
+            "digest_verified": [f["name"] for f in missing if f.get("sha256")],
+            "size_only": [f["name"] for f in missing if not f.get("sha256")],
             "no_url": [f["name"] for f in missing if not f["url"]],
             "complete": not missing,
             "set_bytes": row.get("size") if isinstance(row.get("size"), int) else None,
@@ -1008,7 +993,48 @@ def _widget_type(t) -> bool:
     return "COMBO" in t or t in ("INT", "FLOAT", "STRING", "BOOLEAN")
 
 
-def _widget_names(spec: dict) -> list:
+def _ordered_inputs(spec: dict, section: str):
+    """Yield one object-info input section in the server-declared order.
+
+    Modern V3 nodes publish ``input_order`` explicitly.  Python dict order happens to
+    agree today, but treating that implementation detail as the widget wire contract is
+    exactly the sort of plausible shortcut that silently shifts positional values.
+    Dynamic option schemas do not publish a separate order and retain their authored
+    mapping order.
+    """
+    entries = ((spec.get("input") or {}).get(section) or {})
+    order = ((spec.get("input_order") or {}).get(section) or [])
+    seen = set()
+    for name in order:
+        if name in entries and name not in seen:
+            seen.add(name)
+            yield name, entries[name]
+    for name, ent in entries.items():
+        if name not in seen:
+            yield name, ent
+
+
+def _dynamic_option_inputs(opts: dict, selected) -> "dict | None":
+    """Return the exact authored option schema selected by a DynamicCombo.
+
+    ComfyUI uses the first option when a newly-added selector has no serialized value;
+    an explicit ``default`` takes precedence.  Unknown serialized keys are refused by
+    leaving the dynamic portion unexpanded, allowing the required-input guard to name
+    the disagreement rather than inventing values for another option.
+    """
+    options = opts.get("options") or []
+    if selected is None:
+        selected = opts.get("default")
+        if selected is None and options:
+            selected = options[0].get("key")
+    for option in options:
+        if isinstance(option, dict) and option.get("key") == selected:
+            inputs = option.get("inputs") or {}
+            return inputs if isinstance(inputs, dict) else None
+    return None
+
+
+def _widget_names(spec: dict, values=None) -> list:
     """The input names that occupy `widgets_values`, in order, with the frontend's own
     control_after_generate slots accounted for.
 
@@ -1018,45 +1044,73 @@ def _widget_names(spec: dict) -> list:
     steps=20 where the template said cfg=20. There is no error; there is just a wrong
     picture."""
     out = []
-    for sect in ("required", "optional"):
-        for name, ent in ((spec.get("input") or {}).get(sect) or {}).items():
-            if not isinstance(ent, (list, tuple)) or not ent:
-                continue
-            t, opts = ent[0], (ent[1] if len(ent) > 1 and isinstance(ent[1], dict) else {})
-            # ⚠️ A COMBO HAS TWO SPELLINGS IN ONE /object_info, AND MISSING THE SECOND
-            # ONE SILENTLY SHIFTED EVERY LATER WIDGET BY ONE. Legacy nodes describe a
-            # dropdown as a LIST of options (`["euler", "heun", …]`); nodes ported to
-            # the newer schema describe it as the literal string "COMBO" with the
-            # options moved into the opts dict. Treating only the list form as a widget
-            # dropped `camera_pose` out of WanCameraEmbedding's slot list, so width took
-            # "Zoom In", height took the width, and `speed` took the FRAME COUNT — 81
-            # against a max of 10. ComfyUI's own validator caught that one because the
-            # numbers were out of range; a template whose types happened to line up
-            # would have produced a wrong picture in silence, which is the LIE class.
-            # Found by walking a real discovered workflow, not by reading.
-            is_widget = _widget_type(t)
-            if not is_widget:
-                continue
-            out.append((name, opts))
-            if opts.get("control_after_generate"):
-                out.append((None, {}))        # the hidden control slot
+    positional = list(values or []) if not isinstance(values, dict) else None
+    keyed = values if isinstance(values, dict) else None
+
+    def add_schema(schema: dict, prefix: str = ""):
+        for sect in ("required", "optional"):
+            for name, ent in _ordered_inputs(schema, sect):
+                if not isinstance(ent, (list, tuple)) or not ent:
+                    continue
+                t, opts = ent[0], (ent[1] if len(ent) > 1 and isinstance(ent[1], dict) else {})
+                # ⚠️ A COMBO HAS TWO SPELLINGS IN ONE /object_info, AND MISSING THE
+                # SECOND ONE SILENTLY SHIFTED EVERY LATER WIDGET BY ONE. Legacy nodes
+                # describe a dropdown as a LIST; newer-schema nodes call it "COMBO"
+                # and move options into the opts dict. Missing `camera_pose` made width
+                # take "Zoom In" and `speed` take frame count 81 against a max of 10.
+                # The validator caught that one; aligned types would lie silently.
+                is_widget = _widget_type(t)
+                if not is_widget:
+                    continue
+                full_name = f"{prefix}.{name}" if prefix else name
+                value_index = len(out)
+                out.append((full_name, opts, sect == "required"))
+                if opts.get("control_after_generate"):
+                    out.append((None, {}, False))        # the hidden control slot
+                if str(t) == "COMFY_DYNAMICCOMBO_V3":
+                    selected = (keyed.get(full_name) if keyed is not None
+                                else (positional[value_index]
+                                      if positional is not None and value_index < len(positional)
+                                      else opts.get("default")))
+                    nested = _dynamic_option_inputs(opts, selected)
+                    if nested is not None:
+                        # The frontend and backend both prefix selected child inputs
+                        # with the parent ID (sampling_mode.temperature).  The backend
+                        # reconstructs the nested dict before calling the node.
+                        add_schema({"input": nested}, full_name)
+
+    add_schema(spec)
     return out
 
 
-def _required_widgets(spec: dict) -> list:
+def _required_widgets(spec: dict, values=None) -> list:
     """The REQUIRED inputs that are widgets — the ones a converted node must end up
     holding a value for, or the graph is not the graph the template describes."""
-    out = []
-    for name, ent in ((spec.get("input") or {}).get("required") or {}).items():
-        if not isinstance(ent, (list, tuple)) or not ent:
-            continue
-        if _widget_type(ent[0]):
-            out.append(name)
+    return [name for name, _opts, required in _widget_names(spec, values)
+            if name is not None and required]
+
+
+def _required_names(spec: dict, values: "dict | None" = None) -> set:
+    """All active required inputs, including selected DynamicCombo descendants."""
+    values = values or {}
+    out = set()
+
+    def add_schema(schema: dict, prefix: str = ""):
+        for section in ("required", "optional"):
+            for name, ent in _ordered_inputs(schema, section):
+                full_name = f"{prefix}.{name}" if prefix else name
+                if section == "required":
+                    out.add(full_name)
+                if not isinstance(ent, (list, tuple)) or not ent:
+                    continue
+                opts = ent[1] if len(ent) > 1 and isinstance(ent[1], dict) else {}
+                if str(ent[0]) == "COMFY_DYNAMICCOMBO_V3":
+                    nested = _dynamic_option_inputs(opts, values.get(full_name))
+                    if nested is not None:
+                        add_schema({"input": nested}, full_name)
+
+    add_schema(spec)
     return out
-
-
-def _required_names(spec: dict) -> set:
-    return set(((spec.get("input") or {}).get("required") or {}).keys())
 
 
 def ui_to_api(g: dict, info: dict) -> dict:
@@ -1071,6 +1125,13 @@ def ui_to_api(g: dict, info: dict) -> dict:
         return {"ok": False, "graph": {}, "widgets": {},
                 "reason": ("ComfyUI is not answering, and converting a template needs "
                            "its node definitions — start the engine and try again")}
+    expanded = expand_subgraphs(g)
+    if not expanded["ok"]:
+        return {"ok": False, "graph": {}, "widgets": {},
+                "reason": ("this template's SUBGRAPH boundary is invalid: "
+                           + str(expanded["reason"]) + ". Open it in the ComfyUI tab, "
+                           "which can report the authored graph directly")}
+    g = expanded["graph"]
     links = _links_map(g)
     active = _active_nodes(g)
     keep = {n.get("id") for n in active}
@@ -1093,6 +1154,19 @@ def ui_to_api(g: dict, info: dict) -> dict:
         return {"ok": False, "graph": {}, "widgets": {},
                 "reason": ("this ComfyUI does not have " + ", ".join(unknown[:4])
                            + " — the template needs a node this engine cannot run")}
+
+    def compatible(a, b) -> bool:
+        """The useful subset of LiteGraph.isValidConnection for bypass routing.
+
+        `*` is an authored wildcard in stock nodes such as PreviewAny.  Treating it as
+        an ordinary string severs a valid bypass edge whose output has become STRING.
+        Lists are union types in older workflows; equality remains the safe fallback.
+        """
+        if a in (None, "", "*") or b in (None, "", "*"):
+            return True
+        aa = set(a) if isinstance(a, (list, tuple, set)) else {a}
+        bb = set(b) if isinstance(b, (list, tuple, set)) else {b}
+        return bool(aa & bb)
 
     def resolve(lid, depth=0):
         """Where does this edge REALLY come from?
@@ -1128,7 +1202,7 @@ def ui_to_api(g: dict, info: dict) -> dict:
             for slot in (node.get("inputs") or []):
                 if slot.get("link") is None:
                     continue
-                if want in (None, slot.get("type")) or cls == "Reroute":
+                if compatible(want, slot.get("type")) or cls == "Reroute":
                     return resolve(slot["link"], depth + 1)
         return None
 
@@ -1136,16 +1210,17 @@ def ui_to_api(g: dict, info: dict) -> dict:
     for n in active:
         cls = str(n.get("type"))
         spec = info[cls]
-        names = _widget_names(spec)
+        raw_values = n.get("widgets_values") or []
+        names = _widget_names(spec, raw_values)
         vals = list(n.get("widgets_values") or [])
         # A dict-shaped widgets_values (the newest frontend writes one for a few nodes)
         # is already keyed, so it needs no positional walk at all.
         wmap = {}
         if isinstance(n.get("widgets_values"), dict):
-            wmap = {k: v for k, v in n["widgets_values"].items() if k in _required_names(spec)
-                    or k in ((spec.get("input") or {}).get("optional") or {})}
+            allowed = {name for name, _opts, _required in names if name is not None}
+            wmap = {k: v for k, v in n["widgets_values"].items() if k in allowed}
         else:
-            for i, (nm, opts) in enumerate(names):
+            for i, (nm, opts, _required) in enumerate(names):
                 if nm is None:
                     continue
                 if i < len(vals):
@@ -1163,7 +1238,7 @@ def ui_to_api(g: dict, info: dict) -> dict:
                     wmap[nm] = opts["default"]
         inputs = dict(wmap)
         # links override widgets: a converted widget is fed by an edge, not by its value
-        req = _required_names(spec)
+        req = _required_names(spec, wmap)
         for slot in (n.get("inputs") or []):
             lid = slot.get("link")
             nm = slot.get("name")
@@ -1194,7 +1269,7 @@ def ui_to_api(g: dict, info: dict) -> dict:
         # widget of every node must come out of the walk holding a value (or a link).
         # A miss means the layouts disagree, and a workflow we cannot convert faithfully
         # is REFUSED by name — never submitted with values in the wrong slots.
-        blank = [nm for nm in _required_widgets(spec) if nm not in inputs]
+        blank = [nm for nm in _required_widgets(spec, raw_values) if nm not in inputs]
         if blank:
             return {"ok": False, "graph": {}, "widgets": {},
                     "reason": (f"{cls} would be submitted without {', '.join(blank[:3])} "
@@ -1377,4 +1452,3 @@ def apply_controls(api: dict, controls: dict, params: dict) -> dict:
 
 
 _measure_load()
-sizes_load()

@@ -28,9 +28,9 @@ workflow editor, a custom-node manager or an arbitrary-URL downloader.
 3. SIZE AND SHA ARE CHECKED, AND A FAILED CHECK IS NOT A DOWNLOAD. A card claiming
    "downloaded" over a truncated file resurfaces hours later as an inscrutable ComfyUI
    error, so the .part is renamed only after BOTH the byte count and the sha256 match.
-   ⚠️ A DISCOVERED file has no sha256 pin (upstream's registry carries none) — it is
-   verified against the size the SERVER declared, and the card SAYS which of the two
-   checks it got rather than implying the stronger one.
+   A DISCOVERED file is content-hash checked when its Hugging Face resolve response
+   supplies an authoritative Git-LFS SHA-256. Other sources remain size-only, and the
+   card SAYS which check each transfer got rather than implying the stronger one.
 
 4. THE DISK VERDICT COMES FROM THE MODELS DIRECTORY ITSELF — not ROOT, not "/". Here
    "/" is the sealed system volume and the data volume is a different filesystem, so
@@ -57,6 +57,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import Request
@@ -74,7 +75,7 @@ from ..core.comfycur import (                                    # noqa: F401
     PICKS, PICK_BY_ID, PRIMARY_DIRS, REFUSED_MODELS, SIZES, STARTER_CAP_BYTES,
     _dim, _disk, _file_state, _measure_load, _measure_save, _wan_length,
     apply_controls, build_graph, cap_statement, catalog, comfy_base, curation,
-    disk_verdict, dynamic_fence_violations, fence_violations, gb, graph_classes,
+    digest_known, disk_verdict, dynamic_fence_violations, fence_violations, gb, graph_classes,
     graph_steps, input_dir, measure_note, model_key, models_dir, output_dir,
     pick_card, retarget_outputs, size_known, sizes_save, state_dir, stock_class,
     template_graph, template_models, templates_dir, ui_to_api, workflow_controls,
@@ -305,16 +306,47 @@ def find_workflow(cat: dict, name: str) -> "tuple | None":
 # ── THE SIZE PROBE — HEAD, cached, background, never blocking a render ───────
 # A file that is not on disk has no size, and inventing one under a Get button is the
 # LIE class. So the size is ASKED for, once per URL, in the background, and the answer
-# is cached forever; until it arrives the row says the size is not known yet.
+# is cached for display; the GET revalidates mutable source identity before it writes.
+# Until the first answer arrives the row says the size is not known yet.
 _PROBING: set = set()
+
+
+def _hf_lfs_metadata(response, source_url: str) -> "dict | None":
+    """Extract Hugging Face's LFS *content* identity from the origin response.
+
+    The final CDN ETag and ``X-Xet-Hash`` identify storage objects, not necessarily the
+    downloaded file bytes.  Hugging Face's resolve endpoint instead exposes the Git-LFS
+    content SHA-256 as ``X-Linked-ETag`` and its byte count as ``X-Linked-Size``.  We
+    accept those headers only from an exact ``huggingface.co`` request in the redirect
+    chain, require both fields, and reject every non-hex or non-positive value.  This
+    makes a proxy/CDN header lookalike insufficient evidence.
+    """
+    try:
+        source = urlparse(source_url)
+    except Exception:                                           # noqa: BLE001
+        return None
+    if source.scheme != "https" or source.hostname != "huggingface.co":
+        return None
+    for item in [*(getattr(response, "history", None) or []), response]:
+        try:
+            host = urlparse(str(item.request.url)).hostname
+            digest = str(item.headers.get("x-linked-etag") or "").strip('"').lower()
+            size = int(item.headers.get("x-linked-size") or 0)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if host == "huggingface.co" and len(digest) == 64 \
+                and all(c in "0123456789abcdef" for c in digest) and size > 0:
+            return {"bytes": size, "sha256": digest, "source": "huggingface-lfs"}
+    return None
 
 
 async def _probe_one(url: str) -> None:
     try:
         r = await _DL.head(url, timeout=20.0)
-        n = int(r.headers.get("content-length") or 0)
+        meta = _hf_lfs_metadata(r, url)
+        n = int((meta or {}).get("bytes") or r.headers.get("content-length") or 0)
         if r.status_code < 400 and n > 0:
-            SIZES[url] = n
+            SIZES[url] = meta or n
             sizes_save()
             catalog_invalidate()
     except Exception:                                            # noqa: BLE001
@@ -511,6 +543,30 @@ async def _run_cdl(dl_id: str) -> None:
                              error=f"HTTP {resp.status_code} fetching {f['name']}: {body}"[:300])
                     publish("comfy", what="download", id=dl_id, state="error")
                     return
+                # Re-read mutable-source identity on the GET itself. A cached HEAD for
+                # a /resolve/main URL can become stale before the user clicks Download;
+                # binding the transfer to the current redirect metadata catches that
+                # race before any bytes are accepted. Direct/non-HF URLs simply have
+                # no authoritative digest and keep the honest size-only contract.
+                live_meta = _hf_lfs_metadata(resp, f["url"])
+                if live_meta:
+                    if want and live_meta["bytes"] != want:
+                        e.update(state="error", error=(
+                            f"{f['name']}: Hugging Face now identifies this file as "
+                            f"{live_meta['bytes']} B, not the probed {want} B. The "
+                            "source changed; refresh the catalogue before retrying."))
+                        publish("comfy", what="download", id=dl_id, state="error")
+                        return
+                    if f.get("sha256") and live_meta["sha256"] != f["sha256"]:
+                        e.update(state="error", error=(
+                            f"{f['name']}: Hugging Face's current content digest no "
+                            "longer matches the one selected for this download. The "
+                            "source changed; refresh the catalogue before retrying."))
+                        publish("comfy", what="download", id=dl_id, state="error")
+                        return
+                    want = f["bytes"] = live_meta["bytes"]
+                    f["sha256"] = live_meta["sha256"]
+                    f["verify"] = "size + Hugging Face LFS sha256"
                 # A 200 answering a Range request means the range was ignored:
                 # appending would splice the head into the middle. Restart the file.
                 mode = "ab" if (have and resp.status_code == 206) else "wb"
@@ -672,10 +728,10 @@ async def api_comfy_download(req: Request) -> JSONResponse:
 async def _download_workflow(name: str) -> JSONResponse:
     """Fetch exactly the files ONE DISCOVERED WORKFLOW is missing.
 
-    ⚠️ THE HONEST DIFFERENCE FROM A CURATED PICK, STATED IN THE PAYLOAD: upstream's
-    registry carries a URL but no sha256, so these files are verified against the size
-    the SERVER declares and not against a hash we pinned. `verify` says which check the
-    file got, the page prints it, and nothing here implies the stronger one."""
+    The workflow registry itself carries no digest. For Hugging Face LFS URLs, the
+    origin's X-Linked-ETag supplies the file-content SHA-256 and the GET redirect is
+    rechecked before writing. Other sources remain honestly size-only. ``verify`` says
+    which contract each file got; nothing here implies a stronger one."""
     dup = cdl_inflight("wf:" + name)
     if dup:
         return JSONResponse({"ok": True, "download": _cdl_json(dup), "joined": True})
@@ -692,9 +748,13 @@ async def _download_workflow(name: str) -> JSONResponse:
             no_url.append(f"{f['directory']}/{f['name']}")
             continue
         files.append({"directory": f["directory"], "name": f["name"],
-                      "bytes": f.get("bytes"), "sha256": None, "url": f["url"],
+                      "bytes": f.get("bytes"), "sha256": digest_known(f["url"]),
+                      "url": f["url"],
                       "dest": str(models_dir() / f["directory"] / f["name"]),
-                      "done": 0, "state": "queued", "verify": "size declared by server"})
+                      "done": 0, "state": "queued",
+                      "verify": ("size + Hugging Face LFS sha256"
+                                 if digest_known(f["url"])
+                                 else "size declared by server")})
     if no_url and not files:
         return JSONResponse({"ok": False, "error": (
             "the vendored registry carries no download link for "

@@ -702,15 +702,24 @@ try:
        "a HEAD-verified size is used and SAYS it came from a HEAD")
     ok(w["missing_bytes"] == 700_000_000,
        "…and the workflow's missing total is real arithmetic over known sizes only")
+    CUR.SIZES["https://huggingface.co/acme/model/resolve/main/enc.safetensors"] = {
+        "bytes": 700_000_000, "sha256": "a" * 64, "source": "huggingface-lfs",
+    }
+    ok(CUR.digest_known("https://huggingface.co/acme/model/resolve/main/enc.safetensors")
+       == "a" * 64,
+       "…and an authoritative Hugging Face LFS digest shares that same cache record")
 finally:
     A.ROOT = _saved_root
     CUR.SIZES.pop("https://example.invalid/enc.safetensors", None)
+    CUR.SIZES.pop("https://huggingface.co/acme/model/resolve/main/enc.safetensors", None)
 
-# ⚠️ THE SOURCE-TEXT HALF OF THE SAME GROUP: the page and the router must agree that a
-# discovered file gets the WEAKER of the two checks, and must not imply otherwise.
-ok("size declared by server" in router and '"verify": "size + sha256"' in router,
-   "a discovered download says which check it got (size only) and a curated one says "
-   "size + sha256 — a card that implied the stronger check would be the LIE class")
+# ⚠️ THE SOURCE-TEXT HALF OF THE SAME GROUP: discovered Hugging Face LFS files get
+# source-qualified content verification, while every other source remains honestly
+# size-only. CDN/Xet storage hashes must never be mistaken for file-content identity.
+ok("X-Linked-ETag" in router and "size + Hugging Face LFS sha256" in router
+   and "size declared by server" in router and "X-Xet-Hash" in router,
+   "a discovered download states whether it got Hugging Face LFS content verification "
+   "or only the source-declared size — and explicitly rejects the CDN/Xet hash shortcut")
 ok('seen = {r["filename"] for r in out}' in router
    and "p.name not in seen" in router,
    "the Source list is DEDUPED on the file name — submitting a gallery picture copies "

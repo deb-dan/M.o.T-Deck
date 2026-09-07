@@ -117,6 +117,11 @@ FILES: tuple[str, ...] = (
     # layer on disk both ways, and a module missing from this view makes every
     # `X not in APP_SOURCE` assertion about it pass VACUOUSLY.
     "core/comfycur.py",
+    # S26 subgraph expansion and S27 source-qualified download metadata are separate
+    # route-less cores. They sit beside their only consumer and stay in the full source
+    # view so negative safety assertions cannot pass by their omission.
+    "core/comfysubgraph.py",
+    "core/comfymeta.py",
     # The goose agent lane, appended by the same rule.
     "routers/goose.py",
     # The goose EMBED lane (goose Desktop's UI served by us), appended by the same rule.
