@@ -243,6 +243,15 @@ def test_acestep_weights_use_the_recorded_snapshot_not_huggingface_main():
     assert 'refusing to replace non-symlink model file' in s
 
 
+def test_comfyui_fresh_base_has_every_directory_v0345_reads_at_boot():
+    """An existing base already has these paths and masks the first-install failure.
+    ComfyUI v0.34.5 enumerates custom_nodes before it creates the directory itself."""
+    s = src(os.path.join(SCRIPTS, "install_component.sh"))
+    assert 'data/comfyui"/{custom_nodes,models,output,input,user,temp}' in s
+    assert s.index('data/comfyui"/{custom_nodes,models,output,input,user,temp}') \
+        < s.index('comfyui base directory')
+
+
 def test_llama_and_bun_verify_recorded_sha256_before_unpacking():
     llama = src(LLAMA)
     assert re.search(r"llamacpp_sha256", llama)

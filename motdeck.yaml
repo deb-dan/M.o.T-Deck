@@ -138,7 +138,7 @@ components:
     #   settings.json, auth.json, rag/, chroma/, uploads/, tts_cache/…). A plain
     #   `rsync -a --delete vendor/odysseus/ $DST/vendor/odysseus/` DESTROYS the user's
     #   Odysseus database. Always add `--exclude='/data/' --exclude='/.env'`.
-    pin: c9dd68d890a7c0ee0df9a0e351ce22aafd6c7c0f   # dev@c9dd68d — 2026-08-28 bump (103 commits, contract-checked): inject_messages/chat_stream/sessions/auth/mcp/history intact, _explicit_web_intent OK, seed deps (ModelEndpoint/get_db_session/src.settings load_settings/save_settings) present, X-Frame policy unchanged. requirements.txt byte-identical → no venv reinstall. WATCH: INTERNAL_TOOL_USER moved core/middleware.py → src/owner_identity.py (we import neither); SECURE_COOKIES now defaults to "follow the request scheme" instead of false (ours is unset + plain-HTTP loopback → still a non-Secure cookie, login unaffected); new OAUTH_REDIRECT_BASE_URL defaults to http://localhost:$APP_PORT, which is wrong for remote-MCP OAuth because we serve on 7860 without APP_PORT. (prev 25c9e735)
+    pin: 934d23c0be29c9721385f34565c0ae2cbd60da04   # dev@934d23c — 2026-09-07 candidate: six commits after c9dd68d. Owner-scope/tool work and psycopg2-binary were audited; login + authenticated root passed in an isolated data dir; 303 focused upstream checks passed and one Docker-image-only check skipped. This does NOT close U72/U139/U142. A pin move requires a rebuilt venv and the native login, Direct history, Agent, attachment and session journeys before release.
     installed: true
     enabled: false
     port: 7860                # native macOS default (7000 often held by AirPlay)
@@ -147,7 +147,7 @@ components:
     admin_password:           # generated into data/.env.local; never committed
   searxng:
     repo: https://github.com/searxng/searxng.git
-    pin: 9fea41204fdfa7a5cfa15b0ebd12904c520478ce  # exact source commit; not a branch
+    pin: c7f3080aac5de13b619c4a5ab36590a2c5165e1c  # exact source commit; not a branch. 2026-09-07 candidate: httpx networking moved substantially to curl_cffi; isolated install plus a real JSON search passed. Rebuild the venv and re-walk private search before release.
     # Source-only project (not on PyPI). scripts/install_searxng.sh fetches this exact
     # object and verifies HEAD before installing; upstream's default branch is master.
     #   2026-08-28 SECURITY bump from 6da6eee2 (2026-07-19), verified by diffing the trees:
@@ -169,7 +169,7 @@ components:
   # prefix (OMNIVOICE_BIND_HOST / OMNIVOICE_PORT / OMNIVOICE_DATA_DIR).
   voicestudio:
     repo: https://github.com/debpalash/VoiceStudio.git
-    pin: v0.5.0               # release tag — never track a branch
+    pin: v0.5.1               # release tag — never track a branch. 2026-09-07 candidate: upstream calls this a patch, but it is a 467-file startup/worker refactor. The isolated source answered /health and /startup/progress with the old venv; release still requires a rebuilt locked venv plus native TTS/STT/MCP journeys.
                               # 2026-08-28 bump v0.4.2 → v0.5.0. The update audit rated this
                               # RISKY on two counts and BOTH were checked at the candidate
                               # (clone of v0.5.0, read before touching vendor/) and found
@@ -221,7 +221,7 @@ components:
   # bootstrap never drags in a multi-GB optional dependency.
   comfyui:
     repo: https://github.com/comfyanonymous/ComfyUI.git
-    pin: v0.34.1              # release tag — never track a branch.
+    pin: v0.34.5              # release tag — never track a branch. 2026-09-07 candidate: isolated MPS startup exposed a fresh-base assumption (custom_nodes must already exist); the installer now creates the complete base shape before first launch. Generate image/video must pass before release.
                               # 2026-08-20: v0.33.3 was newest (sha 4da9e2db…).
                               # 2026-08-28 bump v0.33.3 → v0.34.1. ⚠️ the update audit said
                               # "latest = v0.34.0"; `git ls-remote --tags` says v0.34.1 exists
@@ -338,7 +338,7 @@ components:
     # ⚠️ upstream's live git repo is sst/opencode but its own README build badge and
     # brew tap now point at an `anomalyco` org — pin by npm version, never by org.
     repo: https://github.com/sst/opencode.git
-    pin: "1.18.23"            # = build.opencode_pin (kept here so the manifest is
+    pin: "1.18.29"            # = build.opencode_pin (kept here so the manifest is
                               # self-describing; the installer reads build.opencode_pin)
                               # 2026-08-28 bump 1.18.19 → 1.18.23 (patch releases only).
     installed: false          # OPTIONAL — nothing depends on it; bootstrap never clones it
@@ -441,8 +441,8 @@ components:
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
 runner:
   adapter: auto            # auto = engine per model format (gguf→llamacpp, mlx→mlx-lm/mlx-vlm) | llamacpp | mlx  (jan retired 2026-07-23)
-  llamacpp_pin: b10662       # pinned llama.cpp release tag (bNNNN) — scripts/install_llamacpp.sh fetches macos-arm64 binaries into data/llamacpp/
-  llamacpp_sha256: 2e9d7df321c468422a5f4861253fb9ea4430338f4b1c3149b40c8f37b7c7eea2  # pinned release asset bytes
+  llamacpp_pin: b10827       # pinned llama.cpp release tag (bNNNN) — scripts/install_llamacpp.sh fetches macos-arm64 binaries into data/llamacpp/. 2026-09-07 candidate: every launch flag, API-key-file enforcement, metrics and authenticated 4B inference passed against the exact asset; the installed 27B+mmproj journey remains the release gate.
+  llamacpp_sha256: 28550b2304a138e72fb5700132917052138aa47895dfa92dfd26a820dd905658  # exact macOS-arm64 release asset bytes
                              # 2026-08-06: b10094 → b10295. 2026-08-14: b10295 → b10427 (update sweep).
                              # NOTE release CI lags a fresh tag: b10297 existed but had NO macos-arm64 asset.
                              # b10427's llama-b10427-bin-macos-arm64.tar.gz WAS verified present (302 to the CDN;
@@ -632,6 +632,13 @@ build:
   # satisfy voicebox/voicestudio's ffmpeg need with no `brew install ffmpeg`.
   # ⚠️ bundles ffmpeg only, NOT ffprobe.
   imageio_ffmpeg_pin: "0.6.0"
+  # Voicebox v0.5.0's requirements carry two bare Git URLs and its installer adds a
+  # third. These are exact upstream commits measured on 2026-09-07. The installer
+  # rewrites only the two expected requirement lines, force-reinstalls Qwen3-TTS, and
+  # verifies each installed direct_url provenance; a changed upstream line fails closed.
+  voicebox_linacodec_pin: "c0ae7c7285e121475c27592cfbb600624b714290"
+  voicebox_luxtts_pin: "28ae6a61151684fffc9d1a7aa15eafa02286fe0b"
+  voicebox_qwen3_tts_pin: "022e286b98fbec7e1e916cb940cdf532cd9f488e"
   # ── MUSIC LANE (FABLE-MUSIC-LANE-SPEC, 2026-08-20) ──────────────────────────
   # Both engines were MEASURED on Debi's Mac before adoption (numbers in
   # docs/handoff/MUSIC-MEASUREMENT-RUNBOOK.md) and both passed the ear test, so both
@@ -716,11 +723,11 @@ build:
   # registry.npmjs.org: opencode-ai@1.18.23 is MIT and declares
   # opencode-darwin-arm64@1.18.23; both macOS platform archives were downloaded and
   # independently hashed for the entries below.
-  opencode_pin: "1.18.23"
+  opencode_pin: "1.18.29"
   # SHA-256 of the platform tarballs, recorded from the pinned npm artifacts. npm's
   # live dist.integrity is checked too, but it is not allowed to be the sole authority.
-  opencode_darwin_arm64_sha256: "1415acecc9f520cf28459cef66f9487a9b173ad10b0ea093b8f5087401b0e125"
-  opencode_darwin_x64_sha256: "d217059f954f34458ff1ee41b946d22ff0cb5d7d165d165dfa72bc4e65faac0a"
+  opencode_darwin_arm64_sha256: "1fc08fee8b4984c1306c826b8c0e2c367fd9eeb4d4c3707469194e3fea047e72"
+  opencode_darwin_x64_sha256: "d9e2270b9040d7ce140df629773c68f15222c7a6c882f16921d36aa4c9200ae2"
   # ── DEEPSEEK HARNESS lane (components.deepseek above carries the reasoning) ──
   # The npm version of @deepseek-ai/dsh. Read LIVE from registry.npmjs.org 2026-09-03:
   # `npm view @deepseek-ai/dsh dist-tags` → latest=0.1.1-rc.2, next=0.1.2-rc.1,

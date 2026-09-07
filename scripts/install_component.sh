@@ -135,6 +135,11 @@ _pin_of() {
   awk "/^  $1:/{f=1; next} f && /^  [a-z]/{exit} f && /^    $2:/{print \$2; exit}" motdeck.yaml
 }
 
+# _build_pin <key> — exact immutable build input from the top-level build block.
+_build_pin() {
+  awk -v k="  $1:" '/^build:/{f=1;next} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[\" ]/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' motdeck.yaml
+}
+
 # _clone_pinned <component>  — shallow clone / re-pin, searxng precedent (never a submodule).
 _clone_pinned() {
   local n="$1" repo pin
@@ -512,7 +517,25 @@ elif [[ "$NAME" == "voicebox" ]]; then
     fi
   }
   vb_pip --upgrade pip
-  vb_pip -r "vendor/voicebox/backend/requirements.txt"
+
+  # Voicebox v0.5.0 carries two bare Git dependencies in requirements.txt. Pin the
+  # complete class without modifying vendor/: create a temporary requirements copy,
+  # replace exactly the two known lines, and refuse a changed/missing upstream shape.
+  VB_LINA_PIN="$(_build_pin voicebox_linacodec_pin)"
+  VB_LUX_PIN="$(_build_pin voicebox_luxtts_pin)"
+  VB_QWEN_PIN="$(_build_pin voicebox_qwen3_tts_pin)"
+  for _pin in "$VB_LINA_PIN" "$VB_LUX_PIN" "$VB_QWEN_PIN"; do
+    [[ "$_pin" =~ ^[0-9a-f]{40}$ ]] || {
+      echo "ERROR: every build.voicebox_*_pin must be an exact 40-character commit SHA"
+      exit 1
+    }
+  done
+  VB_REQ_TMP=$(mktemp "${TMPDIR:-/tmp}/motdeck-voicebox-requirements.XXXXXX")
+  "$VB_VENV/bin/python" "$ROOT/scripts/pin_voicebox_requirements.py" rewrite \
+    "$ROOT/vendor/voicebox/backend/requirements.txt" "$VB_REQ_TMP" \
+    --pin "linacodec=$VB_LINA_PIN" --pin "Zipvoice=$VB_LUX_PIN"
+  vb_pip -r "$VB_REQ_TMP"
+  rm -f "$VB_REQ_TMP"
   # --no-deps: chatterbox-tts pins numpy<1.26 / torch==2.6; hume-tada pins torch>=2.7,<2.8.
   vb_pip --no-deps chatterbox-tts
   vb_pip --no-deps hume-tada
@@ -523,9 +546,18 @@ elif [[ "$NAME" == "voicebox" ]]; then
     # which fights the transformers<=4.57.6 cap) — upstream installs it --no-deps after.
     vb_pip --no-deps "mlx-audio==0.4.1"
   fi
-  # Qwen3-TTS from git (upstream installs this over the PyPI qwen-tts in requirements).
-  # ⚠️ floating HEAD — like linacodec/Zipvoice this is not reproducible across installs.
-  vb_pip "git+https://github.com/QwenLM/Qwen3-TTS.git"
+  # Qwen3-TTS from Git (upstream installs this over the PyPI qwen-tts requirement).
+  # --force-reinstall is required: without it pip may retain a same-version PyPI or old
+  # Git build and make the new pin merely decorative. --no-deps preserves the already
+  # resolved Voicebox stack.
+  vb_pip --force-reinstall --no-deps \
+    "qwen-tts @ git+https://github.com/QwenLM/Qwen3-TTS.git@$VB_QWEN_PIN"
+
+  # Prove installed provenance, not only the command line. PEP 610 direct_url.json is
+  # the durable record for a VCS install; every commit must match the manifest pin.
+  "$VB_VENV/bin/python" "$ROOT/scripts/pin_voicebox_requirements.py" verify \
+    --pin "linacodec=$VB_LINA_PIN" --pin "Zipvoice=$VB_LUX_PIN" \
+    --pin "qwen-tts=$VB_QWEN_PIN"
   [[ -x "$VB_VENV/bin/python" ]] || { echo "ERROR: data/voicebox-venv was not created."; exit 1; }
 
   # 2b. ffmpeg — NO brew. ensure_ffmpeg.sh reuses a system ffmpeg if the user has one,
@@ -641,7 +673,9 @@ elif [[ "$NAME" == "comfyui" ]]; then
   # Base directory. ⚠ MANDATORY: ComfyUI's default writes models/ output/ input/ user/
   # NEXT TO main.py, i.e. straight into vendor/. start_component.sh always passes
   # --base-directory; create it here so the first Start has somewhere to write.
-  mkdir -p "$ROOT/data/comfyui"
+  # v0.34.5 enumerates custom_nodes before it creates a clean base directory. Create
+  # the complete first-launch shape here; an already-populated install hid this seam.
+  mkdir -p "$ROOT/data/comfyui"/{custom_nodes,models,output,input,user,temp}
   echo "[motdeck] comfyui base directory → $ROOT/data/comfyui (models/output/input/user)"
   echo "[motdeck] NOTE: comfyui is GPL-3.0. MOT Deck composes it at ARM'S LENGTH —"
   echo "[motdeck]   a separate process reached over HTTP on 127.0.0.1:8188, never edited."

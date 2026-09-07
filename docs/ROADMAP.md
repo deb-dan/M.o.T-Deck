@@ -10,7 +10,7 @@ than restating rows.
 Current shipped release: **v1.5.86** (see `VERSION`). Written 2026-09-07.
 
 <!-- current-status:start
-in-progress:
+in-progress: U157
 next: P6 P3 P5 S4 S7 U3
 later: A6 U2 U9 U14 U26 U28 U29 U34 U42 U44 U45 U47 U57 U58 U67 U70
 someday: S2 U4 U5 U6 U8 U43 U46 U68
@@ -190,6 +190,15 @@ The corrective v1.5.80 wave is shipped. Its closure checkpoint is U140 in the le
 the U82–U138 rows remain the adversarial incident trail explaining why each first
 candidate was rejected or narrowed, not unfinished release blockers.
 
+U157 is the active third-party update wave. Each dependency is isolated: a pin is only
+a candidate until its exact artifact/source, fresh install path, app integration seams,
+affected human entry, rollback boundary and neighboring consumers pass. OpenCode,
+SearXNG, ComfyUI, VoiceStudio, Odysseus and llama.cpp are being evaluated at the exact
+requested versions/commits; Voicebox's three Git-only dependencies are being made
+reproducible without changing its upstream release. Unsloth and acestep.cpp remain
+measurement-gated high-blast candidates, not bulk-upgrade passengers. The complete
+decision record is `docs/FABLE-v1.5.87-UPSTREAM-UPDATE-WAVE.md`.
+
 The v1.5.81 remaining-reliability wave and v1.5.82 Odysseus-login hotfix are shipped.
 U143 records v1.5.81's full repository, installed-stack, Goose UI, and clean FAT evidence;
 U145 records the missed human-login journey and its correction. No open item below is
@@ -256,8 +265,8 @@ signed FAT archive/manifest audit passed. The exact premises, adversarial bounda
 release evidence are in `docs/FABLE-v1.5.86-LOCAL-TRUTH-WAVE.md`; U153–U156 carry the
 release and incident closures.
 
-The immediate queue is P6 stem separation (the next user-selected product slice),
-then P3 Voice Chat, P5 ComfyUI Video/Audio, S4 fit-engine spawn gates, S7's Wan bf16
+The immediate queue after U157 is P6 stem separation (the next user-selected product slice),
+then P3 Voice Chat, P5's remaining ComfyUI Audio/SFX and measured-video scope, S4 fit-engine spawn gates, S7's Wan bf16
 colour A/B, and U3's still-unconfirmed token revocation. P4 is closed: Goose CLI and
 Goose UI already ship. The machine-readable current-status block above is checked
 against the authoritative index in `docs/UNFORGET.md` on every gate.

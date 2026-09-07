@@ -23,13 +23,25 @@ are NOT importable from the bridge venv, so nothing here imports it.
 Run: pytest bridge/contract_tests/
 """
 from pathlib import Path
+import importlib.util
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 VB = ROOT / "vendor" / "voicebox"
 MAIN = VB / "backend" / "main.py"
 APP = VB / "backend" / "app.py"
+INSTALLER = ROOT / "scripts" / "install_component.sh"
+PIN_HELPER = ROOT / "scripts" / "pin_voicebox_requirements.py"
+
+
+def _pin_module():
+    spec = importlib.util.spec_from_file_location("motdeck_voicebox_pins", PIN_HELPER)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def _present() -> bool:
@@ -58,6 +70,80 @@ def test_voicebox_pinned_in_motdeck_yaml():
     assert comp.get("installed") is False, (
         "voicebox ships NOT installed: it is optional, several GB, and its dependency "
         "graph is known-fragile")
+
+
+def test_all_voicebox_git_dependencies_are_exact_and_verified():
+    """Voicebox itself is release-pinned, but its install graph contained three bare
+    Git URLs. A component tag does not pin those transitive source checkouts."""
+    c = yaml.safe_load((ROOT / "motdeck.yaml").read_text())
+    build = c["build"]
+    for key in ("voicebox_linacodec_pin", "voicebox_luxtts_pin",
+                "voicebox_qwen3_tts_pin"):
+        value = str(build.get(key) or "")
+        assert len(value) == 40 and all(ch in "0123456789abcdef" for ch in value), (
+            f"build.{key} must be an exact lowercase commit SHA")
+    src = _read(INSTALLER)
+    helper = _read(PIN_HELPER)
+    assert "unreviewed floating or reordered Git requirement" in helper
+    assert "--force-reinstall --no-deps" in src, (
+        "Qwen's same version can otherwise preserve older or PyPI bytes")
+    assert "direct_url.json" in helper and "vcs_info" in helper and "commit_id" in helper, (
+        "the install must verify PEP 610 provenance rather than trust its command line")
+    assert 'vb_pip "git+https://github.com/QwenLM/Qwen3-TTS.git"' not in src
+
+
+def test_upstream_bare_git_lines_are_the_exact_shape_the_installer_rewrites():
+    """If upstream changes or adds a VCS dependency, the install must fail closed
+    until that source is reviewed and pinned; this test makes the present premise
+    visible even when the optional checkout is absent."""
+    if not _present():
+        return
+    req = _read(VB / "backend" / "requirements.txt")
+    active = [line.strip() for line in req.splitlines()
+              if "git+https://" in line and not line.lstrip().startswith("#")]
+    assert active == [
+        "linacodec @ git+https://github.com/ysharma3501/LinaCodec.git",
+        "Zipvoice @ git+https://github.com/ysharma3501/LuxTTS.git",
+    ]
+
+
+def test_voicebox_requirement_rewrite_executes_and_fails_closed(tmp_path):
+    helper = _pin_module()
+    lina = "a" * 40
+    lux = "b" * 40
+    source = tmp_path / "requirements.txt"
+    target = tmp_path / "pinned.txt"
+    source.write_text("\n".join(helper.EXPECTED_LINES.values()) + "\n")
+    helper.rewrite(source, target, {"linacodec": lina, "Zipvoice": lux})
+    assert target.read_text().splitlines() == [
+        f"{helper.EXPECTED_LINES['linacodec']}@{lina}",
+        f"{helper.EXPECTED_LINES['Zipvoice']}@{lux}",
+    ]
+
+    target.unlink()
+    source.write_text(source.read_text() + "other @ git+https://example.invalid/new.git\n")
+    with pytest.raises(ValueError, match="unreviewed floating"):
+        helper.rewrite(source, target, {"linacodec": lina, "Zipvoice": lux})
+    assert not target.exists(), "a rejected dependency graph must not leave a candidate file"
+
+
+def test_voicebox_installed_provenance_verification_executes(monkeypatch):
+    helper = _pin_module()
+    pins = {"linacodec": "a" * 40, "Zipvoice": "b" * 40, "qwen-tts": "c" * 40}
+
+    class Dist:
+        def __init__(self, commit):
+            self.commit = commit
+
+        def read_text(self, name):
+            assert name == "direct_url.json"
+            return '{"vcs_info":{"commit_id":"' + self.commit + '"}}'
+
+    monkeypatch.setattr(helper.metadata, "distribution", lambda name: Dist(pins[name]))
+    helper.verify(pins)
+    monkeypatch.setattr(helper.metadata, "distribution", lambda name: Dist("d" * 40))
+    with pytest.raises(ValueError, match="provenance"):
+        helper.verify(pins)
 
 
 def test_launch_module_exists_and_reexports_app():

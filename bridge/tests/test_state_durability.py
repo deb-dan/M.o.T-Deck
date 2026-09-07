@@ -150,6 +150,69 @@ def test_manifest_merge_migrates_only_the_known_floating_searxng_default():
     assert untouched == custom and custom_changed == []
 
 
+def test_manifest_release_migrations_are_grouped_exact_and_preserve_live_state():
+    old_arm = "1415acecc9f520cf28459cef66f9487a9b173ad10b0ea093b8f5087401b0e125"
+    old_x64 = "d217059f954f34458ff1ee41b946d22ff0cb5d7d165d165dfa72bc4e65faac0a"
+    new_arm = "1fc08fee8b4984c1306c826b8c0e2c367fd9eeb4d4c3707469194e3fea047e72"
+    new_x64 = "d9e2270b9040d7ce140df629773c68f15222c7a6c882f16921d36aa4c9200ae2"
+    source = (
+        "components:\n  opencode:\n    pin: \"1.18.29\"\n    installed: false\n"
+        "build:\n  opencode_pin: \"1.18.29\"\n"
+        f"  opencode_darwin_arm64_sha256: \"{new_arm}\"\n"
+        f"  opencode_darwin_x64_sha256: \"{new_x64}\"\n"
+    )
+    live = (
+        "# live bytes\ncomponents:\n  opencode:\n    pin: \"1.18.23\"\n"
+        "    installed: true # machine-owned\nbuild:\n  opencode_pin: \"1.18.23\"\n"
+        f"  opencode_darwin_arm64_sha256: \"{old_arm}\"\n"
+        f"  opencode_darwin_x64_sha256: \"{old_x64}\"\n"
+    )
+    merged, changed = merge_text(source, live)
+    parsed = yaml.safe_load(merged)
+    assert parsed["components"]["opencode"]["installed"] is True
+    assert "# live bytes" in merged and "# machine-owned" in merged
+    assert parsed["components"]["opencode"]["pin"] == "1.18.29"
+    assert parsed["build"]["opencode_darwin_arm64_sha256"] == new_arm
+    assert parsed["build"]["opencode_darwin_x64_sha256"] == new_x64
+    assert changed == ["OpenCode 1.18.23→1.18.29"]
+    again, changed_again = merge_text(source, merged)
+    assert again == merged and changed_again == []
+
+
+def test_manifest_release_migration_rejects_a_split_tag_digest_group():
+    old_arm = "1415acecc9f520cf28459cef66f9487a9b173ad10b0ea093b8f5087401b0e125"
+    old_x64 = "d217059f954f34458ff1ee41b946d22ff0cb5d7d165d165dfa72bc4e65faac0a"
+    new_arm = "1fc08fee8b4984c1306c826b8c0e2c367fd9eeb4d4c3707469194e3fea047e72"
+    new_x64 = "d9e2270b9040d7ce140df629773c68f15222c7a6c882f16921d36aa4c9200ae2"
+    source = (
+        "components:\n  opencode:\n    pin: \"1.18.29\"\n"
+        "build:\n  opencode_pin: \"1.18.29\"\n"
+        f"  opencode_darwin_arm64_sha256: \"{new_arm}\"\n"
+        f"  opencode_darwin_x64_sha256: \"{new_x64}\"\n"
+    )
+    split = (
+        "components:\n  opencode:\n    pin: \"1.18.29\"\n"
+        "build:\n  opencode_pin: \"1.18.23\"\n"
+        f"  opencode_darwin_arm64_sha256: \"{old_arm}\"\n"
+        f"  opencode_darwin_x64_sha256: \"{old_x64}\"\n"
+    )
+    with pytest.raises(ValueError, match="mixed old/new group"):
+        merge_text(source, split)
+
+
+def test_manifest_release_migration_preserves_an_operator_pin_group():
+    source = (
+        "components:\n  voicestudio:\n    pin: v0.5.1\n    installed: false\n"
+        "build:\n  stable: true\n"
+    )
+    live = (
+        "components:\n  voicestudio:\n    pin: operator-branch\n    installed: true\n"
+        "build:\n  stable: true\n"
+    )
+    merged, changed = merge_text(source, live)
+    assert merged == live and changed == []
+
+
 def test_release_is_idempotent_and_never_deletes_replaced_claim(tmp_path, monkeypatch):
     data = tmp_path / "data"
     data.mkdir()

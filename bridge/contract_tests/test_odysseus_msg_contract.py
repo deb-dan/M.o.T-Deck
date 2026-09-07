@@ -196,6 +196,23 @@ def test_inject_messages_accepts_per_message_metadata():
     src = _read(SESS)
     assert '@router.post("/session/{sid}/inject_messages")' in src, (
         "inject_messages is gone — the direct lane persists through it")
-    assert 'ChatMessage(m["role"], m["content"], metadata=m.get("metadata"))' in src, (
+    assert 'metadata=' in src and 'm.get("metadata")' in src, (
         "inject_messages no longer forwards a per-message `metadata` — the direct "
         "lane's per-reply stats stamp (turn_metadata) would be dropped silently")
+    if "sanitize_client_message_metadata" in src:
+        # Newer Odysseus correctly strips only server-owned tool-approval authority.
+        # Prove the sanitizer leaves every stats key MOT Deck writes; accepting the
+        # new function name without executing its predicate would make this gate lie.
+        import runpy
+        sanitizer = runpy.run_path(
+            str(ODY / "src" / "tool_approval_scopes.py")
+        )["sanitize_client_message_metadata"]
+        metadata = {
+            "model": "served-model",
+            "tokens_per_second": 42.5,
+            "response_time": 1.25,
+            "input_tokens": 8,
+            "output_tokens": 21,
+        }
+        assert sanitizer(metadata) == metadata, (
+            "Odysseus's client-metadata sanitizer now removes Direct-turn stats")
