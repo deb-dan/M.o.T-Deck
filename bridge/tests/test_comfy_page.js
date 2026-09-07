@@ -893,7 +893,12 @@ const WF_REFINER = {
            state:'absent', bytes:6075673160, url:'https://hf/r', size_source:'HEAD' }],
   present_count:1, file_count:2, missing:['sd_xl_refiner_1.0.safetensors'],
   missing_bytes:6075673160, missing_h:'6.08 GB', no_url:[],
+  digest_verified:[], size_only:['sd_xl_refiner_1.0.safetensors'],
 };
+const WF_REFINER_HF = Object.assign({}, WF_REFINER, {
+  digest_verified:['sd_xl_refiner_1.0.safetensors'], size_only:[] });
+const WF_REFINER_MIXED = Object.assign({}, WF_REFINER, {
+  digest_verified:['sd_xl_refiner_1.0.safetensors'], size_only:['companion.bin'] });
 const WF_CAM = {
   id:'video_wan2.1_fun_camera_v1.1_1.3B', template:'video_wan2.1_fun_camera_v1.1_1.3B',
   title:'Wan 2.1 Fun Camera 1.3B', kind:'video', tags:['Image to Video'],
@@ -956,9 +961,15 @@ ok(pick.M.workflowVerdict(WF_REFINER, null).act === 'download'
    '…and the Get fetches THAT WORKFLOW’s missing files, not the whole family');
 ok(/Missing: sd_xl_refiner_1\.0/.test(pick.M.tipPlain(pick.M.workflowVerdict(WF_REFINER, null))),
    '…naming them in its hover');
-ok(/no sha256 for/.test(pick.M.tipPlain(pick.M.workflowVerdict(WF_REFINER, null))),
-   'LIE GUARD: a discovered download says it is checked against the SIZE, because '
-   + 'upstream pins no hash for it — implying the stronger check would be the lie');
+ok(/no authoritative content digest/.test(
+     pick.M.tipPlain(pick.M.workflowVerdict(WF_REFINER, null))),
+   'LIE GUARD: a source without an authoritative digest says size-only, never sha256');
+ok(/Git-LFS content SHA-256/.test(
+     pick.M.tipPlain(pick.M.workflowVerdict(WF_REFINER_HF, null))),
+   'a Hugging Face LFS-discovered file names its authoritative content-digest check');
+ok(/other sources get only their declared size/.test(
+     pick.M.tipPlain(pick.M.workflowVerdict(WF_REFINER_MIXED, null))),
+   'a mixed workflow names both verification strengths rather than flattening them');
 const unknownSize = Object.assign({}, WF_REFINER, { missing_h:null, missing_bytes:null });
 ok(pick.M.workflowVerdict(unknownSize, null).chip === 'Get · size unknown',
    'a size no HEAD has confirmed is SAID to be unknown, never rounded into a number');
