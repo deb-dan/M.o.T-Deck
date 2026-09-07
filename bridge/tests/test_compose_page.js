@@ -143,7 +143,8 @@ function makeEnv() {
       set textContent(v) { this._text = String(v); written.push({ id, html: esc(String(v)) }); },
       classList: {
         _s: new Set(),
-        add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); },
+        add(...cs) { cs.forEach(c => this._s.add(c)); },
+        remove(...cs) { cs.forEach(c => this._s.delete(c)); },
         toggle(c, on) { if (on) this._s.add(c); else this._s.delete(c); },
         contains(c) { return this._s.has(c); },
       },
@@ -187,8 +188,8 @@ function runPage(st, lib, mutate) {
     'engineStateVerdict, licenseVerdict, ramVerdict, speedVerdict, measuredVerdict, ' +
     'engineChipVerdict, lengthVerdict, seedVerdict, totalVerdict, jobVerdict, ' +
     'trackChips, tipHtml, tipPlain, advisoryHtml, heroTrack, fileSrc, writeBack, ' +
-    'waveVerdict, promptHead, LEVEL_TOKEN, LAYOUT_KEY, CONTAINERS, readLayout, ' +
-    'saveLayout, applyLayout, heroDuration };');
+    'waveVerdict, promptHead, LEVEL_TOKEN, LAYOUT_KEY, CONTAINERS, DEFAULT_BLOCKS, readLayout, ' +
+    'saveLayout, applyLayout, resetLayout, heroDuration };');
   const M = fn(
     env.document, env.window, { getItem() { return null; }, setItem() {} },
     () => new Promise(() => {}),                       // load() never resolves: inert
@@ -875,6 +876,32 @@ ok(/Moved that block back to the grid/.test(html),
    + 'toast — a control may never hide the user\u2019s own content');
 ok(/saveLayout\(\);/.test(html.split('pointerup')[2] || ''),
    'a drop writes the arrangement immediately (no save-on-unload to lose)');
+ok(/id="reset-layout"/.test(html) && />Reset layout<\/button>/.test(html),
+   'the rearrangeable page exposes one named Reset layout button');
+ok(/const DEFAULT_BLOCKS = \['wave', 'engines', 'ledger', 'queue', 'structure', 'reuse',/.test(html)
+   && /'library', 'disk'\];/.test(html),
+   'the reset target is the authored fresh-install order, not the current DOM order');
+{
+  const removed = [];
+  const env = makeEnv();
+  const storage = { getItem() { return null; }, setItem() {}, removeItem(k) { removed.push(k); } };
+  const fn = new Function(
+    'document', 'window', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout',
+    'addEventListener', 'location',
+    bodyScript + '\n;return { resetLayout, DEFAULT_BLOCKS };');
+  const m = fn(env.document, env.window, storage, () => new Promise(() => {}),
+    () => 0, () => {}, () => {}, env.window.location);
+  env.document.body.classList.add('dock-right', 'shrunk');
+  m.resetLayout();
+  ok(env.nodes.blocks.childNodes.map(n => n.id).join(',') === m.DEFAULT_BLOCKS.join(','),
+     'Reset layout moves every existing panel back in the exact authored order');
+  ok(env.document.body.classList.contains('dock-left')
+     && !env.document.body.classList.contains('dock-right')
+     && !env.document.body.classList.contains('shrunk'),
+     '…returns Settings to the left at full height');
+  ok(removed.join(',') === 'compose-layout-v1',
+     '…and clears only the Music layout preference');
+}
 {
   // The reader is TOTAL about surprises: junk, unknown ids and a missing key all land
   // on a working page rather than an exception.

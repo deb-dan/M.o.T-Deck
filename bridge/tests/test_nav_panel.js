@@ -659,8 +659,9 @@ const css = html.split('<style>')[1].split('</style>')[0];
      '…and it sits BEFORE the studio block, which must stay last in the sheet');
   const blk = css.slice(b0, b1).replace(/\/\*[\s\S]*?\*\//g, '');
   const sels = [...blk.matchAll(/(?:^|\})\s*([^{}]+?)\s*\{/g)].map(m => m[1].trim());
-  // 15 → 14: the light-theme ground moved out to the shared --float-* tokens.
-  ok(sels.length === 14, 'the overlay block declares exactly 14 rules (got ' + sels.length + ')');
+  // 15 → 14 when the light-theme ground moved out to shared --float-* tokens; the
+  // scoped Reset-navigation placement rule brings the block back to 15.
+  ok(sels.length === 15, 'the overlay block declares exactly 15 rules (got ' + sels.length + ')');
   ok(sels.every(s => s.indexOf('#navdlg') >= 0),
      'every one of them names #navdlg — nothing leaks onto the page underneath');
   // The blur + translucency ARE still there, they are just no longer this block's to
@@ -708,6 +709,9 @@ const css = html.split('<style>')[1].split('</style>')[0];
   ok(/addEventListener\('mousedown', e => \{ if \(e\.target === navdlg\) closeNavDlg\(\); \}\)/.test(open),
      'a click OUTSIDE closes it — on mousedown-on-the-dialog-itself, which is the backdrop');
   ok(/nv-x" onclick="closeNavDlg\(\)"/.test(html), '…and there is a ✕');
+  ok(/class="cap-btn nv-reset" onclick="navReset\(\)"/.test(html)
+     && />Reset navigation<\/button>/.test(html),
+     'the reorderable navigation surface exposes a separately scoped Reset navigation action');
 
   // -- drag, live
   const drag = html.slice(html.indexOf('/* ---------- live drag reorder'),
@@ -749,6 +753,8 @@ const css = html.split('<style>')[1].split('</style>')[0];
   ok(!/Save|Apply/.test(rend), '…and the overlay renders no Save/Apply button at all');
   ok(/function navToggle\(bar, id, el\)[\s\S]{0,260}navApply\(next\)/.test(html),
      'a switch writes through the same path');
+  ok(/function navReset\(\) \{[\s\S]{0,420}return navApply\(navDefaultModel\(\)\);/.test(html),
+     'Reset navigation uses the same validate/save/rollback transaction as every row edit');
   ok(/if \(navRowFixed\(bar, id\)\) \{ if \(el\) el\.checked = true; return; \}/.test(html),
      '…and a fixed entry cannot be switched off even by calling the handler directly');
   ok(/id="nav-err"/.test(html), 'there is somewhere for a refusal to appear, inside the overlay');

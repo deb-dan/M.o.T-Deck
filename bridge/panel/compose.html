@@ -672,6 +672,8 @@
          lives on the hint's hover instead of standing in the bar. -->
     <span class="caps" id="tophint"
           title="drag a panel's label bar to rearrange · drag SETTINGS to either edge">drag panels to rearrange</span>
+    <button type="button" class="btn press" id="reset-layout"
+            title="Restore the original panel order, return Settings to the left, and empty its spill slot">Reset layout</button>
     <select id="look" aria-label="Which Music surface"
             title="Music Studio is this page · Music Classic is the original Music view">
       <option value="studio" selected>Music Studio</option>
@@ -2070,6 +2072,11 @@ function toast(msg, bad) {
    container would make the block vanish. */
 const LAYOUT_KEY = 'compose-layout-v1';
 const CONTAINERS = ['blocks', 'spill'];   /* the dock strip is reserved, never a target */
+/* The authored order is data, not an inference from whichever DOM order happens to be
+   present when Reset is pressed. A user may have moved every block into another slot;
+   this frozen list is the exact fresh-install arrangement in the markup above. */
+const DEFAULT_BLOCKS = ['wave', 'engines', 'ledger', 'queue', 'structure', 'reuse',
+                        'library', 'disk'];
 function readLayout() {
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
@@ -2109,6 +2116,22 @@ function applyLayout() {
     ? spill.querySelectorAll(':scope > .block').length : 0;
   document.body.classList.toggle('shrunk', !!L.shrunk || parked > 0);
   syncShrinkLabel();
+}
+function resetLayout() {
+  const grid = $('blocks');
+  if (!grid || !grid.appendChild) return;
+  const moving = [$('scol'), $('work')].concat(DEFAULT_BLOCKS.map(key => $(key))).filter(Boolean);
+  flip(moving, () => {
+    /* appendChild MOVES an existing node, so this also empties #spill without cloning,
+       deleting, or reconstructing a panel (and therefore without losing panel state). */
+    DEFAULT_BLOCKS.forEach(key => { const block = $(key); if (block) grid.appendChild(block); });
+    document.body.classList.remove('dock-right', 'shrunk');
+    document.body.classList.add('dock-left');
+  }, 280);
+  try { localStorage.removeItem(LAYOUT_KEY); } catch (e) { /* private mode */ }
+  syncShrinkLabel();
+  toast('Layout restored.');
+  setTimeout(paintHero, 300);
 }
 /* A restored shrunk pane whose button still offered to "Shrink to half height" was a
    control lying about its own state — small, and exactly the class this page bans. */
@@ -2231,6 +2254,8 @@ function wireWorkbench() {
     dock(e.clientX < window.innerWidth / 2 ? 'left' : 'right');
   });
   const side = $('side'), shrink = $('shrink');
+  const reset = $('reset-layout');
+  if (reset && reset.addEventListener) reset.addEventListener('click', resetLayout);
   if (side && side.addEventListener) side.addEventListener('click', () =>
     dock(document.body.classList.contains('dock-right') ? 'left' : 'right'));
   if (shrink && shrink.addEventListener) shrink.addEventListener('click', function () {

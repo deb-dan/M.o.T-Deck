@@ -1767,7 +1767,8 @@
   #navdlg::backdrop { background:rgba(5,4,10,.3); backdrop-filter:blur(2px); }
   #navdlg .nv-head { display:flex; align-items:baseline; gap:12px; padding:17px 20px 4px; }
   #navdlg h3 { margin:0; font-size:20px; }
-  #navdlg .nv-x { margin-left:auto; cursor:pointer; color:var(--faint); font:13px var(--mono);
+  #navdlg .nv-reset { margin-left:auto; }
+  #navdlg .nv-x { margin-left:0; cursor:pointer; color:var(--faint); font:13px var(--mono);
                   padding:2px 7px; border-radius:6px; }
   #navdlg .nv-x:hover { color:var(--cream); background:var(--card); }
   #navdlg .nv-body { padding:0 16px 16px; max-height:calc(80vh - 66px); overflow-y:auto; }
@@ -2713,6 +2714,8 @@
 <dialog id="navdlg" class="float-surface">
   <div class="nv-head">
     <h3>Customize navigation</h3>
+    <button class="cap-btn nv-reset" onclick="navReset()"
+            title="Restore the default sidebar, pinned tabs, and recent-tab window">Reset navigation</button>
     <span class="nv-x" onclick="closeNavDlg()" title="Close" aria-label="Close">✕</span>
   </div>
   <div class="nv-body" id="nv-body"></div>
@@ -5932,6 +5935,12 @@ function navToggle(bar, id, el) {
   if (!r) return;
   r.pinned = !r.pinned;
   navApply(next);
+}
+function navReset() {
+  /* Same validated, optimistic, rollback-capable path as every individual navigation
+     edit. This resets navigation only: no theme, page layout, component, or session key
+     is touched. navDefaultModel() also restores the documented three-slot MRU seed. */
+  return navApply(navDefaultModel());
 }
 
 /* Every edit follows the same steps: apply to a COPY, validate the copy, adopt it

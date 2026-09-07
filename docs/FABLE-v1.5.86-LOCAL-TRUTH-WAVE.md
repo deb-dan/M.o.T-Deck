@@ -136,7 +136,20 @@ intentionally not changed.
   refuses `.DS_Store` and AppleDouble `._*` members. Build success and DMG checksum alone
   are explicitly not release evidence.
 
-## 10. Release acceptance checklist
+## 10. Scoped layout restoration — U156
+
+- Music Studio is the only first-party content page with user-reorderable panels today.
+  Its Reset layout action moves the existing eight panel nodes back into the authored
+  order, returns Settings to the left at full height, empties the spill slot by moving
+  rather than rebuilding nodes, and removes only `compose-layout-v1`.
+- Resize-only dividers in Chat, LOffice and Generate are not called swappable and are not
+  reset by this action. Their widths remain independent preferences.
+- The separate Customize-navigation surface gets a separately named Reset navigation
+  action. It sends the exact current default through the same validation, persisted-save
+  and complete rollback path used by an individual drag or visibility switch; theme,
+  page layouts, components and sessions are outside its authority.
+
+## 11. Release acceptance checklist
 
 - [x] Focused adversarial suites for every implementation slice.
 - [x] U7 real `.docx` ribbon action and visible result; exact temporary file removed.
