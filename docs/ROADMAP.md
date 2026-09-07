@@ -237,8 +237,10 @@ deterministic per-file SHA-256 ownership manifest. Upgrade cleanup deletes only 
 path+digest from immutable prior release manifests; the live upgrade removed 48 proven
 files on its first pass, preserved every modified/unknown remnant with a reason, and a
 second pass removed zero. A clean mounted release artifact contained no test roots and
-recorded `dirty_files=0`; the distributable is rebuilt after this closure record so its
-seed also carries the normalized roadmap. U152 carries the full release evidence.
+recorded `dirty_files=0`. A mounted-archive audit then caught macOS `tar` synthesizing
+unmanifested AppleDouble metadata; both portable and FAT archive writers now suppress
+that behavior, and the final audit requires the manifest paths and digests to equal the
+archive's regular files exactly. U152 carries the full release evidence.
 
 The immediate queue is now P6 stem separation (the next user-selected product slice),
 then P3 Voice Chat, P5 ComfyUI Video/Audio, S4 fit-engine spawn gates, S7's Wan bf16

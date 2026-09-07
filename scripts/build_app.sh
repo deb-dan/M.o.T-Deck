@@ -108,7 +108,10 @@ if [[ $PORTABLE -eq 1 ]]; then
   SEED="$APP/Contents/Resources/motdeck-seed.tar.gz"
   # vendor/ is intentionally excluded — firstrun's bootstrap re-adds the submodules
   # from their PUBLIC upstreams (motdeck.yaml repo/pin), so no private-repo auth is needed.
-  tar czf "$SEED" -C "$ROOT" \
+  # macOS bsdtar otherwise synthesizes AppleDouble `._*` entries for extended
+  # attributes. Those bytes do not exist in the staged tree, cannot be owned by the
+  # seed manifest, and would make archive contents exceed the manifest's authority.
+  COPYFILE_DISABLE=1 tar czf "$SEED" -C "$ROOT" \
     --exclude='./.git' --exclude='./.gitmodules' --exclude='./vendor' \
     --exclude='./data' --exclude='./dist' \
     --exclude='./bridge/tests' --exclude='./bridge/contract_tests' \
@@ -274,7 +277,10 @@ if [[ $FAT -eq 1 ]]; then
   # sanity: web_dist made it into the seed
   [[ -f "$STAGE/vendor/hermes/hermes_cli/web_dist/index.html" ]] \
     || { echo "ERROR (fat): Hermes web_dist not present in the staged seed."; exit 1; }
-  tar czf "$RES/motdeck-seed-fat.tar.gz" -C "$STAGE" .
+  # Keep the archive byte-for-byte inside the manifest's authority. macOS bsdtar can
+  # synthesize AppleDouble `._*` members from xattrs unless COPYFILE_DISABLE is set;
+  # those members are not files in STAGE and therefore are intentionally not owned.
+  COPYFILE_DISABLE=1 tar czf "$RES/motdeck-seed-fat.tar.gz" -C "$STAGE" .
   rm -rf "$STAGE"
   echo "[motdeck] seed: $RES/motdeck-seed-fat.tar.gz ($(du -h "$RES/motdeck-seed-fat.tar.gz" | cut -f1))"
 

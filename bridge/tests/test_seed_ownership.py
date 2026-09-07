@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "scripts" / "seed_ownership.py"
 GENERATOR = ROOT / "scripts" / "generate_legacy_seed_manifest.py"
+BUILD = (ROOT / "scripts" / "build_app.sh").read_text(encoding="utf-8")
 
 
 def sha(data: bytes) -> str:
@@ -65,3 +66,9 @@ def test_repository_legacy_manifest_is_valid_and_test_scoped():
                                capture_output=True, check=False)
     assert generated.returncode == 0, generated.stderr
     assert json.loads(generated.stdout) == payload
+
+
+def test_portable_and_fat_archives_cannot_synthesize_unowned_appledouble_files():
+    assert BUILD.count("COPYFILE_DISABLE=1 tar czf") == 2
+    assert 'COPYFILE_DISABLE=1 tar czf "$SEED"' in BUILD
+    assert 'COPYFILE_DISABLE=1 tar czf "$RES/motdeck-seed-fat.tar.gz"' in BUILD
