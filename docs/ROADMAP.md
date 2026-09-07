@@ -7,12 +7,12 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current version: **v1.5.85** (see `VERSION`). Written 2026-09-07.
+Current release candidate: **v1.5.86** (see `VERSION`). Written 2026-09-07.
 
 <!-- current-status:start
-in-progress:
+in-progress: S5 S6 S10 S13 S17 S18 S19 S20 S26 S27 S30 A3 A5 U7 U33 U36 U39 U41 U65 U153
 next: P6 P3 P5 S4 S7 U3
-later: S5 S6 S10 S13 S17 S18 S19 S20 S26 S27 S30 A3 A5 A6 U2 U7 U9 U14 U26 U28 U29 U33 U34 U36 U39 U41 U42 U44 U45 U47 U57 U58 U65 U67 U70
+later: A6 U2 U9 U14 U26 U28 U29 U34 U42 U44 U45 U47 U57 U58 U67 U70
 someday: S2 U4 U5 U6 U8 U43 U46 U68
 blocked-later: P1 U1 U72 U91 U139 U142 U144
 blocked-someday: P2
@@ -243,7 +243,18 @@ unmanifested AppleDouble metadata; both portable and FAT archive writers now sup
 that behavior, and the final audit requires the manifest paths and digests to equal the
 archive's regular files exactly. U152 carries the full release evidence.
 
-The immediate queue is now P6 stem separation (the next user-selected product slice),
+v1.5.86 is an active release candidate, not yet a shipped claim. It implements the
+measured-memory/advisory preference layer; restores theme, log, graph, attachment and
+per-turn search affordances; makes Music updates event-led; adds exact child adoption
+and reaping; gives LOffice visible Stop and shorter checkpoints; updates a provably
+managed live Odysseus picker; expands stock ComfyUI subgraphs; and distinguishes
+authoritative Hugging Face LFS digests from honest size-only downloads. The detailed
+premises, adversarial boundaries and release checklist are in
+`docs/FABLE-v1.5.86-LOCAL-TRUTH-WAVE.md`. U153 may close only after the full gate,
+installed affected-entry journeys, live-state conservation and clean FAT evidence pass.
+
+After the active v1.5.86 candidate is either shipped or withdrawn, the immediate queue
+is P6 stem separation (the next user-selected product slice),
 then P3 Voice Chat, P5 ComfyUI Video/Audio, S4 fit-engine spawn gates, S7's Wan bf16
 colour A/B, and U3's still-unconfirmed token revocation. P4 is closed: Goose CLI and
 Goose UI already ship. The machine-readable current-status block above is checked

@@ -5,6 +5,16 @@
 our integration. We are back on `v2026.8.13` (app v0.20.1) and everything works.
 **Do not retry above `v2026.8.16` until upstream fixes them** (see *The retry plan*).
 
+> **2026-09-07 current-state addendum:** the production pin has since moved safely to
+> `v2026.8.16` / app `0.20.2` / `mcp 1.28.1`; this document's “back on
+> v2026.8.13” sentences are the historical rollback state, not today's pin. The retained
+> `data/hermes-venv.rolledforward` still contains the attempted 0.20.6 / mcp 2.0.0
+> packages, but its `bin/python3` symlink points at the retired pre-identity-migration
+> live root and is not runnable as-is. A future retry must repair/rebuild and revalidate
+> it before use. `data/hermes-venv.pre-v2026.8.16-codex` has the same stale launcher
+> boundary and is retained separately; neither directory is deletion-authorized by this
+> addendum.
+
 This file exists so the next sitting costs an hour, not a day. Everything that was
 measured is written down, including the large amount that PASSED.
 
