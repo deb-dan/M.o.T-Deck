@@ -584,6 +584,13 @@ check("…and survives a quota, because a full localStorage would cost the PROVI
       "attempt < 3" in OO and "aiChatDrops" in OO)
 check("a hard quit is covered too — the conversation is checkpointed on a timer while "
       "the chat is open", "AI_CHAT_AUTOSAVE_MS" in OO and "setInterval" in OO)
+check("…and the residual window is five seconds, not the old twenty-second gap",
+      "const AI_CHAT_AUTOSAVE_MS = 5000;" in OO
+      and "every\\n'\n             + '  5 seconds" in PAGE)
+check("…while every asynchronous tick remains serialised through the same handover "
+      "queue as document swaps",
+      "aiChatQueue = aiChatQueue.then" in OO
+      and "aiChatHandover(DOC, '').catch" in OO)
 check("…and only while a chat window actually exists (no idle churn)",
       "!aiChatWindow()) return" in OO)
 check("the frame walk is depth-bounded and a cross-origin frame is skipped, never fatal",

@@ -694,6 +694,7 @@
   .aim.user .txt{background:var(--card);border:1px solid var(--line);border-radius:8px;
                  padding:7px 9px}
   .aim .err{color:var(--bad);font-size:12px;white-space:pre-wrap}
+  .aim .stopnote{color:var(--dim);font-size:11px;white-space:pre-wrap}
   /* a fenced block in the reply: the thing you came for, with the one action that is
      safe — copy. NOT "apply to the sheet". */
   .aicode{margin:6px 0 0;background:var(--card);border:1px solid var(--line2);
@@ -3440,7 +3441,7 @@ async function helpAbout() {
              + '  stopping writes NOTHING into the document, never half an answer.\n'
              + '  The Chatbot conversation is kept per file: switch away and back and\n'
              + '  it is still there. It is checkpointed on every file switch and every\n'
-             + '  20 seconds, so a hard quit can still cost the last few messages.'
+             + '  5 seconds, so a hard quit can still cost the last few messages.'
            : '  Status: OFF — ' + (ai.gate || 'unavailable') + '\n'
              + '  The tab is left out of the ribbon rather than shown with nothing\n'
              + '  behind it. The AI panel on the right is unaffected.\n'
@@ -6140,6 +6141,10 @@ let aiBusy = false, aiSel = '', aiModel = '', aiCtxOn = true;
 // the same dead end wearing a different hat. aiBusyBlock() answers it in the panel's
 // own voice (aiStatus, not the document message strip: it is the panel's action).
 let aiBusyAt = 0;
+// One exact in-flight reader. This is deliberately separate from `aiBusy`: the latch
+// answers "may another turn start?", while this record owns the only AbortController
+// and, for Agent, the exact Hermes session that may be interrupted upstream.
+let aiRun = null;
 function aiBusyBlock() {
   if (agentHistoryLoading) {
     aiStatus('The saved Agent transcript is still being restored…');
@@ -6151,6 +6156,67 @@ function aiBusyBlock() {
   aiStatus('Still working on the last question' + (secs >= 3 ? ' (' + secs + 's)' : '')
            + ' — this one goes next.');
   return true;
+}
+
+function aiStopText(lane, acknowledged, error) {
+  if (lane !== LANE_AGENT) {
+    return 'Stopped by you. Partial output is kept. The bridge connection was '
+         + 'cancelled; the local runner may take a moment to release the request.';
+  }
+  if (acknowledged) {
+    return 'Stopped by you. Partial output is kept, and Hermes confirmed the interruption.';
+  }
+  const why = String(error || '').trim();
+  return 'Stopped listening, but Hermes did not confirm the interruption'
+       + (why ? ': ' + why : ' because no live session id had arrived yet')
+       + '. Check the Hermes lane before starting another Agent turn.';
+}
+
+function aiStopNote(run, text) {
+  if (!run || !run.turn || !run.turn.wrap) return;
+  if (!run.note) {
+    run.note = document.createElement('div');
+    run.note.className = 'stopnote';
+    run.turn.wrap.appendChild(run.note);
+  }
+  run.note.textContent = text;
+}
+
+async function aiStopActive() {
+  const run = aiRun;
+  if (!run || run.stopRequested) return;
+  run.stopRequested = true;
+  bx('ai-stop', run.lane + (run.sid ? ' sid=' + run.sid : ' sid=pending'));
+  aiStopNote(run, run.lane === LANE_AGENT ? 'Stopping Hermes…' : aiStopText(run.lane));
+  // Abort the page reader immediately. Agent's bridge-owned relay is deliberately
+  // detached from this response, so its independent session.interrupt request remains
+  // alive. Quick's legacy response closes here and the bridge tears down its runner
+  // stream; no unsupported claim is made that llama.cpp acknowledges cancellation.
+  run.controller.abort();
+  aiStatus('Stopping…');
+  aiPaint(false);
+  if (run.lane !== LANE_AGENT) return;
+  run.stopPromise = (async function () {
+    const sid = String(run.sid || '').trim();
+    if (!sid) {
+      aiStopNote(run, aiStopText(run.lane, false, ''));
+      return false;
+    }
+    try {
+      const r = await fetch('/api/hermes/stop', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sid }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok !== true) throw new Error(j.error || ('the bridge answered ' + r.status));
+      aiStopNote(run, aiStopText(run.lane, true, ''));
+      return true;
+    } catch (e) {
+      aiStopNote(run, aiStopText(run.lane, false, String((e && e.message) || e)));
+      return false;
+    }
+  })();
+  return run.stopPromise;
 }
 
 function a1(r, c) {
@@ -6214,7 +6280,11 @@ function aiPaint(recount) {
   pill.className = 'pill' + (aiModel ? ' on' : '');
   pill.title = aiModel ? ('the live model on MOT Deck runner: ' + aiModel)
                        : 'Load a model in Models (MOT Deck) to use this';
-  el('ai-send').disabled = aiBusy || agentHistoryLoading || !aiModel;
+  const send = el('ai-send');
+  send.disabled = agentHistoryLoading || (!aiBusy && !aiModel)
+               || (aiBusy && !!(aiRun && aiRun.stopRequested));
+  send.textContent = aiBusy ? ((aiRun && aiRun.stopRequested) ? 'Stopping…' : 'Stop') : 'Ask';
+  send.title = aiBusy ? 'Stop this in-flight answer; partial output is kept' : '';
   el('ai-in').disabled = aiBusy || agentHistoryLoading;
   el('ai-ctx').classList.toggle('on', aiCtxOn);
   el('ai-ctx').title = aiCtxOn
@@ -7977,12 +8047,17 @@ async function aiSend() {
   aiAdd('user', q, shown);
   aiBusy = true; aiBusyAt = Date.now(); aiStatus('thinking…'); aiPaint();
   const turn = aiAdd('assistant', '', null);
+  const run = { lane: LANE_QUICK, controller: new AbortController(),
+                stopRequested: false, turn: turn, note: null, sid: '' };
+  aiRun = run;
+  aiPaint(false);
   let out = '', think = '', got = false, failed = '';
   try {
     const r = await fetch('/api/chat/direct', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       // session:'' — no history is loaded and nothing is persisted (see the block header)
       body: JSON.stringify({ session: '', message: message }),
+      signal: run.controller.signal,
     });
     if (!r.ok || !r.body) throw new Error('the bridge answered ' + r.status);
     const rd = r.body.getReader(), dec = new TextDecoder();
@@ -8010,10 +8085,16 @@ async function aiSend() {
       }
     }
   } catch (e) {
-    failed = String((e && e.message) || e);
+    if (!run.stopRequested) failed = String((e && e.message) || e);
   }
+  if (aiRun === run) aiRun = null;
   aiBusy = false; aiBusyAt = 0;
-  if (failed) {
+  if (run.stopRequested) {
+    bx('ai-reply-stop', 'chars=' + out.length + ' thinking=' + think.length);
+    if (out.trim()) aiRenderBody(turn.body.parentNode, out);
+    aiStopNote(run, aiStopText(run.lane));
+    aiStatus('Stopped by you; partial output is kept.');
+  } else if (failed) {
     bx('ai-reply-fail', failed.slice(0, 160));
     const d = document.createElement('div');
     d.className = 'err';
@@ -8537,12 +8618,18 @@ async function agentSend() {
   // the whole address, and reading a global at click time would let a card answer for
   // a session it never belonged to.
   const held = { sid: agentSid };
+  const run = { lane: LANE_AGENT, controller: new AbortController(),
+                stopRequested: false, turn: turn, note: null, sid: held.sid };
+  held.run = run;
+  aiRun = run;
+  aiPaint(false);
   let out = '', think = '', steps = [], failed = '';
   try {
     const r = await fetch('/api/hermes/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: agentSid || '', message: message,
                              stored_sid: agentStored || '' }),
+      signal: run.controller.signal,
     });
     if (!r.ok || !r.body) throw new Error('the bridge answered ' + r.status);
     const rd = r.body.getReader(), dec = new TextDecoder();
@@ -8568,12 +8655,22 @@ async function agentSend() {
       }
     }
   } catch (e) {
-    failed = String((e && e.message) || e);
+    if (!run.stopRequested) failed = String((e && e.message) || e);
   }
+  // A detached Hermes relay can outlive this response. When Stop was requested, wait
+  // for that separate interrupt acknowledgement before checking staged changes or
+  // naming the session; otherwise those follow-up reads can race the still-running turn.
+  if (run.stopPromise) await run.stopPromise;
+  if (aiRun === run) aiRun = null;
   aiBusy = false; aiBusyAt = 0;
   // Every card left open when the turn ends stops pretending it is answerable.
   agentExpire(turn.wrap);
-  if (failed) {
+  if (run.stopRequested) {
+    bx('agent-stop', 'chars=' + out.length + ' steps=' + steps.length);
+    if (out.trim()) aiRenderBody(turn.body.parentNode, out);
+    if (!run.note) aiStopNote(run, aiStopText(run.lane, false, ''));
+    aiStatus('Stopped by you; partial output is kept.');
+  } else if (failed) {
     bx('agent-fail', failed.slice(0, 160));
     const d = document.createElement('div');
     d.className = 'err';
@@ -8606,7 +8703,7 @@ async function agentSend() {
     const d = actDet('tools used · ' + steps.length, steps.join('\n'));
     turn.wrap.appendChild(d);
   }
-  aiStatus('');
+  if (!run.stopRequested) aiStatus('');
   // ⚠️ THE CARD IS DRAWN FROM THE BRIDGE'S STORE, NOT FROM THE REPLY, and it is drawn
   // whether the turn "succeeded" or not — a model that staged a change and then errored
   // out mid-sentence still staged it, and Debi is owed the card.
@@ -8642,6 +8739,7 @@ function agentFrame(j, turn, held, steps) {
     if (nextStored && nextStored !== agentStored) agentNamed = false;
     held.sid = String((j && j.id) || '');
     agentSid = held.sid;
+    if (held.run) held.run.sid = held.sid;
     agentStored = nextStored;
     try { localStorage.setItem(LS_AGENT_SID, agentSid);
           localStorage.setItem(LS_AGENT_STORED, agentStored); } catch (e) { /* private */ }
@@ -9802,7 +9900,7 @@ el('lane-agent').onclick = () => {
   if (!laneSet(LANE_AGENT, 'click')) { aiStatus(agentGate(agentEnv).why, true); return; }
   aiPaint();
 };
-el('ai-send').onclick = aiSend;
+el('ai-send').onclick = () => { if (aiBusy) aiStopActive(); else aiSend(); };
 document.querySelectorAll('.ai-help').forEach(b => { b.onclick = helpAI; });
 // Per-document, in memory, on purpose — see the note in showWorkbook(). There is no
 // localStorage key here any more: a sticky global "off" is a bug that outlives the

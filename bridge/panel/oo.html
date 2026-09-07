@@ -1666,11 +1666,14 @@ function aiChatArm(name) {
 // above is ASYNC (it waits on a postMessage round trip), so it cannot be completed
 // from `pagehide`. So the conversation is also checkpointed on a slow timer whenever a
 // chat window is actually open. The cost is one postMessage and one small
-// localStorage write every 20s, and ONLY while the user has the Chatbot open; the
+// localStorage write every 5s, and ONLY while the user has the Chatbot open; the
 // benefit is that "I typed a question, then quit" is no longer a silent loss.
-// The residual limit — up to 20s of chat can still be lost to a hard quit — is stated
+// The residual limit — up to 5s of chat can still be lost to a hard quit — is stated
 // in LOffice's Help → About rather than hidden.
-const AI_CHAT_AUTOSAVE_MS = 20000;
+// aiChatHandover serialises every flush in aiChatQueue, so a slow postMessage reply
+// cannot overlap or reorder checkpoints. A tick that arrives while one is pending is
+// queued, not dropped; document swaps use the same queue.
+const AI_CHAT_AUTOSAVE_MS = 5000;
 setInterval(function () {
   if (!aiSeeded || !DOC || !aiChatWindow()) return;
   aiChatHandover(DOC, '').catch(() => { /* never fatal */ });

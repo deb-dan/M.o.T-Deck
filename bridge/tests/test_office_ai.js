@@ -332,9 +332,11 @@ check('it reads the runner off the status the panel already polls',
 check('with no model loaded it SAYS so and names where to fix it',
       /No model is loaded/.test(grab('aiRefreshModel'))
       && /Models/.test(grab('aiRefreshModel')));
-check('…and Ask is disabled rather than failing on click',
-      /el\('ai-send'\)\.disabled = aiBusy \|\| agentHistoryLoading \|\| !aiModel/
-        .test(grab('aiPaint')));
+check('…and Ask is disabled rather than failing on click, while an in-flight turn '
+      + 'keeps that same control available as Stop',
+      /!aiBusy && !aiModel/.test(grab('aiPaint'))
+      && /aiBusy \? \(\(aiRun/.test(grab('aiPaint'))
+      && /'Stopping…' : 'Stop'/.test(grab('aiPaint')));
 check('a status fetch that throws leaves the model UNKNOWN rather than claiming one',
       /catch[\s\S]{0,200}aiModel = ''/.test(grab('aiRefreshModel')));
 
@@ -554,11 +556,11 @@ check('every URL the page calls is one of the endpoints that already existed',
                        // editor page itself is /oo-edit, not an /api/ URL — this page
                        // does not talk to the editor, it hands the file over to it.
                        "'/api/oo/status'",
-                       // SLICE S2 (loffice-2026-08-27e) — the Agent lane. FIVE URLs,
+                       // SLICE S2 (loffice-2026-08-27e) — the Agent lane. Shared URLs,
                        // and not one of them is new to MOT Deck: three are the
                        // Hermes lane the main panel already drives, and two are the
                        // office surfaces slice S1 shipped for exactly this page.
-                       "'/api/hermes/chat'", "'/api/hermes/approve'",
+                       "'/api/hermes/chat'", "'/api/hermes/approve'", "'/api/hermes/stop'",
                        "'/api/hermes/session/'", "'/api/office/mcp'",
                        "'/api/office/heartbeat'", "'/api/models'",
                        /* THE CHANGESET LANE (loffice-2026-08-28b). ONE read and three
@@ -2153,6 +2155,32 @@ check('…and the main panel really does send that body, so this is a REUSE and 
       && /stored_sid: chatPane\.hermesStoredSid \|\| ''/.test(panel));
 check('…reading the same `data: ` frames and the same [DONE]',
       /startsWith\('data: '\)/.test(asend) && /\[DONE\]/.test(asend));
+check('U41: both LOffice readers have one exact AbortController and pass its signal '
+      + 'to fetch', /new AbortController\(\)/.test(send) && /signal: run\.controller\.signal/.test(send)
+      && /new AbortController\(\)/.test(asend) && /signal: run\.controller\.signal/.test(asend));
+check('U41: clicking the in-flight Send control calls Stop, while keyboard send still '
+      + 'runs through the speaking busy guard',
+      /if \(aiBusy\) aiStopActive\(\); else aiSend\(\);/.test(code)
+      && /if \(ev\.key === 'Enter'[\s\S]*aiSend\(\)/.test(code));
+{
+  const LANE_AGENT = 'agent';
+  eval(grab('aiStopText'));
+  check('U41: Quick cancellation never claims the runner acknowledged a stop',
+        /may take a moment to release/.test(aiStopText('quick', false, '')));
+  check('U41: Agent distinguishes confirmed interruption from a lost/absent ack',
+        /confirmed the interruption/.test(aiStopText('agent', true, ''))
+        && /did not confirm/.test(aiStopText('agent', false, 'gateway unavailable'))
+        && /gateway unavailable/.test(aiStopText('agent', false, 'gateway unavailable')));
+}
+const stopActive = grab('aiStopActive');
+check('U41: Agent Stop uses the established session-scoped Hermes interrupt route; '
+      + 'Quick does not invent a runner stop API',
+      /fetch\('\/api\/hermes\/stop'/.test(stopActive)
+      && /session_id: sid/.test(stopActive)
+      && !/models\/|components\/runner\/stop/.test(stopActive));
+check('U41: intentional AbortError is not repainted as a transport failure in either lane',
+      /if \(!run\.stopRequested\) failed =/.test(send)
+      && /if \(!run\.stopRequested\) failed =/.test(asend));
 check('the session is created LAZILY — no session id on the first message, and the '
       + 'bridge mints one; the page never calls session/new',
       /agentSid \|\| ''/.test(asend) && code.indexOf("'/api/hermes/session/new'") < 0);
