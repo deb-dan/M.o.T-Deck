@@ -240,6 +240,7 @@ _LANES = (
     # None of the three has a pre-split position, so all three go LAST in both lists.
     "core.memory",
     "core.fit",
+    "core.memoryprefs", "core.runnermeasure",
     "routers.memory",
     # …and the Odysseus VISION SHIM (v1.5.33) by the SAME rule, a fourth time: it is
     # new, it separates no pair of neighbours, and it costs only where
@@ -296,8 +297,7 @@ _LANES = (
     # U106 bridge-lifetime Hermes relay ownership (route-less, appended).
     "core.hermesturn",
     "core.hermesreplay",
-    "core.localsecrets",
-    "core.chatattachments",
+    "core.localsecrets", "core.chatattachments",
 )
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,
 # /docs, /docs/oauth2-redirect, /redoc) plus the /assets mount above. Frozen here so

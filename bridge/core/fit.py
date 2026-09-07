@@ -475,12 +475,17 @@ def budget(freeing_bytes: int = 0) -> dict:
     avail = sysv.get("available_bytes") or 0
     avail = int(avail) + max(0, int(freeing_bytes or 0))
     base = min(ceiling, avail) if (ceiling and avail) else (ceiling or avail)
-    return {"ceiling_bytes": ceiling, "available_bytes": avail,
-            "freeing_bytes": int(freeing_bytes or 0),
-            "budget_bytes": int(base * APPLE_FRACTION),
-            "fraction": APPLE_FRACTION,
-            "pressure": sysv.get("pressure"),
-            "available_pct": sysv.get("available_pct")}
+    raw = {"ceiling_bytes": ceiling, "available_bytes": avail,
+           "freeing_bytes": int(freeing_bytes or 0),
+           "budget_bytes": int(base * APPLE_FRACTION),
+           "fraction": APPLE_FRACTION,
+           "pressure": sysv.get("pressure"),
+           "available_pct": sysv.get("available_pct")}
+    # S6: only Custom headroom changes the arithmetic, and it does so here—the same
+    # budget constructor used by chips, detail, API and load gate.  Quiet/Advise/Early
+    # never touch a number; they decide only when to surface the consent explanation.
+    from .memoryprefs import apply_headroom
+    return apply_headroom(raw)
 
 
 def band(total: int, budget_bytes: int) -> str:

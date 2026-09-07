@@ -9,6 +9,7 @@ Run: python3 bridge/tests/test_audio_search.py   (from repo root)
 """
 import os
 import sys
+import asyncio
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
@@ -269,9 +270,24 @@ check("audio_probe_voices survives junk",
       A.audio_probe_voices(None, None) == [] and A.audio_probe_voices(3, [(1, 2)]) == [])
 
 # ── the query table (the three web-verified facts) ────────────────────────────
-src = _APP_SOURCE
+# Drive the request builder.  The old fence searched the ENTIRE assembled backend for
+# the JSON word "library"; S19 legitimately used that word in a Music SSE event and
+# turned this Audio assertion red without changing one HF request.  An executable
+# observation of the outgoing parameter bags proves the premise rather than a global
+# substring coincidence.
+_sent = []
+_real_hf_json = A._hf_json
+async def _capture_hf(path, params=None):
+    _sent.append((path, dict(params or {})))
+    return []
+A._hf_json = _capture_hf
+try:
+    asyncio.run(A.hf_audio_search(q="kokoro", kind="tts", limit=25))
+finally:
+    A._hf_json = _real_hf_json
 check("`library=` is NEVER sent to the HF API (it is silently ignored)",
-      '"library"' not in src and "'library'" not in src)
+      bool(_sent) and all(path == "/api/models" and "library" not in params
+                          for path, params in _sent))
 check("the TTS lane is the UNION of mlx-audio and mlx (mlx-audio misses Kokoro)",
       [d["filter"] for d in A.AUDIO_SEARCH_QUERIES["tts"]] == ["mlx-audio", "mlx"]
       and all(d["pipeline_tag"] == "text-to-speech"
@@ -286,6 +302,7 @@ check("the kinds the endpoint accepts are exactly the query table's keys",
       set(A.AUDIO_SEARCH_KINDS) == set(A.AUDIO_SEARCH_QUERIES))
 
 # ── wiring (read from source; no server is started) ───────────────────────────
+src = _APP_SOURCE
 for frag in ('@app.get("/api/models/hf/audio")',
              '@app.get("/api/models/hf/audio/probe")',
              "async def hf_audio_search", "async def hf_audio_probe",

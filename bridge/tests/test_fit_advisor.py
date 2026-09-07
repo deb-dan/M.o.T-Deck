@@ -466,8 +466,7 @@ def _our_strings():
     out += [str(v) for v in (F.remote_fit(None, 0, {"budget_bytes": 1})
                              .get("copy") or {}).values() if v]
     # the strings the panel spells itself
-    panel = (ROOT / "bridge" / "panel" / "index.html").read_text()
-    block = panel.split("THE RAM FIT ADVISOR — panel side")[1].split("function modelRowHtml")[0]
+    block = (ROOT / "bridge" / "panel" / "assets" / "fit-advisor.js").read_text()
     out += re.findall(r"'([A-Z][^'\\\\]{12,})'", block)
     out += re.findall(r'"([A-Z][^"\\\\]{12,})"', block)
     return [o.strip() for o in out if o and o.strip()]
@@ -564,13 +563,16 @@ from bridge import appsrc                                          # noqa: E402
 APP = appsrc.APP_SOURCE
 LANES = (ROOT / "bridge" / "app.py").read_text()
 
-for mod in ("core/memory.py", "core/fit.py", "routers/memory.py"):
+for mod in ("core/memory.py", "core/fit.py", "core/memoryprefs.py",
+            "core/runnermeasure.py", "routers/memory.py"):
     check(f"appsrc.FILES carries {mod} (without it every `not in` assertion about it "
           f"passes vacuously)", mod in appsrc.FILES)
-for lane in ("core.memory", "core.fit", "routers.memory"):
+for lane in ("core.memory", "core.fit", "core.memoryprefs", "core.runnermeasure",
+             "routers.memory"):
     check(f"app.py's _LANES imports {lane}", f'"{lane}"' in LANES)
 
-for route in ("/api/memory", "/api/memory/fit", "/api/memory/fits"):
+for route in ("/api/memory", "/api/memory/fit", "/api/memory/fits",
+              "/api/memory/advisor"):
     check(f"{route} is registered", f'@app.get("{route}")' in APP)
 
 check("the switch route no longer walls off an over-budget load",
@@ -582,21 +584,40 @@ check("…and `confirm: true` works on the API, not only in the panel (the lms#4
       "_wants_confirm(_body)" in APP and "def _wants_confirm" in APP)
 check("the aux slot gets the same advisory, and is NOT credited the runner's memory",
       'slot="aux"' in APP and 'slot == "main" and live_up' in APP)
+check("S6 applies one persisted speaking policy to main and aux model loads",
+      'needs_confirmation(_adv.get("verdict"), new_id)' in APP
+      and 'needs_confirmation(\n            _adv.get("verdict"), model)' in APP
+      and "memoryprefs.acknowledge(new_id)" in APP
+      and "_memoryprefs.acknowledge(model)" in APP)
 check("the kernel-panic stop is NOT clearable by `confirm: true` — only by the env "
       "(a consent click answers 'this will be slow', not 'this may panic')",
       re.search(r'_refuse = _adv\.get\("refuse"\)\s*\n\s*if _refuse:', APP) is not None)
 check("a fit advisory that cannot be computed never becomes a refusal",
       "advisory unavailable for" in APP)
 
-PANEL = (ROOT / "bridge" / "panel" / "index.html").read_text()
+PANEL_HTML = (ROOT / "bridge" / "panel" / "index.html").read_text()
+FIT_PANEL = (ROOT / "bridge" / "panel" / "assets" / "fit-advisor.js").read_text()
+PANEL = PANEL_HTML + "\n" + FIT_PANEL
 check("the panel has a memory strip", 'id="mem-strip"' in PANEL)
 check("…a verdict chip placeholder on every installed row", 'fitpill mfit' in PANEL)
 check("…the need-vs-free line in the detail pane", "fitDetailHtml(m.id)" in PANEL)
 check("…the consent panel with a plain, visible Load anyway",
       "fitConsentHtml()" in PANEL and ">Load anyway<" in PANEL)
-check("…which is never gated behind a modifier key", "altKey" not in PANEL.split(
-      "THE RAM FIT ADVISOR — panel side")[1].split("function modelRowHtml")[0])
+check("…which is never gated behind a modifier key", "altKey" not in FIT_PANEL)
 check("…warn-once: an acknowledged model is not re-litigated", "fitAcked" in PANEL)
+check("…and its speaking policy is user-owned without adding a blocking mode",
+      all(word in FIT_PANEL for word in ("Quiet · chips only", "Advise · when over",
+                                         "Advise early · tight or over",
+                                         "Custom headroom", "Load anyway",
+                                         "don't warn again for models I've overridden")))
+check("the extracted fit asset loads synchronously before its first consumer",
+      '<script src="/assets/fit-advisor.js"></script>' in PANEL_HTML
+      and PANEL_HTML.index('/assets/fit-advisor.js') < PANEL_HTML.index('function modelRowHtml')
+      and 'async src="/assets/fit-advisor.js"' not in PANEL_HTML
+      and 'defer src="/assets/fit-advisor.js"' not in PANEL_HTML)
+check("runner allocation and process footprint are named as different truths",
+      "Engine-reported allocation, not footprint" in FIT_PANEL
+      and "process footprint above" in FIT_PANEL)
 check("…the MOT Deck tile", "Memory for a model" in PANEL)
 check("…and the ledger's SSE kind is dispatched", "kind === 'memory'" in PANEL)
 check("the ledger tile does not pin the sampler fast just by existing",
@@ -733,7 +754,8 @@ check("/api/models/hf/fit is registered", '@app.get("/api/models/hf/fit")' in
       (ROOT / "bridge" / "routers" / "hf.py").read_text())
 
 # ---- 7d. THE UX RULING: chip on the row, words on demand, reachable without a mouse
-_P = (ROOT / "bridge" / "panel" / "index.html").read_text()
+_P = ((ROOT / "bridge" / "panel" / "index.html").read_text() + "\n" +
+      (ROOT / "bridge" / "panel" / "assets" / "fit-advisor.js").read_text())
 check("THE ROW CARRIES THE CHIP AND NOTHING ELSE — paintFitChips writes the chip and "
       "binds a tooltip; it no longer prints copy.line into the row",
       "chip.textContent = v.copy.chip" in _P

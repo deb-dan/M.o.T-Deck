@@ -1171,17 +1171,27 @@ async def api_switch_model(req: Request) -> JSONResponse:
                                  "advisory": _adv,
                                  "log": _refuse["reason"] + " " + _refuse["remedy"]},
                                 status_code=409)
-        if _adv.get("verdict") == "over" and not _wants_confirm(_body):
+        from ..core import memoryprefs
+        _confirmed = _wants_confirm(_body)
+        if memoryprefs.needs_confirmation(_adv.get("verdict"), new_id) and not _confirmed:
             _c = _adv.get("copy") or {}
             return JSONResponse({"ok": False, "needs_confirm": True,
                                  "advisory": _adv,
                                  "log": (_c.get("line") or "this may not fit"),
                                  "error": (_c.get("line") or "this may not fit")},
                                 status_code=409)
+        if _confirmed and _adv.get("verdict") in ("over", "tight"):
+            try:
+                memoryprefs.acknowledge(new_id)
+            except (OSError, ValueError) as exc:
+                # Losing the warn-once convenience must not turn an explicitly
+                # confirmed advisory into a refusal to load the model.
+                print(f"[fit] could not remember override for {new_id}: {exc}",
+                      flush=True)
         if _adv.get("verdict") in ("over", "tight"):
             print(f"[fit] {new_id}: {_adv.get('verdict')} — "
                   f"{(_adv.get('copy') or {}).get('line', '')}"
-                  f"{' (user confirmed)' if _wants_confirm(_body) else ''}", flush=True)
+                  f"{' (user confirmed)' if _confirmed else ''}", flush=True)
     hermes_up, ody_up = _running_sync("hermes", c), _running_sync("odysseus", c)
     # set BEFORE the thread: no double-switch race. (Download progress lives in the
     # download manager now — "/" repo ids are rejected above, so no HF fetch here.)

@@ -622,6 +622,15 @@ PYRESOLVE
     ARGS=(--no-context-shift --host 127.0.0.1 --port "$R_PORT" --alias "$R_MODEL"
           --ctx-size "$CTX" --no-cont-batching --cache-ram -1 --fit off
           --model "$MODEL_PATH" --parallel 1)
+    # S5 — llama.cpp emits its exact model/KV/compute/output buffer allocations only
+    # at trace level.  Keep the exact child as `$!` (no parser wrapper or pipe) and let
+    # the bridge parse the latest completed startup segment from runner.log.  A live
+    # prompt-canary walk against b10662 confirmed trace logs sampler/timing metadata,
+    # not prompt text.  Gated against this exact binary's help so an older compatible
+    # backend retains its prior launch behavior instead of failing on an unknown flag.
+    if grep -q -- "--log-verbosity" data/llama-server.help.txt; then
+      ARGS+=(--verbosity 4)
+    fi
     if [[ -n "$MMPROJ_PATH" ]]; then ARGS+=(--mmproj "$MMPROJ_PATH"); fi
     # ── NAMED API KEYS (ledger S32) ────────────────────────────────────────────
     # The generated built-in key above stays the internal key: it is what the

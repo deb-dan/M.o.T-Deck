@@ -22,7 +22,10 @@ from fastapi.responses import JSONResponse
 
 from ..core import fit as _fit
 from ..core import memory as _mem
+from ..core import memoryprefs as _prefs
+from ..core import runnermeasure as _measure
 from ..core.appctx import _voice, app
+from ..core.events import publish
 from ..core.modelid import _live_model_id
 from ..core.procs import _port_alive_sync, _registry_models, cfg
 from .models import _split_audio
@@ -123,6 +126,14 @@ def _entry(mid: str) -> "dict | None":
     return next((m for m in models if m.get("id") == mid), None)
 
 
+def _runner_measurement(live: dict) -> "dict | None":
+    """Current exact allocation sample, never a stale historical row."""
+    if not live.get("up") or not live.get("id"):
+        return None
+    entry = _entry(live["id"])
+    return _measure.capture(entry) if entry is not None else None
+
+
 def _override(req: Request) -> dict:
     q = req.query_params
     out = {}
@@ -157,7 +168,31 @@ def api_memory(req: Request) -> JSONResponse:
     snap["budget"] = _fit.budget()
     _res = int((row or {}).get("footprint_bytes") or 0)
     snap["budget_after_eject"] = _fit.budget(freeing_bytes=_res) if _res else None
+    snap["advisor"] = _prefs.read()
+    snap["runner_allocation"] = _runner_measurement(live)
     return JSONResponse(snap)
+
+
+@app.get("/api/memory/advisor")
+def api_memory_advisor() -> JSONResponse:
+    return JSONResponse({"ok": True, "advisor": _prefs.read()})
+
+
+@app.post("/api/memory/advisor")
+async def api_memory_advisor_set(req: Request) -> JSONResponse:
+    try:
+        body = await req.json()
+        if not isinstance(body, dict):
+            raise ValueError("advisor settings must be an object")
+        patch = body.get("advisor") if isinstance(body.get("advisor"), dict) else body
+        unknown = set(patch) - {"mode", "custom_headroom_gb", "remember_overrides"}
+        if unknown:
+            raise ValueError("unknown advisor setting: " + sorted(unknown)[0])
+        saved = _prefs.update(patch, clear_overrides=patch.get("remember_overrides") is False)
+    except (OSError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    publish("memory", what="advisor", state="changed")
+    return JSONResponse({"ok": True, "advisor": saved})
 
 
 @app.get("/api/memory/fit")
@@ -189,12 +224,14 @@ def api_memory_fit(req: Request) -> JSONResponse:
                                 int((row or {}).get("peak_bytes") or 0))
         got.update(ok=True, id=mid, replaces="", settings=_fit.settings_for(entry),
                    budget=_fit.budget(freeing))
+        got["measurement"] = _runner_measurement(live) or _measure.recorded(mid)
         return JSONResponse(got)
     got = _fit.fit(entry, _override(req), freeing_bytes=freeing, holders=hold,
                    replaces=(live["id"] if (freeing and live["id"] != mid) else ""))
     got["ok"] = True
     got["id"] = mid
     got["replaces"] = live["id"] if (freeing and live["id"] != mid) else ""
+    got["measurement"] = _measure.recorded(mid)
     return JSONResponse(got)
 
 
@@ -211,6 +248,7 @@ def api_memory_fits(req: Request) -> JSONResponse:
     row = _runner_row(snap)
     resident = int((row or {}).get("footprint_bytes") or 0)
     models, _audio = _split_audio(_registry_models())
+    current_measurement = _runner_measurement(live)
     out = {}
     warm = []
     for m in models:
@@ -223,7 +261,8 @@ def api_memory_fits(req: Request) -> JSONResponse:
                                    int((row or {}).get("peak_bytes") or 0))
             out[mid] = {"verdict": "live", "need_bytes": lv["need_bytes"],
                         "gap_bytes": 0, "oracle": False, "copy": lv["copy"],
-                        "settings": _fit.settings_for(m), "refuse": False}
+                        "settings": _fit.settings_for(m), "refuse": False,
+                        "measurement": current_measurement or _measure.recorded(mid)}
             continue
         try:
             # CACHED ORACLE ONLY. This route paints a page; it may not spend 0.3 s per
@@ -244,7 +283,8 @@ def api_memory_fits(req: Request) -> JSONResponse:
                     "gap_bytes": got.get("gap_bytes"),
                     "oracle": got.get("oracle"), "copy": got.get("copy"),
                     "settings": got.get("settings"),
-                    "refuse": bool(got.get("refuse"))}
+                    "refuse": bool(got.get("refuse")),
+                    "measurement": _measure.recorded(mid)}
     if warm:
         _fit.warm_oracle([(p, s) for p, s in warm if p])
     # TWO BUDGETS, BOTH TRUE, AND THE STRIP SAYS SO. Measured live on this machine:
@@ -261,6 +301,8 @@ def api_memory_fits(req: Request) -> JSONResponse:
                                                 if resident else None),
                          "warming": len(warm),
                          "live_model": live["id"],
+                         "advisor": _prefs.read(),
+                         "runner_allocation": current_measurement,
                          "pressure": (snap.get("system") or {}).get("pressure"),
                          "system": snap.get("system"),
                          "components": snap.get("components"),

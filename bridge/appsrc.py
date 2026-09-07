@@ -105,6 +105,8 @@ FILES: tuple[str, ...] = (
     # The RAM fit advisor (v1.5.30), appended by the same rule.
     "core/memory.py",
     "core/fit.py",
+    "core/memoryprefs.py",
+    "core/runnermeasure.py",
     "routers/memory.py",
     # The Odysseus vision shim (v1.5.33), appended by the same rule.
     "routers/odyvision.py",

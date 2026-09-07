@@ -142,11 +142,19 @@ def _aux_start_locked(req: Request) -> JSONResponse:
     # never taken a body; the override exists on every surface either way.
     _confirm = str(req.query_params.get("confirm") or "").lower() in ("1", "true", "yes")
     _adv = _fit_advice(model, slot="aux")
-    if _adv is not None and _adv.get("verdict") == "over" and not _confirm:
+    from ..core import memoryprefs as _memoryprefs
+    if (_adv is not None and _memoryprefs.needs_confirmation(
+            _adv.get("verdict"), model) and not _confirm):
         _c = _adv.get("copy") or {}
         return JSONResponse({"ok": False, "needs_confirm": True, "advisory": _adv,
                              "log": _c.get("line") or "this may not fit"},
                             status_code=409)
+    if _adv is not None and _confirm and _adv.get("verdict") in ("tight", "over"):
+        try:
+            _memoryprefs.acknowledge(model)
+        except (OSError, ValueError) as exc:
+            print(f"[fit] could not remember aux override for {model}: {exc}",
+                  flush=True)
     # Clear the slot, and if we could NOT clear it SAY SO rather than launch a second
     # server onto a held port and let the bind fail into aux.log where nobody looks —
     # a port held by something not provably ours is a refusal by design now (U64).
