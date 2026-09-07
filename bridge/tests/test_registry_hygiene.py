@@ -418,9 +418,13 @@ def test_opencode_is_in_the_fan_out():
         "the switch fan-out must reach OpenCode")
     j = APP.index("def _rescan_fanout")
     fan = APP[j:APP.index("def _rebind_dependents", j)]
-    for who in ("_rebind_opencode", "_rebind_hermes_file", "_rebind_goose",
-                "_rebind_odysseus_offline"):
+    for who in ("_rebind_opencode", "_rebind_hermes_file", "_rebind_goose"):
         assert who in fan, f"the rescan fan-out must reach {who}"
+    ody = APP[APP.index("async def _rebind_odysseus_after_rescan"):]
+    ody = ody[:ody.index("\n\n\ndef ")]
+    assert "_rebind_odysseus_offline" in ody
+    assert '"PATCH", f"/api/model-endpoints/{plan[\'id\']}/models"' in ody, (
+        "a running Odysseus must use its authenticated live model-list operation")
     assert "NO RESTARTS HERE" in fan, (
         "a rescan is a read-the-disk button; killing a live agent session to refresh a "
         "picker would be a worse surprise than a stale list")
@@ -435,9 +439,12 @@ def test_the_fan_out_never_claims_work_it_did_not_do():
     from bridge.appsrc import APP_SOURCE as APP
     fan = APP[APP.index("def _rescan_fanout"):APP.index("def _rebind_dependents")]
     assert "if not present:" in fan and "continue" in fan
-    assert '(ROOT / "vendor" / "odysseus").is_dir()' in fan
-    assert "no dependent apps installed here" in fan, (
-        "and with nothing installed the summary must say so rather than be blank")
+    assert "no file-backed dependent catalogs present" in fan, (
+        "and with no file-backed lane the summary must say so rather than be blank")
+    ody = APP[APP.index("async def _rebind_odysseus_after_rescan"):]
+    ody = ody[:ody.index("\n\n\ndef ")]
+    assert '(ROOT / "vendor" / "odysseus").is_dir()' in ody
+    assert 'return ""' in ody, "an absent Odysseus must still produce no claim"
 
 
 def test_the_opencode_restart_requirement_is_recorded_as_measured():

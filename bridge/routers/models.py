@@ -947,27 +947,13 @@ def _rescan_fanout() -> str:
         said.append(f"{label}: {note}" if note else
                     f"{label}: catalog refreshed ({n} models)" if n >= 0 else
                     f"{label}: catalog refreshed")
-    # Odysseus: the seed wants OFFLINE sqlite access (S28's own note), so it runs only
-    # when Odysseus is not up. A running Odysseus rebinds on its next Restart, and the
-    # deps banner is what says so — the same honest limit the switch fan-out holds.
-    try:
-        ody_up = _port_alive_sync(int(
-            ((cfg().get("components") or {}).get("odysseus") or {}).get("port") or 0))
-    except Exception:                                                # noqa: BLE001
-        ody_up = True
-    # ⚠️ S23 SILENCE FIRST, AND THIS WAS A REAL FINDING IN THIS SLICE'S OWN WALK: with
-    # no Odysseus installed, _rebind_odysseus_offline returns '' — the same value it
-    # returns on SUCCESS — and the summary happily said "Odysseus: picker rebuilt" about
-    # a component that is not on the machine. A claim about work we did not do is the
-    # lie class in miniature. Absence is checked HERE, before anything is claimed.
-    if not (ROOT / "vendor" / "odysseus").is_dir():
-        pass                              # not installed — say nothing at all
-    elif ody_up:
-        said.append("Odysseus: running — its picker rebuilds on its next Restart")
-    else:
-        note = _rebind_odysseus_offline(wire)
-        said.append(f"Odysseus: {note}" if note else "Odysseus: picker rebuilt")
-    return "; ".join(said)[:600] or "no dependent apps installed here"
+    # Odysseus is intentionally absent from this synchronous file fan-out. Its live
+    # picker belongs to its authenticated admin API, while its stopped state belongs to
+    # the offline seeder. ``model_rescan._rebind_odysseus_after_rescan`` chooses between
+    # those two authoritative paths from the ASGI loop and appends the truthful result.
+    # Keeping a network client out of this worker also avoids driving one global
+    # AsyncClient from a second event loop.
+    return "; ".join(said)[:600] or "no file-backed dependent catalogs present"
 
 
 def _rebind_dependents(new_id: str, restart_hermes: bool, restart_ody: bool) -> str:
