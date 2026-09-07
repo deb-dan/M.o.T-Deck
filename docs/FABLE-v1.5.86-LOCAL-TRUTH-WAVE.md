@@ -130,6 +130,11 @@ intentionally not changed.
   generated contents of unproven ownership, plus two protected former-project worktrees.
   One protected tree is dirty and the other carries a commit not on main. None was edited,
   removed, pruned or used as a source.
+- The first clean FAT build was rejected during mounted-archive QA as U155: its separate
+  docs rsync admitted `docs/.DS_Store`, and the seed manifest then treated that Finder
+  metadata as owned. The docs copy now excludes it and the manifest writer independently
+  refuses `.DS_Store` and AppleDouble `._*` members. Build success and DMG checksum alone
+  are explicitly not release evidence.
 
 ## 10. Release acceptance checklist
 

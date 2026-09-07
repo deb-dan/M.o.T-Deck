@@ -245,7 +245,10 @@ if [[ $FAT -eq 1 ]]; then
   # not a release marker. Do not drop it again.
   [[ -f "$STAGE/VERSION" ]] \
     || { echo "ERROR (fat): VERSION did not make it into the seed — the bundle would not name its own release."; exit 1; }
-  [[ -d docs ]]   && rsync -a --exclude='.git' docs "$STAGE/" 2>/dev/null || true
+  # This is a SECOND rsync entry point into the runtime seed. Keep the macOS metadata
+  # exclusion here as well as on the main source copy; otherwise opening docs in Finder
+  # can make a clean Git tree produce a dirty runtime archive.
+  [[ -d docs ]]   && rsync -a --exclude='.git' --exclude='.DS_Store' docs "$STAGE/" 2>/dev/null || true
   [[ -f README.md ]] && cp README.md "$STAGE/" 2>/dev/null || true
   # the pinned llama-server binary + its dylibs
   mkdir -p "$STAGE/data/llamacpp/build"

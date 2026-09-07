@@ -20,6 +20,7 @@ from pathlib import Path, PurePosixPath
 MANIFEST_NAME = "SEED_FILES.json"
 FORMAT = 1
 LEGACY_TEST_PREFIXES = ("bridge/tests/", "bridge/contract_tests/")
+FORBIDDEN_RUNTIME_NAMES = {".DS_Store"}
 
 
 def _safe_rel(value: object) -> str | None:
@@ -67,6 +68,8 @@ def build_manifest(root: Path) -> dict:
     for base, dirs, names in os.walk(root, topdown=True, followlinks=False):
         dirs[:] = sorted(d for d in dirs if not Path(base, d).is_symlink())
         for name in sorted(names):
+            if name in FORBIDDEN_RUNTIME_NAMES or name.startswith("._"):
+                raise ValueError(f"runtime seed contains macOS metadata: {name}")
             path = Path(base, name)
             rel = path.relative_to(root).as_posix()
             if rel == MANIFEST_NAME or path.is_symlink():

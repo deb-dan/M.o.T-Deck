@@ -57,6 +57,20 @@ def test_manifest_records_relative_paths_and_digests():
         assert payload["files"] == {"a.txt": sha(b"a")}
 
 
+def test_manifest_refuses_macos_metadata_instead_of_owning_it():
+    for name in (".DS_Store", "._payload"):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "seed"
+            root.mkdir()
+            (root / name).write_bytes(b"metadata")
+            output = root / "SEED_FILES.json"
+            result = subprocess.run([str(TOOL), "write", str(root), str(output)],
+                                    text=True, capture_output=True, check=False)
+            assert result.returncode == 2
+            assert "runtime seed contains macOS metadata" in result.stderr
+            assert not output.exists()
+
+
 def test_repository_legacy_manifest_is_valid_and_test_scoped():
     payload = json.loads((ROOT / "scripts/seed_manifests/legacy-runtime-tests.json").read_text())
     assert payload["files"]
@@ -72,3 +86,5 @@ def test_portable_and_fat_archives_cannot_synthesize_unowned_appledouble_files()
     assert BUILD.count("COPYFILE_DISABLE=1 tar czf") == 2
     assert 'COPYFILE_DISABLE=1 tar czf "$SEED"' in BUILD
     assert 'COPYFILE_DISABLE=1 tar czf "$RES/motdeck-seed-fat.tar.gz"' in BUILD
+    assert ("rsync -a --exclude='.git' --exclude='.DS_Store' docs "
+            '"$STAGE/"') in BUILD
