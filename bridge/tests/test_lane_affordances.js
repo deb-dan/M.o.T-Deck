@@ -268,9 +268,16 @@ check('the mic, the audio switch and the ⊕ all live in the ONE composer row, s
       && /id="chat-inputrow"[\s\S]{0,6000}id="chat-audiosw"/.test(html));
 
 console.log('\n-- lane-truthfulness fences --');
-check('web search is still a hardcoded allow_web_search:true on the agent lane — '
-      + 'there is no per-turn toggle in the composer yet (queued finding)',
-      /allow_web_search:true/.test(send));
+check('Agent web search is a computed per-turn permission, never a hardcoded grant',
+      /allow_web_search:agentWebForTurn\(chatPane\.mode, chatPane\.agentWeb, capsSnap\)/
+        .test(send)
+      && !/allow_web_search:true/.test(send));
+eval(grab('agentWebForTurn'));
+check('the Agent-only permission cannot leak into Direct Chat or Hermes',
+      agentWebForTurn('agent', true, {features:{web_search:true}}) === true
+      && agentWebForTurn('agent', false, {features:{web_search:true}}) === false
+      && agentWebForTurn('chat', true, null) === false
+      && agentWebForTurn('hermes', true, null) === false);
 eval(grab('capsStripText'));
 const capFixture = {features:{web_search:true, deep_research:false, memory:true},
                     builtin_tools:[{enabled:true},{enabled:false}]};
