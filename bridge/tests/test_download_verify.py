@@ -378,19 +378,20 @@ _rename = _comfy.index("os.replace(part, dest)")
 check("CONTROL: the comfy sibling still verifies size before its rename",
       _comfy.index("if want and got != want:") < _rename)
 # ⚠️ THE SHA GATE IS NOW CONDITIONAL THERE, AND THAT IS THE HONEST SHAPE RATHER THAN A
-# WEAKENING (v1.5.49). The comfy lane gained a second download path: files DISCOVERED
-# through ComfyUI's vendored template registry, for which upstream publishes a URL and
-# NO hash. Those are verified against the size the server declares, and the card says
-# which of the two checks the file got. A CURATED pick still carries its pinned sha256
-# and still cannot be renamed without matching it — that is what this pair asserts:
-# the digest gate exists, it runs before the rename, and the branch that skips it is
-# the one where there is no pin to check.
+# WEAKENING (v1.5.49). The comfy lane has two download paths. Curated files always carry
+# their pinned sha256. Discovered files ask the source adapter for an authoritative
+# digest; Hugging Face LFS can now provide one, while a source with no authoritative
+# content digest remains honestly size-only. The gate is therefore conditional on the
+# exact file row carrying a digest, never on whether the row happened to be curated.
 check("CONTROL: the comfy sibling still verifies sha256 before its rename",
       _comfy.index('if digest != f["sha256"]:') < _rename)
 check("CONTROL: …and it skips that check only where no sha256 is pinned at all "
-      "(the registry-discovered path), never for a curated pick",
+      "or authoritatively discovered, never for a curated pick",
       _comfy.index('if f.get("sha256"):') < _comfy.index('if digest != f["sha256"]:')
-      and '"sha256": None' in _comfy and '"verify": "size + sha256"' in _comfy)
+      and '"sha256": f["sha256"]' in _comfy
+      and '"sha256": digest_known(f["url"])' in _comfy
+      and 'else "size declared by server"' in _comfy
+      and '"verify": "size + sha256"' in _comfy)
 
 if fails:
     print(f"FAIL ({len(fails)}):")

@@ -26,7 +26,15 @@ def _load(name):
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == name)
     mod = ast.Module(body=[fn], type_ignores=[])
-    ns: dict = {}
+    # The production function now performs A3 attachment projection through a
+    # package-relative import.  Source extraction must give Python the same
+    # package identity the function has in bridge.routers.hermes; an empty
+    # globals mapping makes the import machinery raise before any transcript
+    # row is examined and therefore tests the harness, not the product.
+    ns: dict = {
+        "__name__": "bridge.routers._hermes_sessions_extract",
+        "__package__": "bridge.routers",
+    }
     exec(compile(mod, name, "exec"), ns)
     return ns[name]
 
