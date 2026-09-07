@@ -185,6 +185,9 @@ const disp = html.slice(html.indexOf('function sseDispatch(kind)'),
                         html.indexOf('function sseStep(ev)'));
 ok(!/innerHTML|createElement|insertAdjacentHTML/.test(disp),
    'the dispatcher renders NOTHING itself — it only calls poll handlers');
+ok(/kind === 'music'/.test(disp) && /loadMusicStatus\(\)/.test(disp)
+   && /loadMusicLibrary\(\)/.test(disp),
+   'the music handler reuses existing status/library loaders — event payload is never state');
 ok(/sseRun\('status', 120,/.test(disp) && /function sseRun\(key, ms, fn\)/.test(html),
    'bursty emitters are coalesced (starting one component publishes a phase per '
    + 'component in its closure; refresh() is three fetches)');

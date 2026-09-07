@@ -42,6 +42,7 @@ import json
 import math
 import os
 import random
+import secrets
 import shutil
 import signal
 import subprocess
@@ -1915,7 +1916,9 @@ def claim_job(params: dict):
         if _JOB and _JOB.get("state") in ("queued", "running"):
             return None, "a song is already rendering — one at a time"
         _JOB = {
-            "id": f"{int(time.time() * 1000):x}",
+            # Millisecond timestamps collide when one terminal job is replaced in the
+            # same clock tick. IDs are correlation identities, not display dates.
+            "id": secrets.token_hex(12),
             "engine": params["engine"],
             "state": "queued",
             "started": time.time(),
@@ -2067,10 +2070,38 @@ def render_acestep(root, params, workdir, out_path, log_path=None) -> str:
     return out_path
 
 
-def run_job(root, params, job, snapshot="", render=None, log=print):
+def _job_event(callback, state: str, job: dict) -> None:
+    """Best-effort state nudge; the job record remains the source of truth."""
+    if callback is None:
+        return
+    try:
+        callback(str(state), dict(job or {}))
+    except Exception:                                                # noqa: BLE001
+        pass
+
+
+def _transition(job: dict, state: str, **kw) -> dict:
+    """Move only this exact job and return the same atomic state snapshot.
+
+    A terminal state releases the one-render slot.  Capturing the event payload under
+    the same lock prevents a newly claimed render from lending its id to the previous
+    render's delayed terminal nudge.
+    """
+    global _JOB
+    with _JOB_LOCK:
+        if not (_JOB and _JOB.get("id") == (job or {}).get("id")):
+            return {}
+        _JOB.update(kw)
+        _JOB["state"] = state
+        return dict(_JOB)
+
+
+def run_job(root, params, job, snapshot="", render=None, log=print,
+            on_state=None):
     """The job body. Public so tests can drive the state machine without a thread."""
     started = time.time()
-    _set(state="running")
+    state_job = _transition(job, "running")
+    _job_event(on_state, "running", state_job)
     tmp_root = os.path.join(str(root), "data", "tmp")
     try:
         os.makedirs(tmp_root, exist_ok=True)
@@ -2099,7 +2130,8 @@ def run_job(root, params, job, snapshot="", render=None, log=print):
                 json.dump(meta, fh, indent=2)
         except OSError:
             pass                       # the audio is what matters
-        _set(state="done", wall=wall, out=name)
+        state_job = _transition(job, "done", wall=wall, out=name)
+        _job_event(on_state, "done", state_job)
         log(f"[music] render {params['engine']} ok — {name} "
             f"({params['seconds']}s song, {params['steps']} steps, seed {params['seed']}) "
             f"in {wall}s", flush=True)
@@ -2110,17 +2142,21 @@ def run_job(root, params, job, snapshot="", render=None, log=print):
         wall = round(time.time() - started, 1)
         _rm(out_path)
         _rm(sidecar_path(out_path))
-        _set(state="cancelled", wall=wall, error=None, out=None)
+        state_job = _transition(job, "cancelled", wall=wall, error=None, out=None)
+        _job_event(on_state, "cancelled", state_job)
         log(f"[music] render {params['engine']} cancelled after {wall}s "
             f"— partial output removed", flush=True)
     except MusicError as e:
         wall = round(time.time() - started, 1)
-        _set(state="failed", wall=wall, error=str(e)[:STDERR_TAIL])
+        state_job = _transition(job, "failed", wall=wall, error=str(e)[:STDERR_TAIL])
+        _job_event(on_state, "failed", state_job)
         log(f"[music] render {params['engine']} FAILED after {wall}s: "
             f"{str(e)[:400]}", flush=True)
     except Exception as e:                                       # noqa: BLE001
         wall = round(time.time() - started, 1)
-        _set(state="failed", wall=wall, error=f"unexpected: {e}"[:STDERR_TAIL])
+        state_job = _transition(job, "failed",
+                                wall=wall, error=f"unexpected: {e}"[:STDERR_TAIL])
+        _job_event(on_state, "failed", state_job)
         log(f"[music] render {params['engine']} FAILED (unexpected) after {wall}s: {e}",
             flush=True)
     finally:
@@ -2128,13 +2164,15 @@ def run_job(root, params, job, snapshot="", render=None, log=print):
     return current_job()
 
 
-def start_job(root, params, snapshot="", render=None, log=print):
+def start_job(root, params, snapshot="", render=None, log=print, on_state=None):
     """(job, error). Claims the single slot, then renders on a background thread."""
     job, err = claim_job(params)
     if err:
         return None, err
+    _job_event(on_state, "queued", job)
     t = threading.Thread(target=run_job, args=(root, params, job),
-                         kwargs={"snapshot": snapshot, "render": render, "log": log},
+                         kwargs={"snapshot": snapshot, "render": render, "log": log,
+                                 "on_state": on_state},
                          daemon=True)
     t.start()
     return job, None

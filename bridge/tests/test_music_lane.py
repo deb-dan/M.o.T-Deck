@@ -340,6 +340,7 @@ check("job_busy reports the live job", music.job_busy() is True)
 
 with tempfile.TemporaryDirectory() as td:
     seen = {}
+    pushed = []
 
     def fake_ok(root, params, workdir, out_path):
         seen["workdir"] = workdir
@@ -347,7 +348,9 @@ with tempfile.TemporaryDirectory() as td:
         open(out_path, "w").write("RIFF")
         return out_path
 
-    music.run_job(td, P, job, render=fake_ok, log=lambda *a, **k: None)
+    music.run_job(td, P, job, render=fake_ok, log=lambda *a, **k: None,
+                  on_state=lambda state, current: pushed.append(
+                      (state, current.get("state"), current.get("id"))))
     fin = music.current_job()
     check("a completed job is done, timed, and names its output",
           fin["state"] == "done" and fin["out"].endswith(".wav") and fin["wall"] is not None)
@@ -359,6 +362,9 @@ with tempfile.TemporaryDirectory() as td:
           and lib[0]["steps"] == 30 and lib[0]["seconds"] == 60
           and lib[0]["prompt"] == "gritty rock" and lib[0]["wall"] is not None)
     check("the slot is free again once a render finishes", music.job_busy() is False)
+    check("the authoritative job pushes running then terminal nudges",
+          [row[0] for row in pushed] == ["running", "done"]
+          and all(row[0] == row[1] and row[2] == job["id"] for row in pushed))
 
     music.clear_job()
     job2, _ = music.claim_job(P)
@@ -387,6 +393,16 @@ with tempfile.TemporaryDirectory() as td:
           f3["state"] == "failed" and "unexpected" in (f3["error"] or "")
           and music.job_busy() is False)
 
+music.clear_job()
+
+# A terminal transition releases the render slot. If another request claims it before
+# an event callback runs, the old event must still carry the old job's exact snapshot.
+old, _ = music.claim_job(P)
+old_done = music._transition(old, "done", out="old.wav")
+new, _ = music.claim_job(dict(P, prompt="new render"))
+check("terminal event identity cannot borrow a newly claimed job",
+      old_done["id"] == old["id"] and new["id"] != old["id"]
+      and old_done["out"] == "old.wav")
 music.clear_job()
 
 # exit-0-with-no-audio is caught in the ENGINE renderers (run_job trusts whatever
@@ -710,6 +726,10 @@ check("the music module is imported DEFENSIVELY like voice", "_MUSIC_ERR" in APP
 check("/file serves audio with the right MIME", 'media_type="audio/wav"' in APP)
 check("one [music] render line per job reaches the bridge log",
       "[music] render" in APP or "[music] render" in (ROOT / "bridge" / "music.py").read_text())
+check("Music publishes install, job and library changes through the shared event hub",
+      'publish("music", what="install"' in APP
+      and 'publish("music", what="job"' in APP
+      and 'publish("music", what="library"' in APP)
 
 SH = (ROOT / "scripts" / "install_music.sh").read_text()
 check("the installer takes both engines", "minimax) do_minimax" in SH and "acestep) do_acestep" in SH)
@@ -804,6 +824,11 @@ check("THE ONCE-A-SECOND TICKER REPAINTS STATE, it does not rebuild the form",
       "box._sig = sig" in PANEL
       and "musicPaintState(job, running); return;" in PANEL
       and "renderMusicCreate();" in PANEL.split("musicPollT = setInterval")[1][:900])
+check("the first-party Music view consumes music events by refetching existing truth",
+      "kind === 'music'" in PANEL and "loadMusicStatus()" in PANEL
+      and "loadMusicLibrary()" in PANEL)
+check("zero and plural libraries use normal grammar, never 'track(s)'",
+      "track(s)" not in PANEL)
 
 # ══ 9. wiring for v1.1 (warning-with-override, progress, templates, dir, formats) ══
 for route in ('@app.get("/api/music/templates")', '@app.post("/api/music/templates")',

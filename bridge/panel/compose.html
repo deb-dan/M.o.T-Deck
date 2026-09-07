@@ -2031,6 +2031,23 @@ function arm(ms) {
   timer = setTimeout(() => { timer = null; load(); }, ms);
 }
 
+/* S19 — an event is only a nudge to refetch the existing Music truth. The 1s active
+   timer remains the only live engine-log progress reader; 20s idle remains the
+   recovery backstop when EventSource is absent, dead, or has dropped a frame. */
+let musicEvents = null, musicEventRefresh = null;
+function musicEventsBoot() {
+  if (typeof EventSource === 'undefined') return;
+  try {
+    musicEvents = new EventSource('/api/events');
+    musicEvents.onmessage = ev => {
+      let msg = null; try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      if (!msg || (msg.type !== 'music' && !msg.missed)) return;
+      clearTimeout(musicEventRefresh);
+      musicEventRefresh = setTimeout(load, 120);
+    };
+  } catch (e) { musicEvents = null; }
+}
+
 /* Keep routine status in this page-owned toast. Native JavaScript dialogs exist from
    S12 onward, but a blocking alert is still the wrong interaction for this path. */
 let toastTimer = null;
@@ -2514,6 +2531,7 @@ document.addEventListener('click', async (e) => {
 
 applyLayout();
 wireWorkbench();
+musicEventsBoot();
 load();
 </script>
 </body>

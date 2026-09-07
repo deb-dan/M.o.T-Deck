@@ -9,6 +9,7 @@ import time
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from ..core.appctx import PANEL, ROOT, _MUSIC_ERR, _music, app
+from ..core.events import publish
 from ..core.procs import _script, cfg
 from .hf import license_override
 from .models import _budget_bytes, _loaded_models_bytes
@@ -123,6 +124,7 @@ async def music_title(req: Request) -> JSONResponse:
         print(f"[music] title reject {name!r}: {reason}", flush=True)
         return JSONResponse({"ok": False, "error": reason}, status_code=400)
     print(f"[music] titled {name} -> {str(title or '')[:120]!r}", flush=True)
+    publish("music", what="library", state="titled", id=name)
     return JSONResponse({"ok": True, "tracks": _music.library_entries(ROOT)})
 
 
@@ -159,6 +161,8 @@ def _music_install_thread(engine: str) -> None:
         err = f"install crashed: {e}"[:1200]
     with _MUSIC_INSTALL_LOCK:
         _MUSIC_INSTALLING[engine] = {"since": None, "done": True, "error": err}
+    publish("music", what="install", engine=engine,
+            state="failed" if err else "done")
     print(f"[music] install {engine}: {'ok' if not err else 'FAILED'}", flush=True)
 
 
@@ -183,6 +187,7 @@ async def music_install(req: Request) -> JSONResponse:
             return JSONResponse({"ok": False, "error": "that engine is already installing"},
                                 status_code=409)
         _MUSIC_INSTALLING[engine] = {"since": time.time(), "done": False, "error": None}
+    publish("music", what="install", engine=engine, state="starting")
     threading.Thread(target=_music_install_thread, args=(engine,), daemon=True).start()
     print(f"[music] install {engine} started", flush=True)
     return JSONResponse({"ok": True, "installing": True, "engine": engine})
@@ -218,7 +223,11 @@ async def music_generate(req: Request) -> JSONResponse:
     snap = ""
     if params["engine"] == "minimax":
         _ok, snap, _r = _music.minimax_installed(ROOT, _music_pin("music_minimax_pin"))
-    job, err = _music.start_job(ROOT, params, snapshot=snap)
+    def _job_changed(state, current):
+        publish("music", what="job", state=state,
+                id=(current or {}).get("id") or "")
+    job, err = _music.start_job(ROOT, params, snapshot=snap,
+                                on_state=_job_changed)
     if err:
         return JSONResponse({"ok": False, "error": err}, status_code=409)
     print(f"[music] render {params['engine']} start — {params['seconds']}s, "
@@ -237,6 +246,7 @@ async def music_cancel() -> JSONResponse:
     ok, reason = await asyncio.to_thread(_music.cancel_job)
     if not ok:
         return JSONResponse({"ok": False, "error": reason}, status_code=409)
+    publish("music", what="job", state="cancelling")
     return JSONResponse({"ok": True})
 
 
@@ -267,6 +277,7 @@ async def music_template_save(req: Request) -> JSONResponse:
     if err:
         return JSONResponse({"ok": False, "error": err}, status_code=400)
     print(f"[music] template saved: {t['name']}", flush=True)
+    publish("music", what="templates", state="saved", id=t.get("id") or "")
     return JSONResponse({"ok": True, "template": t,
                          "templates": _music.all_templates(ROOT)})
 
@@ -279,6 +290,7 @@ async def music_template_delete(req: Request) -> JSONResponse:
     ok, reason = _music.delete_template(ROOT, tid)
     if not ok:
         return JSONResponse({"ok": False, "error": reason}, status_code=400)
+    publish("music", what="templates", state="deleted", id=tid)
     return JSONResponse({"ok": True, "templates": _music.all_templates(ROOT)})
 
 
@@ -308,6 +320,7 @@ async def music_settings_set(req: Request) -> JSONResponse:
         s.pop("output_dir", None)
         _music.write_settings(ROOT, s)
         print("[music] output dir reset to the default", flush=True)
+        publish("music", what="settings", state="reset")
         return JSONResponse({"ok": True, "output_dir": _music.music_dir(ROOT)})
     path, reason = _music.validate_output_dir(ROOT, want)
     if not path:
@@ -316,6 +329,7 @@ async def music_settings_set(req: Request) -> JSONResponse:
     s["output_dir"] = path
     _music.write_settings(ROOT, s)
     print(f"[music] output dir -> {path}", flush=True)
+    publish("music", what="settings", state="changed")
     return JSONResponse({"ok": True, "output_dir": path})
 
 
@@ -337,6 +351,7 @@ async def music_convert(req: Request) -> JSONResponse:
         print(f"[music] convert {name!r} -> {fmt}: {reason}", flush=True)
         return JSONResponse({"ok": False, "error": reason}, status_code=400)
     print(f"[music] converted {name} -> {made}", flush=True)
+    publish("music", what="library", state="converted", id=made)
     return JSONResponse({"ok": True, "name": made})
 
 
@@ -398,4 +413,5 @@ async def music_delete(req: Request) -> JSONResponse:
         print(f"[music] delete reject {name!r}: {reason}", flush=True)
         return JSONResponse({"ok": False, "error": reason}, status_code=400)
     print(f"[music] deleted {name}", flush=True)
+    publish("music", what="library", state="deleted", id=name)
     return JSONResponse({"ok": True})

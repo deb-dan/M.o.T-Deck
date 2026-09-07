@@ -712,6 +712,12 @@ ok(/arm\(running\(\) \|\| installing\(\) \? 1000 : 20000\)/.test(html),
 ok(/timer = setTimeout\(\(\) => \{ timer = null; load\(\); \}, ms\)/.test(html),
    '28b. the timer clears its own handle when it fires, so the next render re-arms it '
    + '(a page that polls once and then lies about "now" is the worst version of this)');
+ok(/new EventSource\('\/api\/events'\)/.test(html)
+   && /msg\.type !== 'music'/.test(html)
+   && /musicEventRefresh = setTimeout\(load, 120\)/.test(html),
+   '28c. Music events nudge the SAME load() path; no second state/render path was invented');
+ok(/arm\(running\(\) \|\| installing\(\) \? 1000 : 20000\)/.test(html),
+   '28d. push did not delete active progress or dead-stream backstop polling');
 // Comments may NAME alert(); routine feedback remains non-modal even though S12 now
 // gives embedded pages a working native-dialog fallback.
 const codeOnly = html.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/<!--[\s\S]*?-->/g, ' ')

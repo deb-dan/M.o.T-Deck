@@ -2854,6 +2854,12 @@ function sseDispatch(kind){
   if (kind === 'memory') return sseRun('mem', 400, () => {
     try { refreshMemory(); } catch (e) {}
   });
+  if (kind === 'music') return sseRun('music', 180, async () => {
+    const was = musicRunning();
+    await loadMusicStatus();
+    if (was && !musicRunning()) await loadMusicLibrary();
+    else if (!was) await loadMusicLibrary();
+  });
   if (kind === 'component' || kind === 'health' || kind === 'config')
     return sseRun('status', 120, () => { sseStats.refreshes++; refresh(); });
 }
@@ -14925,7 +14931,7 @@ function renderMusic(){
   if (st){
     const inst = musicInstalled();
     st.textContent = inst.length
-      ? `${inst.length} of ${musicEngines().length} engines installed · ${musicLib.length} track(s)`
+      ? `${inst.length} of ${musicEngines().length} engines installed · ${musicLib.length} track${musicLib.length === 1 ? '' : 's'}`
       : 'no engine installed yet';
   }
 }
