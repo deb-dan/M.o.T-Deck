@@ -429,9 +429,15 @@ def stop_owned_component(component: str, port: "int | None" = None,
     return []
 
 
-def write_pidfile(component: str, pid: int) -> None:
-    """Record an actual child handle with a PID-reuse-resistant birth fingerprint."""
-    _ownership.record_child(ROOT, component, int(pid))
+def write_pidfile(component: str, pid: int) -> tuple[int, str]:
+    """Record an actual child handle and return its exact launch identity.
+
+    Existing callers may ignore the return value.  Long-lived direct ``Popen`` callers
+    retain it so their waiter can retire only the same PID + kernel-birth claim after
+    ``wait()`` has reaped the child; re-reading a PID later would reopen the reuse race
+    this module exists to close.
+    """
+    return _ownership.record_child(ROOT, component, int(pid))
 
 
 def _script_tracked(name: str, *args: str, track: str, timeout: int = 1800):

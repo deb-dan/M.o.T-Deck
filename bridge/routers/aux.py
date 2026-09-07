@@ -17,14 +17,54 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 import time
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from ..core.appctx import ROOT, app
+from ..core import ownership as _ownership
 from ..core.modelreg import artifact_probe, is_source_unlisted
 from ..core.procs import NO_PIDFILE_NOTE, _port_alive_sync, cfg, write_pidfile
 from ..core.yamlset import _set_yaml_model
 from .models import _aux_kill, _fit_advice, _reject_if_audio, foreign_runner_gate
+
+
+# U65 — RETAIN THE ACTUAL CHILD HANDLE UNTIL IT HAS BEEN WAITED.
+#
+# The ownership record controls signal authority; this handle controls parent/child
+# lifecycle.  They are deliberately different responsibilities.  Before this waiter,
+# Stop correctly signalled only the PID+birth child we launched, but nobody called
+# wait(2), leaving one zombie per Aux start/stop until the bridge itself exited.
+_AUX_LIFECYCLE_LOCK = threading.Lock()
+_AUX_PROC: subprocess.Popen | None = None
+_AUX_BIRTH = ""
+
+
+def _reap_aux_child(proc: subprocess.Popen, birth: str) -> None:
+    """Wait for one exact child, then retire only its matching launch record."""
+    global _AUX_PROC, _AUX_BIRTH
+    proc.wait()
+    _ownership.retire_owned(ROOT, "aux", proc.pid, birth)
+    with _AUX_LIFECYCLE_LOCK:
+        # A later Start may already have installed a replacement handle.  The old
+        # waiter must not erase it; object identity is stronger than a recycled PID.
+        if _AUX_PROC is proc:
+            _AUX_PROC = None
+            _AUX_BIRTH = ""
+
+
+def _retain_aux_child(proc: subprocess.Popen, birth: str) -> None:
+    """Caller holds ``_AUX_LIFECYCLE_LOCK``; preserve and start its one waiter."""
+    global _AUX_PROC, _AUX_BIRTH
+    _AUX_PROC, _AUX_BIRTH = proc, birth
+    waiter = threading.Thread(
+        target=_reap_aux_child, args=(proc, birth),
+        name=f"secondary-runner-reaper-{proc.pid}", daemon=True)
+    try:
+        waiter.start()
+    except BaseException:
+        _AUX_PROC, _AUX_BIRTH = None, ""
+        raise
 
 
 @app.post("/api/aux/set")
@@ -59,6 +99,13 @@ async def aux_set(req: Request) -> JSONResponse:
 
 @app.post("/api/aux/start")
 def aux_start(req: Request) -> JSONResponse:
+    # Start and Stop can arrive on different FastAPI worker threads.  One lifecycle
+    # lock prevents two callers from both observing a clear port and spawning into it.
+    with _AUX_LIFECYCLE_LOCK:
+        return _aux_start_locked(req)
+
+
+def _aux_start_locked(req: Request) -> JSONResponse:
     """Launch the aux model on its own port using the SAME engine dispatch as the
     main runner (registry format: gguf→llama-server, mlx→mlx servers). The old
     `jan serve` path knew nothing about motdeck-downloaded models."""
@@ -181,7 +228,8 @@ def aux_start(req: Request) -> JSONResponse:
     # (the engine is exec'd directly, no shell between), and only a pid we launched may
     # ever enter a pidfile: reap_pidfile signals what this file names.
     try:
-        write_pidfile("aux", proc.pid)
+        _, birth = write_pidfile("aux", proc.pid)
+        _retain_aux_child(proc, birth)
     except Exception as exc:
         proc.terminate()  # exact child handle; never search by name or port
         try:
@@ -189,9 +237,14 @@ def aux_start(req: Request) -> JSONResponse:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=3)
+        try:
+            _ownership.retire_owned(ROOT, "aux", proc.pid,
+                                    locals().get("birth", ""))
+        except Exception:
+            pass
         logf.close()
         return JSONResponse({"ok": False,
-                             "log": f"could not record aux launch ownership: {exc}"},
+                             "log": f"could not retain aux launch lifecycle: {exc}"},
                             status_code=500)
     logf.close()
     return JSONResponse({"ok": True, "log": (note + " · " if note else "")
@@ -200,6 +253,11 @@ def aux_start(req: Request) -> JSONResponse:
 
 @app.post("/api/aux/stop")
 def aux_stop() -> JSONResponse:
+    with _AUX_LIFECYCLE_LOCK:
+        return _aux_stop_locked()
+
+
+def _aux_stop_locked() -> JSONResponse:
     """Stop the aux model, and REPORT WHAT ACTUALLY HAPPENED.
 
     This used to return ok unconditionally without checking anything — already a small

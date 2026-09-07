@@ -662,6 +662,13 @@ def kill_process_group(proc, grace=KILL_GRACE_S, sleep=time.sleep) -> str:
         sleep(0.1)
         waited += 0.1
     _signal(signal.SIGKILL)
+    # U65-class lifecycle rule: signalling an exact child is not the same as reaping
+    # it. PtySession.close has no later communicate()/wait(), so poll until Popen's
+    # waitpid(WNOHANG) consumes the exit rather than leaving one zombie per forced End.
+    for _ in range(20):
+        if proc.poll() is not None:
+            break
+        sleep(0.05)
     return "kill"
 
 

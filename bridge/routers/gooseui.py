@@ -23,9 +23,13 @@ it, and the chrome comes with the full slice.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+import fcntl
 import json
 import os
+import stat
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.error
@@ -57,12 +61,14 @@ except Exception as _e:                                              # noqa: BLE
 # ONE process for the whole bridge, not one per tab. Desktop spawns a goosed per WINDOW
 # because each window is a separate lease; we have one page and one fenced home, and two
 # goosed on one sqlite session store is a corruption story rather than a feature.
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()
 _PROC: subprocess.Popen | None = None
 _PROC_BIRTH = ""
 _TOKEN = ""
 _PORT = 0
 _START_ERR = ""
+_RUNTIME_NAME = "goose-ui.runtime.json"
+_RUNTIME_LOCK_NAME = ".goose-ui.runtime.lock"
 
 # 40s: the pinned binary is a 270MB Mach-O whose first run pages in cold and builds the
 # session DB. Measured cold start on this Mac was ~3-6s; this is generous, not hopeful.
@@ -116,8 +122,145 @@ def _runner() -> tuple:
     return (rc.get("endpoint") or ""), (rc.get("api_key") or ""), port, live, wire
 
 
+def _runtime_path():
+    return ROOT / "data" / _RUNTIME_NAME
+
+
+@contextmanager
+def _runtime_locked(*, shared: bool = False):
+    """Cross-process lock for runtime publish/read/conditional-retire."""
+    path = ROOT / "data" / _RUNTIME_LOCK_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError(f"refusing non-regular Goose runtime lock: {path}")
+        fcntl.flock(fd, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _write_runtime(pid: int, birth: str, port: int, token: str) -> None:
+    """Persist the non-inferable half of a cross-bridge Goose launch claim.
+
+    The authoritative signal right remains ``goose-ui.owner``.  This private record
+    carries the per-process ACP port and secret that cannot be reconstructed from a
+    process name, command, CWD, or listening socket.  Adoption requires both records
+    to name the same live PID + kernel birth generation.
+    """
+    path = _runtime_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({
+        "version": 1, "pid": int(pid), "birth": str(birth),
+        "port": int(port), "token": str(token),
+    }, separators=(",", ":")).encode("utf-8") + b"\n"
+    with _runtime_locked():
+        fd, raw = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp",
+                                   dir=path.parent)
+        temporary = raw
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                fd = -1
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+            temporary = ""
+            try:
+                dfd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(dfd)
+                finally:
+                    os.close(dfd)
+            except OSError:
+                pass
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if temporary:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+
+
+def _read_runtime_unlocked() -> dict | None:
+    """Caller holds the runtime lock; parse without following links."""
+    path = _runtime_path()
+    fd = -1
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or (info.st_mode & 0o077):
+            return None
+        raw = os.read(fd, 4097)
+        if len(raw) > 4096:
+            return None
+        doc = json.loads(raw.decode("utf-8"))
+        pid, port = int(doc.get("pid") or 0), int(doc.get("port") or 0)
+        birth, token = str(doc.get("birth") or ""), str(doc.get("token") or "")
+        if (doc.get("version") != 1 or pid <= 0 or not birth
+                or not 0 < port <= 65535 or not 20 <= len(token) <= 512):
+            return None
+        return {"pid": pid, "birth": birth, "port": port, "token": token}
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _read_runtime(*, verify_owner: bool = True) -> dict | None:
+    """Read a valid private runtime record and, by default, prove its owner."""
+    with _runtime_locked(shared=True):
+        runtime = _read_runtime_unlocked()
+    if not runtime:
+        return None
+    if verify_owner:
+        pair = (runtime["pid"], runtime["birth"])
+        if (_ownership.read_claim(ROOT, "goose-ui") != pair
+                or not _ownership.ownership_matches(ROOT, "goose-ui", pair[0])):
+            return None
+    return runtime
+
+
+def _clear_runtime(pid: int, birth: str) -> bool:
+    """Remove only a runtime record naming the completed exact generation."""
+    path = _runtime_path()
+    with _runtime_locked():
+        runtime = _read_runtime_unlocked()
+        if (not runtime or (runtime["pid"], runtime["birth"])
+                != (int(pid), str(birth))):
+            return False
+        try:
+            path.unlink()
+            return True
+        except OSError:
+            return False
+
+
+def _adopt_runtime() -> bool:
+    """Recover visibility/control only from matching launch + private runtime facts."""
+    global _PROC_BIRTH, _TOKEN, _PORT
+    with _LOCK:
+        runtime = _read_runtime()
+        if not runtime:
+            return False
+        _PROC_BIRTH = runtime["birth"]
+        _TOKEN = runtime["token"]
+        _PORT = runtime["port"]
+        return True
+
+
 def _alive() -> bool:
-    return bool(_PROC is not None and _PROC.poll() is None)
+    with _LOCK:
+        if (_PROC is not None and _PROC.poll() is None and _PROC_BIRTH
+                and is_ours(_PROC.pid)):
+            return True
+        return _adopt_runtime()
 
 
 def _probe(port: int, timeout: float = 1.5) -> bool:
@@ -164,6 +307,7 @@ def _write_pidfile(pid: int) -> tuple[int, str]:
 
 
 def _clear_pidfile(pid: int, birth: str) -> bool:
+    _clear_runtime(pid, birth)
     return _ownership.retire_owned(ROOT, "goose-ui", int(pid), str(birth or ""))
 
 
@@ -195,6 +339,7 @@ def _reap_orphan() -> bool:
         ROOT, "goose-ui", expected_pid=pid, expected_birth=claim[1],
         group=True)
     if sent:
+        _clear_runtime(pid, claim[1])
         _log(f"reaped our launch-recorded orphaned goosed pid={pid}")
     else:
         _log(f"refused orphan signal for pid={pid}: {detail}")
@@ -273,13 +418,18 @@ def _ensure() -> tuple:
             fh = None
             try:
                 _, _PROC_BIRTH = _write_pidfile(_PROC.pid)
+                _write_runtime(_PROC.pid, _PROC_BIRTH, _PORT, _TOKEN)
             except Exception as exc:
-                _PROC.terminate()              # exact child handle
+                failed_proc, failed_birth = _PROC, _PROC_BIRTH
+                _clear_runtime(failed_proc.pid, failed_birth)
+                failed_proc.terminate()              # exact child handle
                 try:
-                    _PROC.wait(timeout=3)
+                    failed_proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
-                    _PROC.kill()
-                    _PROC.wait(timeout=3)
+                    failed_proc.kill()
+                    failed_proc.wait(timeout=3)
+                _ownership.retire_owned(
+                    ROOT, "goose-ui", failed_proc.pid, failed_birth)
                 _PROC = None
                 _PROC_BIRTH = ""
                 raise RuntimeError(f"could not record goose UI launch ownership: {exc}") from exc
@@ -396,6 +546,12 @@ def _stop_locked(why: str) -> str:
     except Exception as exc:                                      # noqa: BLE001
         _log(f"REFUSED SIGKILL for pid {p.pid}: {exc}")
         return "not-ours"
+    try:
+        p.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _log(f"recorded goose UI child pid {p.pid} did not become waitable after SIGKILL")
+        return "kill-pending"
+    _clear_pidfile(p.pid, birth)
     _log(f"serve stopped ({why}, SIGKILL)")
     return "kill"
 

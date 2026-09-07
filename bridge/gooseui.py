@@ -30,9 +30,11 @@ pins them: a goose bump that adds a method the renderer calls and we do not defi
 red gate rather than a `TypeError` in somebody's tab.
 
 ⚠️ SECRETS: the ACP token is a per-process secret we generate. It is handed to the page
-over the SAME loopback origin the page came from, on a route the origin gate protects —
-the same line the PTY lane draws, for the same reason (a WebSocket is not subject to CORS,
-so loopback binding alone is not a boundary).
+over the SAME loopback origin the page came from, on a route the origin gate protects.
+For cross-bridge adoption it is also retained in a private atomic mode-0600 runtime
+record bound to the exact PID + kernel-birth owner claim; metadata alone never grants
+ownership or signal authority. This is necessary because a WebSocket is not subject to
+CORS, so loopback binding alone is not a boundary.
 """
 from __future__ import annotations
 
