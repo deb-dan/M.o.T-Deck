@@ -1156,6 +1156,13 @@ def hermes_messages_to_panel(messages):
         if not txt.strip() and not reasoning:
             continue    # truly empty row — nothing to show
         row = {"role": role, "content": txt}
+        if role == "user":
+            from ..core.hermesattachments import project_message
+            row["content"], images, unavailable = project_message(txt)
+            if images:
+                row["attachments"] = images
+            if unavailable:
+                row["attachment_unavailable"] = unavailable
         if reasoning:
             row["reasoning"] = reasoning
         out.append(row)

@@ -2298,6 +2298,8 @@
             <span class="mode-chip" id="mode-hermes" onclick="setMode('hermes')" title="Hermes mode — full agent (tools + skills); approvals inline" aria-label="Hermes mode">Hermes</span>
             <span class="mode-chip" id="mode-browse" onclick="toggleBrowse()"
               title="Browser control via the Browser MCP extension (agent mode)" aria-label="Toggle browser control">Browse</span>
+            <span class="mode-chip on" id="mode-agent-web" onclick="toggleAgentWeb()"
+              title="Web search for Agent turns" aria-label="Toggle web search for Agent turns">Web on</span>
             <!-- FABLE: style pass — compact navigation chip → Capabilities (tools/skills/MCP) -->
             <span class="mode-chip" id="mode-tools" onclick="showView('caps')"
               title="Tools, skills & connected servers — configure capabilities" aria-label="Open Capabilities">⚙ Tools</span>
@@ -4055,11 +4057,22 @@ function storedChatMode(){
   try { value = localStorage.getItem('motdeck-chat-mode') || ''; } catch (_) {}
   return ['agent', 'chat', 'hermes'].includes(value) ? value : 'agent';
 }
+function storedAgentWeb(){
+  try { return localStorage.getItem('motdeck-agent-web') !== 'off'; }
+  catch (_) { return true; }
+}
+
+function agentWebForTurn(mode, chosen, snapshot){
+  if (mode !== 'agent' || chosen === false) return false;
+  const features = snapshot && snapshot.features;
+  return !(features && features.web_search === false);
+}
 
 const chatPane = {
   id: 'main',                  // the one instance; a second column would be 'b'
   sid: null,                   // Odysseus session id (what the rail selects)
   mode: storedChatMode(),      // lane: 'agent' | 'chat' | 'hermes'
+  agentWeb: storedAgentWeb(),  // per-turn Odysseus search permission; Browse is separate
   busy: false,                 // a turn is in flight and owns this composer
   model: '',                   // last model echo seen on THIS pane's stream
   stampModel: '',              // last session model handed to stampFor()
@@ -5557,6 +5570,7 @@ async function setMode(m) {
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
   document.getElementById('mode-hermes').classList.toggle('on', m === 'hermes');
+  paintAgentWeb();
   chatNotice('');
   applyVisionUi();           // attach is direct-lane only; leaving Chat clears it
   renderCapsStrip();         // A4: the summary belongs to the lane, not globally
@@ -7228,10 +7242,11 @@ function renderCapsStrip() {
   if (!el) return;
   const browse = document.getElementById('mode-browse');
   el.textContent = capsStripText(chatPane.mode, capsSnap,
-    !!(browse && browse.classList.contains('on')));
+    !!(browse && browse.classList.contains('on')), chatPane.agentWeb);
+  paintAgentWeb();
 }
 
-function capsStripText(mode, snapshot, browseOn) {
+function capsStripText(mode, snapshot, browseOn, agentWeb) {
   // PURE: only Agent inherits Odysseus's features. Chat is a direct runner call;
   // Hermes owns its own tools/skills. Showing Agent state on either was a UI lie.
   if (mode === 'chat') return 'direct chat · runner only';
@@ -7240,10 +7255,35 @@ function capsStripText(mode, snapshot, browseOn) {
   if (!snap.features) return 'Agent · Odysseus capabilities unavailable';
   const f = snap.features;
   const mark = b => b ? '✓' : '✗';
-  let s = `web ${mark(f.web_search)} · research ${mark(f.deep_research)} · memory ${mark(f.memory)}`;
+  let s = `web ${mark(f.web_search && agentWeb !== false)} · research ${mark(f.deep_research)} · memory ${mark(f.memory)}`;
   const bt = snap.builtin_tools || [];
   if (bt.length) s += ` · ${bt.filter(t => t.enabled).length}/${bt.length} tools`;
   return s + (browseOn ? ' · browser on' : '');
+}
+
+function paintAgentWeb(){
+  const chip = document.getElementById('mode-agent-web');
+  if (!chip) return;
+  chip.hidden = chatPane.mode !== 'agent';
+  const knownOff = !!(capsSnap && capsSnap.features && capsSnap.features.web_search === false);
+  const on = agentWebForTurn(chatPane.mode, chatPane.agentWeb, capsSnap);
+  chip.classList.toggle('on', on);
+  chip.setAttribute('aria-disabled', knownOff ? 'true' : 'false');
+  chip.textContent = knownOff ? 'Web unavailable' : (on ? 'Web on' : 'Web off');
+  chip.title = knownOff
+    ? 'Web search is disabled in Capabilities — click to open it'
+    : (on ? 'Web search is allowed for Agent turns — click to turn it off'
+          : 'Web search is off for Agent turns — click to allow it');
+}
+
+function toggleAgentWeb(){
+  if (capsSnap && capsSnap.features && capsSnap.features.web_search === false){
+    showView('caps'); return;
+  }
+  chatPane.agentWeb = !chatPane.agentWeb;
+  try { localStorage.setItem('motdeck-agent-web', chatPane.agentWeb ? 'on' : 'off'); }
+  catch (_) {}
+  paintAgentWeb(); renderCapsStrip();
 }
 
 function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
@@ -9633,7 +9673,12 @@ async function selectHermesSession(storedId){
         localStorage.setItem('motdeck-hermes-stored', r.stored_id);
       }
       for (const m of (r.history || []).slice(-30)){
-        if (m.role === 'user') addMsg('user', m.content || '');
+        if (m.role === 'user'){
+          const w = addMsg('user', m.content || '');
+          for (const att of (m.attachments || [])) addRestoredAttachment(w, att);
+          for (const name of (m.attachment_unavailable || []))
+            addUnavailableAttachment(w, name);
+        }
         else if (m.role === 'assistant'){
           const w = addMsg('assistant', m.content || '');
           // Hermes's store keeps the reasoning, so a reopened turn can show its
@@ -12749,6 +12794,13 @@ function addRestoredAttachment(wrap, att){
     if (!wrap || !att) return;
     const body = wrap.querySelector('.body');
     if (!body) return;
+    if (att.hermes_id){
+      body.appendChild(attachLineEl(
+        '/api/hermes/history-image/' + encodeURIComponent(att.hermes_id),
+        att.name || 'image', null,
+        'Remove from this view — the copy kept by Hermes stays', 'image'));
+      return;
+    }
     if (att.ody_id !== undefined && att.ody_id !== null && att.ody_id !== ''){
       body.appendChild(attachLineEl(
         '/api/ody/attachment/' + encodeURIComponent(att.ody_id),
@@ -12761,6 +12813,19 @@ function addRestoredAttachment(wrap, att){
     body.appendChild(attachLineEl(src, att.name || 'image', () => {
       fetch(src + '/delete', {method:'POST'}).catch(() => {});
     }));
+  } catch {}
+}
+
+function addUnavailableAttachment(wrap, name){
+  try {
+    const body = wrap && wrap.querySelector('.body');
+    if (!body) return;
+    const line = document.createElement('div');
+    line.className = 'attachline';
+    const icon = document.createElement('span'); icon.textContent = '🖼';
+    const label = document.createElement('span');
+    label.textContent = (name || 'image') + ' · unavailable';
+    line.appendChild(icon); line.appendChild(label); body.appendChild(line);
   } catch {}
 }
 
@@ -13424,7 +13489,7 @@ async function sendChat() {
          request_id: streamApi.requestId(),
          ...attachPayload}
       : {session:chatPane.sid, message:text, mode:chatPane.mode,
-         allow_web_search:true, allow_bash:false,
+         allow_web_search:agentWebForTurn(chatPane.mode, chatPane.agentWeb, capsSnap),
          tz_offset:-new Date().getTimezoneOffset(),
          ...attachPayload};
     let resp;
