@@ -1,6 +1,6 @@
 # MOT Deck — working memory (canonical project home)
 
-> **📍 CURRENT STATE (2026-09-06, v1.5.82 Odysseus-login hotfix shipped) — supersedes the "2026-08-28, v1.5.12" banner
+> **📍 CURRENT STATE (2026-09-07, v1.5.85 shipped) — supersedes the "2026-08-28, v1.5.12" banner
 > below for anything about what's shipped.** Full reader-facing status (done / in
 > progress / next, by theme) now lives in `docs/ROADMAP.md`; the deferred-work ledger is
 > `docs/UNFORGET.md` (unchanged pointer, see below). Since v1.5.12: the component
@@ -34,6 +34,18 @@
 > and the real Goose minted-key journey. v1.5.82 closes U145: the native Odysseus tab
 > enters through a server-side managed-cookie handoff, so the rotated password stays out
 > of browser JavaScript/logs while the unmodified upstream workspace opens authenticated.
+> v1.5.83 closes the local hardening/honesty wave: dependency actions deep-link to their
+> real remedy; remaining installer sources and payloads are revision/digest pinned; the
+> repository Python and complete JavaScript fences block shipping; every managed
+> single-model consumer reports requested-versus-served drift; and live-theme repairs
+> preserve the original hover/drag affordances. v1.5.84 completes the product identity
+> migration to MOT Deck, with the exhaustive old→new inventory in
+> `docs/U150-IDENTITY-CHANGE-INVENTORY.md`. v1.5.85 closes the local usability and
+> seed-ownership wave: LOffice catalogue-bound sessions, native JavaScript dialogs,
+> typed Agent/Hermes attachments, lane-specific capabilities, Help/copy cleanup,
+> generated Office schemas/pagination, systematic partial-install QA, and manifest-bound,
+> test-free FAT runtime seeds. U149, U150 and U152 are the corresponding release closure
+> rows in `docs/UNFORGET.md`.
 > Exact-once Direct-history writes remain U139;
 > shell execution confinement remains U72; non-LM-Studio source adapters remain conditional
 > on an inventory plus launch contract (U91); auxiliary-key rotation remains U142; and

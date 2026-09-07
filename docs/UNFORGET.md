@@ -43,7 +43,7 @@ current-status:end -->
 | P3 | 🔵 NEXT | Voice Chat M3 — push-to-talk/turn-based lane, VoiceChat-11B (measured 17.45GB peak), additive per ruling | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🟡 6-15 files | Large | `@status:open` Fable spec next, then build |
 | P4 | ✅ CLOSED | Goose lane build — historical pre-build plan; Goose CLI and Goose UI both shipped and their remaining upstream limitations have their own U-rows | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟢 Good | 🟢 2-5 files | Medium | `@status:done-verified` closed by S9/S14 and the later Goose release journeys |
 | P5 | 🔵 NEXT | ComfyUI Video/Audio first-party surface — research in flight; then Fable spec, then S1 build | 🟡 HIGH | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🟡 6-15 files | Large | `@status:open` research DONE (docs/research/2026-08-29-comfyui-tab.md); Fable spec next, gated on Debi's 6 answers |
-| P6 | 🔵 NEXT | Music tools dock, SCOPED (Debi 2026-08-29): FIRST TOOL = stem separation ONLY (demucs / Ultimate Vocal Remover class — research modern OSS before building); DAWs (waveform-playlist/openDAW/Ardour/soundtrap-class) and Nightingale docking are explicitly NOT YET — later phases, kept for the architecture argument only | 🟢 MEDIUM | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🟡 6-15 files | Large | `@status:open` Compose blocks stay a pluggable grid; stem-separator block is the first occupant |
+| P6 | 🔵 NEXT | Music tools dock, SCOPED: FIRST TOOL = stem separation ONLY. Research and benchmark raw Demucs, `python-audio-separator` across several model families, and `mlx-audio-separator` against the same source material before choosing an engine shape. DAWs and Nightingale docking are explicitly NOT YET — later phases, kept for the architecture argument only. | 🟢 MEDIUM | 🟢 Medium | ⚪ Low | 🟠 Excellent | 🟡 6-15 files | Large | `@status:open` research/measurement before spec or build; Compose blocks stay a pluggable grid and the stem-separator block is its first occupant |
 
 ### Detail - Paused plans
 
@@ -55,7 +55,7 @@ current-status:end -->
   upstream limitations. This row must never reappear as an unbuilt Goose lane.
 - **P5** - Debi facts for the spec: NO ComfyUI models downloaded yet; models determine nodes — acquisition surface is first-class in S1. Research lands as docs/research/2026-08-29-comfyui-tab.md.
 
-- **P6** - Debi's scoping word (2026-08-29): "no need to add the daws in yet — only demucs/Ultimate Vocal Remover or whatever it's called." Near-term candidate set = stem separators only: github.com/facebookresearch/demucs (the engine UVR wraps), Ultimate Vocal Remover (github.com/Anjok07/ultimatevocalremovergui) as UX reference, beatstorapon.com roundup as a research seed, stemroller too old. DAW candidates (waveform-playlist, openDAW, Ardour, soundtrap-class) + Nightingale (github.com/rzru/nightingale) + the AI-operated-DAW idea stay recorded here for later phases; they justify the pluggable grid but nothing gets built for them yet. Soundtrap/Soundverse remain the visual bar for the page.
+- **P6** - Current ruling (Debi, clarified 2026-09-07): stem separation is the next tool; the DAW is a separate future product slice and remains parked. Moises is the primary workflow reference: simple first, with real engine/model/acceleration/resource detail behind an Advanced disclosure. The benchmark must run **raw Demucs**, **`python-audio-separator` across multiple model families**, and **`mlx-audio-separator`** against exactly the same inputs. Compare separation quality, artifacts/bleed, stem options, runtime, peak memory, disk cost, acceleration path, recovery behavior and licensing. The result may be one engine with multiple model profiles or two genuinely complementary engines, and each retained engine may expose two or three honest profiles; do not manufacture a second engine merely for visual symmetry. Ultimate Vocal Remover remains a workflow/packaging reference. DAW candidates (openDAW, Waveform/Tracktion, Ardour, Stratawright and OpenStudio research) plus Nightingale and the AI-operated-DAW idea stay recorded for later; they justify the pluggable grid but nothing DAW-shaped is built in P6.
 
 ## 2. Session spillover
 
@@ -567,7 +567,8 @@ current-status:end -->
 ### 2026-09-06 closure checkpoint (overrides stale “verify-still-open” prose above)
 
 U140 is the authoritative v1.5.80 closure overlay. U143 covers v1.5.81, U145 is
-the v1.5.82 human-login correction, and U149 covers v1.5.83. The old row text remains as the historical defect report;
+the v1.5.82 human-login correction, U149 covers v1.5.83, U150 covers the v1.5.84
+identity release, and U152 covers v1.5.85. The old row text remains as the historical defect report;
 do not run a historical `verify-still-open` command and infer that a released fix has
 regressed without first reading the applicable closure row.
 

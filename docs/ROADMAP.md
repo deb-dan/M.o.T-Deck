@@ -253,8 +253,12 @@ against the authoritative index in `docs/UNFORGET.md` on every gate.
 
 Lower urgency or larger blast radius, queued 🟡 LATER — themes only:
 
-- **Music tools dock (P6):** first tool is a stem separator only (demucs/UVR-class);
-  DAWs and Nightingale docking are explicitly deferred, kept only as the architecture
+- **Music tools dock (P6):** first tool is stem separation only. Research must benchmark
+  raw Demucs, several `python-audio-separator` model families, and
+  `mlx-audio-separator` on identical inputs before selecting one multi-profile engine or
+  two genuinely complementary engines. Moises is the simple-first workflow reference;
+  the real engine, model, acceleration and resource facts remain available under
+  Advanced. DAWs and Nightingale are explicitly deferred, kept only as the architecture
   argument for Compose's pluggable block grid.
 - **Remaining model-label limit (U14):** requested-versus-served truth is now visible for
   Odysseus, Hermes, OpenCode and the current managed Goose provider. Goose still exposes
