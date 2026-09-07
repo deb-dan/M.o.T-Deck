@@ -12,7 +12,7 @@ Current version: **v1.5.85** (see `VERSION`). Written 2026-09-07.
 <!-- current-status:start
 in-progress:
 next: P6 P3 P5 S4 S7 U3
-later: S3 S5 S6 S10 S13 S17 S18 S19 S20 S26 S27 S30 A3 A5 A6 U2 U7 U9 U14 U26 U28 U29 U32 U33 U34 U36 U39 U41 U42 U44 U45 U47 U57 U58 U65 U67 U70
+later: S3 S5 S6 S10 S13 S17 S18 S19 S20 S26 S27 S30 A3 A5 A6 U2 U7 U9 U14 U26 U28 U29 U33 U34 U36 U39 U41 U42 U44 U45 U47 U57 U58 U65 U67 U70
 someday: S2 U4 U5 U6 U8 U43 U46 U68
 blocked-later: P1 U1 U72 U91 U139 U142 U144
 blocked-someday: P2
@@ -136,7 +136,8 @@ the bridge releases only its own PID claim, and cross-site mutating requests fai
 
 **Conversation continuity and embedded apps.** v1.5.80 keeps Chat and Agent producers
 alive when the panel detaches, changes lane, or reloads. A bounded 32 MiB/8-active-turn
-replay store preserves the complete event grammar and reconnects the selected lane; a
+replay store preserves the complete event grammar and reconnects the persisted,
+whitelist-validated selected lane (U31/U32); a
 request marker verifies Odysseus history persistence and makes the remaining at-least-once
 limit visible. LOffice reloads a read-only projection of its stored visible transcript,
 never its hidden workbook grounding, and names its own stored session without overwriting
