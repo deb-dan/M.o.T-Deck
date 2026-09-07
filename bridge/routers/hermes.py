@@ -12,6 +12,7 @@ import yaml
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from ..core.appctx import ROOT, _office_ops, app
+from ..core.chatattachments import decode_chat_file, stage_hermes_attachment
 from ..core.hermescfg import _hermes_port, _hermes_token
 from ..core.hermesreplay import (ResumeFollowPolicy, follow_resumed_turn,
                                  hermes_attach_error, hermes_sessions_normalize,
@@ -637,7 +638,8 @@ async def _hermes_session_working(sid: str) -> bool:
 async def hermes_chat(req: Request) -> StreamingResponse:
     """Stream one Hermes turn to the panel as SSE (same protocol as the other lanes).
 
-    Body: {"session_id": <sid or empty>, "message": <text>, "image": <dataURL>}.
+    Body accepts one staged attachment: the established ``image`` data URL, or a
+    non-image ``file`` data URL with ``file_name``/``file_mime``.
     The relay is bridge-owned rather than response-owned: closing this HTTP response
     detaches one viewer but does not cancel Hermes, the event mapper, or M.O.T's
     watchdogs. A repeated request_id reattaches to that same relay and never submits
@@ -649,6 +651,9 @@ async def hermes_chat(req: Request) -> StreamingResponse:
     stored_sid = (body.get("stored_sid") or "").strip()   # durable id, for the guard audit
     image = body.get("image") or ""
     image_name = (body.get("image_name") or "")[:200]
+    chat_file, file_error = decode_chat_file(
+        body.get("file") or "", body.get("file_name") or "",
+        body.get("file_mime") or "")
     request_id = str(body.get("request_id") or "").strip()[:200] \
         or secrets.token_hex(16)
 
@@ -662,8 +667,10 @@ async def hermes_chat(req: Request) -> StreamingResponse:
         return StreamingResponse(_single_error("empty message"),
                                  media_type="text/event-stream")
     image_error = hermes_attach_error(image)
-    if image_error:
-        return StreamingResponse(_single_error(image_error),
+    attach_error = ("attach one file at a time" if image and body.get("file")
+                    else image_error or file_error)
+    if attach_error:
+        return StreamingResponse(_single_error(attach_error),
                                  media_type="text/event-stream")
 
     # Network retry idempotency is scoped to this bridge lifetime. Hermes remains the
@@ -698,26 +705,6 @@ async def hermes_chat(req: Request) -> StreamingResponse:
     async def gen():
         nonlocal sid, stored_sid
 
-        async def _attach_image(target_sid: str) -> str:
-            """Queue the staged image on `target_sid`. Returns "" or the reason.
-
-            An image the user attached and Hermes refused must FAIL the turn — never
-            be dropped silently and answered as if the message had been plain text.
-            That would be a LIE-TO-USER, which outranks a refusal.
-            """
-            if not image:
-                return ""
-            try:
-                res = await _HERMES.rpc("image.attach_bytes", {
-                    "session_id": target_sid,
-                    "content_base64": image,
-                    "filename": image_name or "image.png"})
-            except Exception as e:                        # noqa: BLE001
-                return f"hermes refused the image: {str(e)[:180]}"
-            if not (res or {}).get("attached"):
-                return "hermes did not attach the image (no reason given)"
-            return ""
-
         q = None
         try:
             if created:
@@ -736,12 +723,15 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                     pass
             # Open the fan-out queue BEFORE submitting so no early event is missed.
             q = _HERMES.open_queue(sid)
-            _imgerr = await _attach_image(sid)
-            if _imgerr:
-                yield f'data: {_json.dumps({"type": "proxy_error", "error": _imgerr})}\n\n'
+            _atterr, _ref = await stage_hermes_attachment(
+                _HERMES.rpc, sid, image, image_name, chat_file)
+            if _atterr:
+                yield f'data: {_json.dumps({"type": "proxy_error", "error": _atterr})}\n\n'
                 return
             try:
-                await _HERMES.rpc("prompt.submit", {"session_id": sid, "text": msg})
+                prompt_text = msg + (("\n\nAttached file: " + _ref) if _ref else "")
+                await _HERMES.rpc("prompt.submit", {"session_id": sid,
+                                                     "text": prompt_text})
             except RuntimeError as e:
                 if not _hermes_stale_sid(e):
                     raise
@@ -770,13 +760,16 @@ async def hermes_chat(req: Request) -> StreamingResponse:
                     except Exception:                     # noqa: BLE001
                         pass
                 q = _HERMES.open_queue(sid)
-                # The image was queued on the session that turned out to be dead —
-                # this one's attached_images is empty, so re-attach before resubmitting.
-                _imgerr = await _attach_image(sid)
-                if _imgerr:
-                    yield f'data: {_json.dumps({"type": "proxy_error", "error": _imgerr})}\n\n'
+                # The attachment was queued on the session that turned out to be dead;
+                # stage it on the resumed/replacement session before resubmitting.
+                _atterr, _ref = await stage_hermes_attachment(
+                    _HERMES.rpc, sid, image, image_name, chat_file)
+                if _atterr:
+                    yield f'data: {_json.dumps({"type": "proxy_error", "error": _atterr})}\n\n'
                     return
-                await _HERMES.rpc("prompt.submit", {"session_id": sid, "text": msg})
+                prompt_text = msg + (("\n\nAttached file: " + _ref) if _ref else "")
+                await _HERMES.rpc("prompt.submit", {"session_id": sid,
+                                                     "text": prompt_text})
             # Relay gateway events until the turn completes. Watchdogs (Phase 1.1):
             #   • first-event: NOTHING within 60s of prompt.submit → end with a clear
             #     error (⚠ PENDING FABLE QA: 60s is a judgment call — local prefill

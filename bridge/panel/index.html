@@ -672,9 +672,8 @@
                color:var(--dim); border:1px solid var(--line2); border-radius:6px;
                padding:3px 7px; cursor:pointer; }
   .mode-chip.on { color:var(--on-accent); background:var(--gold); border-color:var(--gold); }
-  /* FABLE style pass: the composer's mode note is a single line — let it SHRINK to
-     an ellipsis in a tight row instead of wrapping mid-word ("Herme/s"). Full text
-     stays available via its title attribute (set in setMode). */
+  /* Transient composer notices replace (never sit beside) the normal capabilities
+     summary. They shrink to an ellipsis; the full text stays in the title. */
   .mode-note { font:10.5px var(--mono); color:var(--faint); letter-spacing:.08em; margin-left:6px; opacity:.75;
                min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   /* ══ THE COMPOSER IS ONE BOUNDED FIELD (v1.5.26, Debi) ══════════════════════════
@@ -2304,19 +2303,21 @@
             <button id="chat-audio-btn" class="mode-chip empty" onclick="toggleAudioPop(event)"
               title="Voice off — click to pick a TTS model" aria-label="Voice output"
               aria-haspopup="true" aria-expanded="false">AUDIO off ⌄</button>
-            <span class="mode-note" id="chat-note" title="web search on · shell off">web search on · shell off</span>
+            <!-- One readout at a time: transient errors/progress temporarily replace
+                 the normal lane capability summary instead of duplicating it. -->
+            <span class="mode-note" id="chat-note" hidden></span>
             <!-- FABLE: style pass — compact read-only caps summary → opens Capabilities -->
             <span class="caps-strip" id="caps-strip" onclick="showView('caps')"
               title="Capabilities — click to configure" aria-label="Capabilities summary"></span>
           </div>
-          <!-- one attached image per message (direct lane + vision model only) -->
+          <!-- one attachment per message; documents are available on Agent/Hermes -->
           <div id="chat-attachstrip" hidden></div>
           <div id="chat-inputrow">
             <!-- STUDIO CHROME: every composer control carries BOTH children (icon +
                  editorial text). CSS picks one; no renderer branches on the theme. -->
             <button class="chip chip-icon" id="chat-attach" onclick="pickImage()"
-              title="Attach an image (vision models)" aria-label="Attach an image" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-attach"/></svg></span><span class="ed-only">⊕</span></button>
-            <input type="file" id="chat-file" accept="image/png,image/jpeg,image/webp"
+              title="Attach an image or file" aria-label="Attach an image or file" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-attach"/></svg></span><span class="ed-only">⊕</span></button>
+            <input type="file" id="chat-file" accept="image/png,image/jpeg,image/webp,.txt,.md,.csv,.json,.py,.js,.html,.pdf"
               onchange="onImagePicked(event)" hidden>
             <textarea id="chat-input" rows="2" placeholder="Message MOT…"
               oninput="growInput(this)"
@@ -2706,6 +2707,7 @@
 </dialog>
 
 <script src="/assets/turn-stream.js"></script>
+<script src="/assets/chat-files.js"></script>
 <script>
 const dlg = document.getElementById('dlg');
 const logdlg = document.getElementById('logdlg');
@@ -3611,8 +3613,10 @@ function healthOf(c) {
 function cardHTML(name, c, isBridge, prov) {
   const ps = prov && prov.state;
   const h = healthOf(c);
-  const pin = String(c.pin).length > 16 ? String(c.pin).slice(0,12)+'…' : c.pin;
   const isRunner = (name === 'runner');
+  const pinFull = String(c.pin || '');
+  const isCommitPin = !isRunner && /^[0-9a-f]{20,}$/i.test(pinFull);
+  const pin = isCommitPin ? '✓' : (pinFull.length > 16 ? pinFull.slice(0,12)+'…' : pinFull);
   const fileGone = isRunner && (c.model_file === 'gone' || c.model_file === 'unregistered');
   const fileIncomplete=isRunner&&c.model_file==='incomplete',fileUnavailable=fileGone||fileIncomplete;
   const le = (c.last_error && c.last_error.text) ? c.last_error : null;
@@ -3729,7 +3733,7 @@ function cardHTML(name, c, isBridge, prov) {
   return `<div class="card" id="card-${name}">
     <div class="head"><span class="dot ${dot}"></span><span class="name">${name}</span></div>
     <div class="state">${state}</div>
-    <div class="meta">${pinLabel} ${pin} · port ${c.port ?? '—'}${c.engine ? (' · ' + esc(c.engine)) : ''}</div>
+    <div class="meta"${pinFull ? ` title="${escAttr(pinLabel + ' ' + pinFull)}"` : ''}>${pinLabel} ${pin} · port ${c.port ?? '—'}${c.engine ? (' · ' + esc(c.engine)) : ''}</div>
     ${why ? `<div class="why">${esc(why)}</div>` : ''}
     <div class="actions">${actions}</div></div>`;
 }
@@ -4062,7 +4066,9 @@ const chatPane = {
   // record carries its own holder node and watchdog timer, so those are per-pane
   // by construction once this field is.
   curTurn: null,
-  attachedImage: null,         // {data: dataURL, name} staged for the next send
+  // Legacy field name retained for saved-state/test compatibility; the record is now
+  // {data,name,mime,kind:'image'|'file'} and still stages exactly one attachment.
+  attachedImage: null,
   pendingAttachDrop: null,     // {wrap, text} — a live ✕ fired during its turn
   delArm: null,                // session-rail ✕ two-step confirm
   msgDelArm: null,             // per-message delete two-step confirm
@@ -5491,14 +5497,26 @@ function sesResizeUp(e){
   try { localStorage.setItem('motdeck-sessions-width', String(_sesW)); } catch (_) {}
 }
 
-/* PURE: the one sentence under the composer for a lane. ONE source — it is
-   painted by setMode AND restored by toggleBrowse, and those two had drifted
-   (browse-off printed "plain model — no tools" over the Hermes lane, which has
-   more tools than either of the others). Unit-tested. */
-function laneNote(m){
-  return m === 'agent'  ? 'web search on · shell off'
-       : m === 'hermes' ? 'Hermes · tools + skills · approvals inline'
-       :                  'direct to runner — no tools, fastest';
+let _chatNoticeTimer = null;
+let _chatNoticeGeneration = 0;
+function chatNotice(message, timeoutMs){
+  const note = document.getElementById('chat-note');
+  const caps = document.getElementById('caps-strip');
+  if (!note || !caps) return;
+  if (_chatNoticeTimer) { clearTimeout(_chatNoticeTimer); _chatNoticeTimer = null; }
+  const generation = ++_chatNoticeGeneration;
+  const text = String(message || '');
+  note.textContent = text;
+  note.title = text;
+  note.hidden = !text;
+  caps.hidden = !!text;
+  if (text && Number(timeoutMs) > 0) {
+    _chatNoticeTimer = setTimeout(() => {
+      if (generation !== _chatNoticeGeneration) return;
+      _chatNoticeTimer = null;
+      chatNotice('');
+    }, Number(timeoutMs));
+  }
 }
 
 async function setMode(m) {
@@ -5518,11 +5536,9 @@ async function setMode(m) {
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
   document.getElementById('mode-chat').classList.toggle('on', m === 'chat');
   document.getElementById('mode-hermes').classList.toggle('on', m === 'hermes');
-  const noteText = laneNote(m);
-  const noteEl = document.getElementById('chat-note');
-  noteEl.textContent = noteText;
-  noteEl.title = noteText;   // ellipsised in a tight row → hover reveals the full line
+  chatNotice('');
   applyVisionUi();           // attach is direct-lane only; leaving Chat clears it
+  renderCapsStrip();         // A4: the summary belongs to the lane, not globally
   if (typeof closeModelPop === 'function') closeModelPop();
   if (typeof closeAudioPop === 'function') closeAudioPop();
   if (m === prev) return;
@@ -5661,8 +5677,7 @@ function renderCaps() {
   </div></div>
 
   <div class="caps-group"><span class="cap-h">Memory</span><div class="cap-card">
-    ${capSwitchRow('Memory', 'Let the assistant remember facts across conversations.', 'feature', 'memory', capFeat('memory'))}
-    <div class="cap-row"><div class="cap-txt"><div class="cap-desc" style="margin-top:0">Extraction cadence isn't configurable — Odysseus decides when to extract.</div></div></div>
+    ${capSwitchRow('Memory', 'Remember facts across conversations; Odysseus decides when to extract them.', 'feature', 'memory', capFeat('memory'))}
   </div></div>
 
   <div class="caps-group"><span class="cap-h">Other capabilities</span><div class="cap-card">
@@ -5907,22 +5922,15 @@ function renderAppearance() {
   return `<div class="caps-group"><span class="cap-h">Appearance</span><div class="cap-card">
     <div class="cap-row"><div class="cap-txt">
       <div class="cap-name">Navigation</div>
-      <div class="cap-desc">Order the sidebar and the app window's tab strip, and hide what you
-        do not use. Opens over this page — drag to reorder, switch a row off to hide it.</div>
+      <div class="cap-desc">Order or hide navigation; the editor opens over this page.</div>
     </div><div class="cap-ctl"><button class="cap-btn" onclick="openNavDlg()">Customize…</button></div></div>
     <div class="cap-row"><div class="cap-txt">
       <div class="cap-name">Design</div>
-      <div class="cap-desc">A whole second design — layout, type, spacing and component shapes,
-        not just colour. Editorial is the default; Studio is the modern-studio look, with its
-        own light and dark. The ✦ chip in the top bar flips between them, and ◐ switches
-        Studio's light/dark while it is active. Studio's stylesheet is fetched the first time
-        you turn it on.</div>
+      <div class="cap-desc">Choose Editorial or Studio layout; ✦ switches design and ◐ switches its light/dark variant.</div>
     </div><div class="cap-ctl">${designSelect()}</div></div>
     <div class="cap-row"><div class="cap-txt">
       <div class="cap-name">Theme</div>
-      <div class="cap-desc">A complete look — ground, ink and accent together. Applies at once and is
-        remembered; the Office tab follows the same choice. The ◐ chip in the top bar steps
-        through the same four.</div>
+      <div class="cap-desc">Choose a complete colour look; it applies immediately and Office follows it.</div>
     </div><div class="cap-ctl">${themePackSelect()}</div></div>
   </div></div>`;
 }
@@ -6146,7 +6154,8 @@ function renderBuiltinTools() {
   if (other.length) rows += catBlock('Other', 'Additional built-in tools.', other);
 
   return `<div class="caps-group"><span class="cap-h">Tools</span>
-    <div class="cap-desc" style="margin:-4px 0 10px">What the app can do in Agent mode. Turning a category off disables all its tools; expand to fine-tune.</div>
+    <div class="cap-desc" style="margin:-4px 0 10px"><span class="cap-pill on">Agent only</span>
+      <button class="cap-btn" onclick="showView('help')" title="Open Help at the tool-layer explanation">How tools work</button></div>
     <div class="cap-card">${rows}</div></div>`;
 }
 
@@ -6264,7 +6273,8 @@ function renderMcpServers() {
       <div class="cap-sub" id="${sub}" hidden><div class="cap-desc" style="padding-left:14px">…</div></div>`;
   }).join('');
   return `<div class="caps-group"><span class="cap-h">Connected tools (MCP)</span>
-    <div class="cap-desc" style="margin:-4px 0 10px">External tool servers. Toggle a whole server, expand to fine-tune its tools, or add/remove servers.</div>
+    <div class="cap-desc" style="margin:-4px 0 10px"><span class="cap-pill on">Agent · external servers</span>
+      <button class="cap-btn" onclick="showView('help')" title="Open Help at the MCP explanation">How MCP works</button></div>
     <div class="cap-card">${rows}${addRow}</div></div>`;
 }
 
@@ -6304,7 +6314,8 @@ function renderVoiceMcp() {
         <span class="track"></span><span class="knob"></span></label></div></div>`;
   }).join('');
   return `<div class="caps-group" id="caps-voice"><span class="cap-h">Voice tools (MCP)</span>
-    <div class="cap-desc" style="margin:-4px 0 10px">Optional voice components. Enabling registers the component's own MCP server with BOTH Hermes and Odysseus, so agents can speak, clone a voice and transcribe. Hermes picks it up on new chats. A component must be installed and running before it can be enabled.</div>
+    <div class="cap-desc" style="margin:-4px 0 10px"><span class="cap-pill on">Hermes + Agent</span>
+      <button class="cap-btn" onclick="showView('help')" title="Open Help at the voice-MCP explanation">How voice tools work</button></div>
     <div class="cap-card">${rows}</div></div>`;
 }
 
@@ -6441,7 +6452,9 @@ function renderHermesTools() {
   // on the profile), so a change made here is invisible over there until that tab
   // is reloaded. This page re-reads Hermes on every refresh; that one does not.
   const wrap = inner => `<div class="caps-group" id="caps-hermes-tools">${head}
-    <div class="cap-desc" style="margin:-4px 0 10px">Which toolsets the Hermes lane hands the model. Every switch shows what HERMES reports for its <b>${esc(snap.platform || 'cli')}</b> platform — the one this chat runs on — re-read on every refresh, not what we last asked for. Fewer toolsets = a smaller system prompt = faster turns on a local model. Takes effect on the next chat — no restart.<br>Cross-checking Hermes's own <i>Skills → TOOLSETS</i> page? It loads its list once when it opens and never refreshes itself — so <b>MOT Deck reloads that tab for you</b> within a few seconds of any change made here, whether you switch to it or it is already open <i>beside</i> this one in split view. The one case still on you is a Hermes dashboard open <i>outside</i> this app, in a browser: press ⌘R there. The <b>Check</b> button below is the live answer either way.</div>
+    <div class="cap-desc" style="margin:-4px 0 10px"><span class="cap-pill on">${esc(snap.platform || 'cli')} lane · next chat</span>
+      <span class="cap-count">live from Hermes</span>
+      <button class="cap-btn" onclick="showView('help')" title="Open Help for prompt cost, defaults and refresh behavior">How Hermes tools work</button></div>
     <div class="cap-card">${inner}</div></div>`;
   if (!snap.running) {
     const cfg = snap.config || {};
@@ -6508,11 +6521,11 @@ function renderHermesTools() {
     ? `<span class="cap-count">${snap.other_count} more row${snap.other_count === 1 ? '' : 's'} below belong to other Hermes surfaces and are not counted</span>` : '';
   const presets = `<div class="cap-row"><div class="cap-txt">
       <div class="cap-name">${snap.enabled_count}/${snap.total} toolsets on<span class="cap-count">${snap.tool_count_enabled} of ${snap.tool_count_total} tools in the prompt</span>${nsync ? `<span class="cap-pill off">${nsync} out of sync</span>` : ''}${other}</div>
-      <div class="cap-desc">“Minimal” keeps file, terminal and clarify — enough to read, write, run things and ask you a question. “Hermes's defaults” restores exactly the set Hermes ships on for this lane: it deliberately leaves the opt-in ones OFF (video analysis, video/image generation on some builds, X search, Home Assistant, Spotify, Discord) — turn those on one row at a time if you want them.</div>
       <button class="cap-btn" id="hts-preset-minimal" ${lock ? 'disabled' : ''}
+        title="Keep file, terminal and clarify: enough to read, write, run and ask a question."
         onclick="hermesToolsPreset('minimal', this)">Minimal preset</button>
       <button class="cap-btn" id="hts-preset-all" style="margin-left:8px" ${lock ? 'disabled' : ''}
-        title="Restores the toolsets Hermes enables by default for this lane — not every row. Toolsets Hermes ships off (video analysis, X search, Home Assistant, Spotify, Discord…) stay off."
+        title="Restores the toolsets Hermes enables by default for this lane — not every row. Toolsets Hermes ships off (video analysis, X search, Home Assistant, Spotify, Discord…) stay off; enable those one row at a time."
         onclick="hermesToolsPreset('all', this)">Hermes's defaults</button>
       <button class="cap-btn" id="hts-check" style="margin-left:8px"
         onclick="hermesToolsCheck(this)"
@@ -7190,13 +7203,25 @@ async function ensureCapsStrip() {
 // compact read-only summary chip in the chat bar
 function renderCapsStrip() {
   const el = document.getElementById('caps-strip');
-  if (!el || !capsSnap || !capsSnap.features) { if (el) el.textContent = ''; return; }
-  const f = capsSnap.features;
+  if (!el) return;
+  const browse = document.getElementById('mode-browse');
+  el.textContent = capsStripText(chatPane.mode, capsSnap,
+    !!(browse && browse.classList.contains('on')));
+}
+
+function capsStripText(mode, snapshot, browseOn) {
+  // PURE: only Agent inherits Odysseus's features. Chat is a direct runner call;
+  // Hermes owns its own tools/skills. Showing Agent state on either was a UI lie.
+  if (mode === 'chat') return 'direct chat · runner only';
+  if (mode === 'hermes') return 'Hermes · tools + skills' + (browseOn ? ' · browser on' : '');
+  const snap = snapshot || {};
+  if (!snap.features) return 'Agent · Odysseus capabilities unavailable';
+  const f = snap.features;
   const mark = b => b ? '✓' : '✗';
   let s = `web ${mark(f.web_search)} · research ${mark(f.deep_research)} · memory ${mark(f.memory)}`;
-  const bt = capsSnap.builtin_tools || [];
+  const bt = snap.builtin_tools || [];
   if (bt.length) s += ` · ${bt.filter(t => t.enabled).length}/${bt.length} tools`;
-  el.textContent = s;
+  return s + (browseOn ? ' · browser on' : '');
 }
 
 function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
@@ -7502,16 +7527,24 @@ function applyVisionUi(){
   const btn = document.getElementById('chat-attach');
   if (btn){
     const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
+    const filesWork = chatPane.mode !== 'chat';
+    const usable = v.on || filesWork;
     btn.hidden = false;                     // grey-not-hide: the ⊕ is always there
-    btn.classList.toggle('off', !!v.why);
-    btn.setAttribute('aria-disabled', v.on ? 'false' : 'true');
-    btn.title = v.why || v.note || 'Attach an image';
-    if (!v.on) clearImage();                // a staged image the lane cannot carry
+    btn.classList.toggle('off', !usable);
+    btn.setAttribute('aria-disabled', usable ? 'false' : 'true');
+    btn.title = (!v.on && filesWork)
+      ? (v.why + ' Supported text, code and PDF files still work.')
+      : (v.why || v.note || 'Attach an image or file');
+    if (!v.on && chatPane.attachedImage && chatPane.attachedImage.kind !== 'file')
+      clearImage();                         // only a staged image is vision-gated
     // A STAGED image outlives a lane switch, so its caveat has to be REPAINTED for
     // the lane it is now going to: staging on Hermes (clean) and then switching to
     // Agent (no vision model configured) must not carry the silence across.
-    else if (chatPane.attachedImage)
-      showAttachedImage(chatPane.attachedImage.data, chatPane.attachedImage.name);
+    else if (chatPane.attachedImage) {
+      const a = chatPane.attachedImage;
+      if (a.kind === 'file') showAttachedFile(a.data, a.name, a.mime);
+      else showAttachedImage(a.data, a.name);
+    }
   }
 }
 
@@ -7519,7 +7552,7 @@ function pickImage(){
   // A blocked ⊕ is not a dead ⊕: it says why, in the strip, where every other
   // attach refusal already speaks.
   const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
-  if (!v.on){ attachNote(v.why); return; }
+  if (!v.on && chatPane.mode === 'chat'){ attachNote(v.why); return; }
   const f = document.getElementById('chat-file'); if (f) f.click();
 }
 
@@ -7547,7 +7580,23 @@ function onImagePicked(ev){
 /* shared by the ⊕ picker and drag-and-drop */
 function acceptImageFile(file){
   if (!/^image\/(png|jpeg|webp)$/.test(file.type || '')){
-    attachNote('only png / jpeg / webp images'); return; }
+    const ext = ((file.name || '').match(/\.[^.]+$/) || [''])[0].toLowerCase();
+    const allowed = ['.txt','.md','.csv','.json','.py','.js','.html','.pdf'];
+    if (allowed.indexOf(ext) < 0){
+      attachNote('choose png / jpeg / webp / txt / md / csv / json / py / js / html / pdf'); return; }
+    if (chatPane.mode === 'chat'){
+      attachNote('files work in Agent or Hermes; direct Chat accepts images only'); return; }
+    if (file.size > 10 * 1024 * 1024){ chatPane.attachedImage = null;
+      const f = document.getElementById('chat-file'); if (f) f.value = '';
+      attachNote('file too large (max 10 MB)'); return; }
+    const fr = new FileReader();
+    fr.onerror = () => { chatPane.attachedImage = null; attachNote('could not read that file'); };
+    fr.onload = () => showAttachedFile(String(fr.result || ''), file.name,
+                                       file.type || 'application/octet-stream');
+    fr.readAsDataURL(file); return;
+  }
+  const verdict = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
+  if (!verdict.on){ attachNote(verdict.why); return; }
   if (file.size > 8 * 1024 * 1024){ chatPane.attachedImage = null;
     const f = document.getElementById('chat-file'); if (f) f.value = '';
     attachNote('image too large (max 8 MB)'); return; }
@@ -7577,7 +7626,7 @@ function showImageLightbox(src, name){
 
 /* set + render the one attached image (shared by picker, drop, paste, native drop) */
 function showAttachedImage(dataUrl, name){
-  chatPane.attachedImage = {data: dataUrl, name: name};
+  chatPane.attachedImage = {data: dataUrl, name: name, mime: 'image/*', kind: 'image'};
   const strip = document.getElementById('chat-attachstrip');
   strip.innerHTML = '';
   const img = document.createElement('img');
@@ -7650,10 +7699,10 @@ window.motdeckNativeAudioDrop = async function(name, dataUrl){
   } catch (e){ feed('voice', 'could not reach the bridge'); }
 };
 
-/* ---------- drag-and-drop an image onto the Chat view ----------
+/* ---------- drag-and-drop an attachment onto the Chat view ----------
    WKWebView footgun: an unhandled file drop NAVIGATES the panel to the file —
    so the document-level guard swallows drops everywhere, and the chat column
-   accepts them (same gate as the ⊕: direct lane + vision model). */
+   accepts them through the same file/image classifier as the ⊕ picker. */
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop',     (e) => e.preventDefault());
 (function(){
@@ -7684,22 +7733,17 @@ document.addEventListener('drop',     (e) => e.preventDefault());
   zone.addEventListener('drop', (e) => {
     bar.classList.remove('dropping');
     e.preventDefault();
-    const file = Array.from((e.dataTransfer && e.dataTransfer.files) || [])
-                      .find(f => (f.type || '').startsWith('image/'));
+    const file = Array.from((e.dataTransfer && e.dataTransfer.files) || [])[0];
     if (!file) return;
-    const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
-    if (!v.on){ attachNote(v.why); return; }
     acceptImageFile(file);
   });
-  // ⌘V an image (e.g. a screenshot) straight into the composer — same gate as drop.
+  // ⌘V an image or file straight into the composer — same classifier as drop.
   const inp = document.getElementById('chat-input');
   if (inp) inp.addEventListener('paste', (e) => {
     const item = Array.from((e.clipboardData && e.clipboardData.items) || [])
-                      .find(i => i.kind === 'file' && (i.type || '').startsWith('image/'));
+                      .find(i => i.kind === 'file');
     if (!item) return;                       // plain text pastes stay untouched
     e.preventDefault();
-    const v = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
-    if (!v.on){ attachNote(v.why); return; }
     const f = item.getAsFile();
     if (f) acceptImageFile(f);
   });
@@ -7942,8 +7986,7 @@ async function popAuxSet(id, chip){
 async function chatModelChange(id){
   // Switching reloads the runner (and re-wires components) — progress in the note.
   if (modelsBusy){ loadChatModels(); return; }
-  const cn = document.getElementById('chat-note');
-  if (cn) cn.textContent = 'switching model — load takes ~60-90s…';
+  chatNotice('switching model — load takes ~60-90s…');
   await switchModel(id, id);
 }
 
@@ -9437,8 +9480,18 @@ function stopConv(reason){
 async function refreshBrowse(){
   try {
     const s = await (await fetch('/api/browse/status')).json();
-    document.getElementById('mode-browse').classList.toggle('on', !!s.on);
+    paintBrowseState(!!s.on);
   } catch {}
+}
+
+function paintBrowseState(on){
+  const chip = document.getElementById('mode-browse');
+  if (!chip) return;
+  chip.classList.toggle('on', !!on);
+  chip.title = on
+    ? 'Browser control is on for Agent and Hermes — connect a tab through the Browser MCP extension'
+    : 'Browser control via the Browser MCP extension (agent mode)';
+  renderCapsStrip();
 }
 
 async function toggleBrowse(){
@@ -9448,13 +9501,7 @@ async function toggleBrowse(){
   try {
     const r = await (await fetch('/api/browse/toggle', {method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify({on})})).json();
-    chip.classList.toggle('on', !!r.on);
-    const note = document.getElementById('chat-note');
-    if (r.on) note.textContent = 'browser ON (Hermes + Odysseus) · install the Browser MCP extension + connect a tab';
-    // …and restoring the note has to restore the note THIS LANE actually had:
-    // "plain model — no tools" was printed for Hermes too, which is false (Hermes
-    // is the lane with the most tools of the three).
-    else note.textContent = laneNote(chatPane.mode);
+    paintBrowseState(!!r.on);
   } catch {} finally { chip.style.opacity = ''; }
 }
 
@@ -9582,17 +9629,14 @@ async function selectHermesSession(storedId){
                  && typeof MOTDeckTurnStream.renderHermesSnapshot === 'function') {
         MOTDeckTurnStream.renderHermesSnapshot(r, r.history || []);
       } else if (r.inflight) {
-        const note = document.getElementById('chat-note');
-        if (note) note.textContent = 'Hermes is still processing, but the recovery renderer did not load — reload M.O.T';
+        chatNotice('Hermes is still processing, but the recovery renderer did not load — reload MOT Deck');
       }
     } else {
-      const note = document.getElementById('chat-note');
-      if (note) note.textContent = 'could not open that Hermes session' + (r && r.error ? ' — ' + String(r.error).slice(0,120) : '');
+      chatNotice('could not open that Hermes session' + (r && r.error ? ' — ' + String(r.error).slice(0,120) : ''));
     }
   } catch (error) {
-    const note = document.getElementById('chat-note');
-    if (note) note.textContent = 'could not open that Hermes session — '
-      + String(error && error.message || error).slice(0, 120);
+    chatNotice('could not open that Hermes session — '
+      + String(error && error.message || error).slice(0, 120));
   }
 }
 
@@ -10335,7 +10379,7 @@ function fitConsentHtml(){
     : `<button onclick="fitCancel()">Not now</button>
        <button class="go" onclick="fitProceed()">Load anyway</button>`;
   const why = hard
-    ? `${esc(a.refuse.reason)}<br>${esc(a.refuse.remedy)}<br>Set ${esc(a.refuse.override_env)}=1 in the environment if you have a reason to try it anyway.`
+    ? `${esc(a.refuse.reason)}<br>${esc(a.refuse.remedy)}`
     : `${esc(c.line || '')}<br>${esc(c.math || '')}`;
   return `<div class="fit-consent${hard ? ' hard' : ''}">
       <div class="fc-head">${esc(hard ? 'This context is past what this Mac can wire' : (c.chip || 'Probably will not fit'))}</div>
@@ -10458,7 +10502,7 @@ function renderAux(r){
   const bad=(r.installed||[]).find(m=>m.id===aux.model), blocked=modelActionState(bad,false)[0];
   const strip = document.createElement('div'); strip.className = 'card'; strip.style.marginTop = '20px';
   strip.innerHTML = `<div class="name">AUX RUNNER${aux.up ? ' · LIVE' : ''}</div>
-      <div class="meta wrap">${aux.model ? (esc(aux.model) + ' · :' + aux.port) : 'no model set — use “Set aux” on a small installed model'} · serves Odysseus background tasks (titles, search queries, memory)</div>`;
+      <div class="meta wrap">Optional · ${aux.model ? (esc(aux.model) + ' · :' + aux.port) : 'no model selected — use “Set aux” on a small installed model'} · handles Odysseus titles, search queries and memory</div>`;
   if (aux.model){
     const b=document.createElement('button'); b.style.marginTop = '11px';
     if (aux.up){ b.textContent = 'Stop'; b.onclick = auxStop; }
@@ -10811,9 +10855,7 @@ function renderAudioDetail(){
     ${omnivoiceBf16Hint(a) ? `<div class="md-imnote" style="margin-top:10px;max-width:100%">${
         esc(omnivoiceBf16Hint(a))}</div>` : ''}
     <div id="ad-voice"></div>
-    <div class="md-div"></div>
-    <div class="md-path">${a.path ? esc(a.path) : 'path unknown'}${
-      a.mmproj ? ('<br>mmproj: ' + esc(a.mmproj)) : ''}</div>`;
+    <div class="md-div"></div>`;
   const acts = d.querySelector('#ad-actions');
   const set = document.createElement('button'); set.className = 'primary';
   if (isDefault){
@@ -10826,6 +10868,13 @@ function renderAudioDetail(){
     set.onclick = () => setVoiceDefault(a.id, role);
   }
   acts.appendChild(set);
+  if (a.path){
+    const reveal = document.createElement('button');
+    reveal.textContent = 'Show in Folder';
+    reveal.title = a.path + (a.mmproj ? ('\nProjector: ' + a.mmproj) : '');
+    reveal.onclick = () => openLocalFile(a.path, 'reveal');
+    acts.appendChild(reveal);
+  }
   // Unload — free the resident weights WITHOUT turning voice off. The default stays,
   // so the next ▶ speak simply pays the load again.
   if (resident){
@@ -11943,9 +11992,8 @@ function renderLaunch(m){
   const av = m && m.launch;
   if (!av || !av.appliable) return '';
   const dirty = av.applied === false;
-  return `<div class="cap-desc" style="margin:0 0 8px">${esc(av.note || '')}</div>
-    <button class="cap-btn" onclick="loadApply(this)"
-      title="Restart the runner on this model so your load settings and sampling floors take effect."
+  return `<button class="cap-btn" onclick="loadApply(this)"
+      title="${escAttr((av.note ? av.note + ' ' : '') + 'Restart the runner on this model so your load settings and sampling floors take effect.')}"
       >Apply &amp; reload</button>
     ${dirty ? '<span class="cap-pill off">not applied yet — reload to take effect</span>'
             : `<span class="cap-count">${esc(av.changed || 0)} launch value${
@@ -12072,8 +12120,7 @@ function renderDetail(){
       ${samp ? `<div class="md-sec" id="md-sampling">${samp}</div>` : ''}
       ${ld ? `<div class="md-sec" id="md-load">${ld}</div>` : ''}
       ${lau ? `<div class="md-sec" id="md-launch">${lau}</div>` : ''}
-      <div class="md-div"></div>
-      <div class="md-path">${m.path ? esc(m.path) : 'path unknown'}</div>`;
+      <div class="md-div"></div>`;
     const acts = d.querySelector('#md-actions');
     // Fable ISSUE 2 state machine: "live" = the model the RUNNER reports (ISSUE C).
     // No model live → every action is Load; one live → it = Eject, others = Switch.
@@ -12091,6 +12138,13 @@ function renderDetail(){
       else { primary.onclick = () => switchModel(m.id, m.name || m.id); }
     }
     acts.appendChild(primary);
+    if (m.path){
+      const reveal = document.createElement('button');
+      reveal.textContent = 'Show in Folder';
+      reveal.title = m.path;
+      reveal.onclick = () => openLocalFile(m.path, 'reveal');
+      acts.appendChild(reveal);
+    }
     // PIN THIS MODEL (S28). LIVE row only, and only while the pin points elsewhere —
     // absent, not greyed, when there is nothing to fix.
     if (isLive && !incomplete && r.live_id && r.active && r.live_id !== r.active && !loadingThis){
@@ -12179,7 +12233,7 @@ async function ejectModel(){
   switchingId = null; switchErr = '';
   const st = document.getElementById('models-stamp');
   st.textContent = 'EJECTING — FREEING MEMORY…';
-  const cn = document.getElementById('chat-note'); if (cn) cn.textContent = 'model ejected — load one from Models';
+  chatNotice('model ejected — load one from Models');
   // /api/models/eject stops the runner AND clears the active model (ISSUE 2) so a
   // later Start won't silently resurrect it. (Not /components/runner/stop, which kept it.)
   try { await fetch('/api/models/eject', {method:'POST'}); } catch {}
@@ -12210,8 +12264,7 @@ async function doDeleteModel(id, name){
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})})).json();
     if (!r.ok){ st.textContent = 'DELETE FAILED — ' + (r.log || 'refused'); modelsBusy = false; return; }
     mSel = null; aSel = null;    // clear detail; renderModels/renderAudio re-select
-    if (r.was_live){ const cn = document.getElementById('chat-note');
-      if (cn) cn.textContent = 'model deleted — load one from Models'; }
+    if (r.was_live) chatNotice('model deleted — load one from Models');
   } catch { st.textContent = 'DELETE FAILED — could not reach the bridge'; modelsBusy = false; return; }
   modelsBusy = false;
   initModels();        // refresh list + stamp (+ RAM ledger); a deleted live model reads not-live
@@ -12419,6 +12472,7 @@ async function switchModel(id, name, confirmed){
   const fail = (msg) => {
     switchingId = null; switchErr = msg; modelsBusy = false;
     stamp.textContent = 'LOAD FAILED — ' + msg;
+    chatNotice('load failed — ' + msg);
     const sr = document.getElementById('sw-row'); if (sr) sr.hidden = true;
     renderDetail();                    // re-enable the button + surface the error inline (no silent wedge)
   };
@@ -12436,6 +12490,7 @@ async function switchModel(id, name, confirmed){
       fitConsent = {id: id, name: name || id, advisory: r.advisory || {}};
       switchingId = null; modelsBusy = false;
       stamp.textContent = 'CHECK BEFORE LOADING → ' + (name || id);
+      chatNotice('load needs review — open Models to see the fit advisory');
       const sr0 = document.getElementById('sw-row'); if (sr0) sr0.hidden = true;
       renderDetail();
       return;
@@ -12446,7 +12501,7 @@ async function switchModel(id, name, confirmed){
         const s = await (await fetch('/api/models/switch-status')).json();
         const phase = s.log || 'loading…';
         stamp.textContent = phase.toUpperCase();
-        const cn = document.getElementById('chat-note'); if (cn) cn.textContent = phase;
+        chatNotice(phase);
         const ph = document.getElementById('md-load-phase'); if (ph) ph.textContent = phase;
         // one-line in-flight readout + Cancel (downloads live in the download manager)
         const sr = document.getElementById('sw-row'), sn = document.getElementById('sw-note');
@@ -12456,7 +12511,8 @@ async function switchModel(id, name, confirmed){
           clearInterval(poll); modelsBusy = false; switchingId = null;
           // _do_switch's log flips to "active: …" on success, "FAILED …"/"error"/"but …
           // FAILED" on failure — reflect a failure inline instead of a silent wedge.
-          if (/failed|error/i.test(phase)) switchErr = phase; else switchErr = '';
+          if (/failed|error/i.test(phase)) switchErr = phase;
+          else { switchErr = ''; chatNotice(''); }
           initModels(); loadChatModels();
         }
       } catch { /* transient bridge blip mid-switch (item D) — keep polling, don't wedge */ }
@@ -12959,17 +13015,31 @@ function lastAttachmentId(hist, userText){
   return newest;
 }
 
-function attachLineEl(src, name, onRemove, removeTitle){
+function attachLineEl(src, name, onRemove, removeTitle, kind){
   // The one builder for a sent-message attachment line — used live at send time
   // (bytes in memory) AND on rehydration (bytes served from the sidecar). Same
   // DOM/classes both ways so a reopened turn is indistinguishable from a live one.
   const line = document.createElement('div');
   line.className = 'attachline';
-  const th = document.createElement('img');
-  th.className = 'attachthumb'; th.src = src; th.alt = name;
-  th.title = 'Click to view'; th.onclick = () => showImageLightbox(src, name);
+  let th;
+  if (kind === 'file') {
+    // Never navigate a live data: URL. An HTML/JS attachment is user content, and
+    // WebKit is not required to honour `download` instead of executing/navigation.
+    // Persisted backend bytes use our first-party download route and are safe to link.
+    if (String(src || '').startsWith('/api/')) {
+      th = document.createElement('a'); th.href = src;
+      th.download = name || 'attachment'; th.title = 'Open or save this file';
+    } else {
+      th = document.createElement('span'); th.title = 'File attached';
+    }
+    th.textContent = '▤';
+  } else {
+    th = document.createElement('img');
+    th.className = 'attachthumb'; th.src = src; th.alt = name;
+    th.title = 'Click to view'; th.onclick = () => showImageLightbox(src, name);
+  }
   const nm = document.createElement('span');
-  nm.textContent = '🖼 ' + name;   // textContent: a filename is never markup
+  nm.textContent = (kind === 'file' ? 'File · ' : '🖼 ') + name;
   const x = document.createElement('button');
   x.className = 'aclear'; x.textContent = '✕';
   // The ✕ says WHAT IT ACTUALLY DOES per lane: on the direct lane it forgets our
@@ -13030,7 +13100,7 @@ function addRestoredAttachment(wrap, att){
       body.appendChild(attachLineEl(
         '/api/ody/attachment/' + encodeURIComponent(att.ody_id),
         att.name || 'image', null,
-        'Remove from this view — the copy kept by Odysseus stays'));
+        'Remove from this view — the copy kept by Odysseus stays', att.kind));
       return;
     }
     if (att.id === undefined || att.id === null) return;
@@ -13583,7 +13653,7 @@ async function sendChat() {
     // backends refuse an empty message (Odysseus validate_message, Hermes's own
     // "empty message"), so the honest answer is to SAY so rather than to invent a
     // prompt on the user's behalf.
-    if (chatPane.attachedImage) attachNote('add a message to send with this image');
+    if (chatPane.attachedImage) attachNote('add a message to send with this attachment');
     return;
   }
   // turn-stream.js is an execution dependency, not progressive decoration.  The
@@ -13621,6 +13691,11 @@ async function sendChat() {
       return;
     }
   }
+  if (chatPane.mode === 'chat' && chatPane.attachedImage
+      && chatPane.attachedImage.kind === 'file') {
+    attachNote('files work in Agent or Hermes; direct Chat accepts images only');
+    return;
+  }
   inp.value = '';
   growInput(inp);             // cleared → shrink back to the two-row base
   chatPane.busy = true;
@@ -13648,11 +13723,11 @@ async function sendChat() {
     // after the turn completes) deletes that row — it never touches the source file.
     const _lane = chatPane.mode;
     userWrap.querySelector('.body').appendChild(
-      _lane === 'chat'
+      (_lane === 'chat' && img.kind !== 'file')
         ? attachLineEl(img.data, img.name, () => liveAttachDrop(userWrap, text))
         : attachLineEl(img.data, img.name, null,
             'Remove from this view — the copy kept by '
-            + (_lane === 'hermes' ? 'Hermes' : 'Odysseus') + ' stays'));
+            + (_lane === 'hermes' ? 'Hermes' : 'Odysseus') + ' stays', img.kind));
   }
   clearImage();
   scrollChat(true);   // sending your own message always snaps to bottom
@@ -13687,19 +13762,18 @@ async function sendChat() {
     // stream renderer below is shared unchanged.
     const url = chatPane.mode === 'hermes' ? '/api/hermes/chat'
               : chatPane.mode === 'chat' ? '/api/chat/direct' : '/api/ody/chat';
-    // ONE attachment shape for all three lanes: {image: <dataURL>, image_name}.
-    // Each bridge lane translates it into its own backend's mechanism (runner
-    // content parts · Odysseus /api/upload + attachments · Hermes
-    // image.attach_bytes), so the panel never branches on the backend.
+    const attachPayload = !img ? {} : (img.kind === 'file'
+      ? {file:img.data, file_name:img.name, file_mime:img.mime || ''}
+      : {image:img.data, image_name:img.name});
     const reqBody = chatPane.mode === 'hermes'
       ? {session_id: chatPane.hermesSid || '', message: text,
          stored_sid: chatPane.hermesStoredSid || '',   // durable id → guard audit's "Chat" jump
          request_id: streamApi.requestId(),
-         ...(img ? {image: img.data, image_name: img.name} : {})}
+         ...attachPayload}
       : {session:chatPane.sid, message:text, mode:chatPane.mode,
          allow_web_search:true, allow_bash:false,
          tz_offset:-new Date().getTimezoneOffset(),
-         ...(img ? {image: img.data, image_name: img.name} : {})};
+         ...attachPayload};
     let resp;
     if (turn.lane !== 'hermes'){
       const made = await streamApi.create(turn.lane, reqBody);
@@ -13726,7 +13800,10 @@ async function sendChat() {
       // screen solely to carry an explicit NOT SENT verdict.
       inp.value = text + (inp.value ? '\n' + inp.value : '');
       growInput(inp);
-      if (img && !chatPane.attachedImage) showAttachedImage(img.data, img.name);
+      if (img && !chatPane.attachedImage) {
+        if (img.kind === 'file') showAttachedFile(img.data, img.name, img.mime);
+        else showAttachedImage(img.data, img.name);
+      }
       body.textContent += '\n[not sent: ' + String(e && e.message || e) + ']';
       holder.classList.add('turn-rejected');
     } else body.textContent += `\n[stream error: ${e}]`;
@@ -14533,10 +14610,7 @@ function canvasReveal(){
 function paletteEditArtifact(){
   if (artifactState.open){ if (!_canvas.on) toggleArtifactEdit(); return; }
   showView('chat');
-  const el = document.getElementById('chat-note');
-  if (el){ const o = el.textContent;
-    el.textContent = 'no artifact open — open one from a chat code block first';
-    setTimeout(() => { el.textContent = o; }, 3000); }
+  chatNotice('no artifact open — open one from a chat code block first', 3000);
 }
 
 // ---- console strip (only THIS frame's messages; textContent only) ----

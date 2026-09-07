@@ -134,7 +134,10 @@ console.log('\n2. the renderer, executed over the real document');
      `…and a bullet that wraps onto an indented line stays ONE item (${wrongStarts} items,`
      + ' not one per line)');
   const hermes = DOC.sections.find(s => /^Hermes tools/.test(s.title));
-  ok(hermes.subs.length === 2, 'the `### ` subsections are collected for the contents rail');
+  const hermesMd = md.split(/^## Hermes tools.*$/m)[1] || '';
+  const hermesSubStarts = (hermesMd.split(/^## /m)[0].match(/^###\s+\S.*$/gm) || []).length;
+  ok(hermesSubStarts > 0 && hermes.subs.length === hermesSubStarts,
+     `all ${hermesSubStarts} source \`### \` subsections are collected for the contents rail`);
   for (const u of hermes.subs) {
     ok(hermes.html.indexOf('id="' + u.id + '"') >= 0,
        'the rail id "' + u.id + '" is an id that really exists in the rendered body '

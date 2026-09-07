@@ -38,6 +38,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from bridge.appsrc import APP_SOURCE as _APP_SOURCE            # noqa: E402
+from bridge.core.chatattachments import decode_chat_file       # noqa: E402
 
 FAILS = []
 
@@ -98,6 +99,18 @@ PNG = ("data:image/png;base64,"
            "890000000a49444154789c6360000002000100ffff03000006000557bfabd400"
            "00000049454e44ae426082")).decode())
 
+TXT = "data:text/plain;base64," + base64.b64encode(b"hello").decode()
+record, err = decode_chat_file(TXT, "notes.txt", "text/plain")
+check("shared file fence accepts a supported non-empty document",
+      not err and record["raw"] == b"hello" and record["kind"] == "file")
+check("shared file fence rejects suffix tricks even when MIME claims text",
+      "unsupported" in decode_chat_file(TXT, "payload.exe", "text/plain")[1])
+check("shared file fence rejects malformed base64",
+      "decoded" in decode_chat_file("data:text/plain;base64,%%%", "notes.txt")[1])
+record, err = decode_chat_file(TXT, "notes\n\x00.txt", "text/plain")
+check("shared file fence strips filename controls before either upstream sees them",
+      not err and record["name"] == "notes.txt")
+
 print("\n── A. the pure fences ──")
 for fn, lane in ((ody_attach_error, "agent"), (hermes_attach_error, "hermes")):
     check(f"{lane}: no image = no error (the ordinary turn is untouched)",
@@ -146,8 +159,9 @@ hist = [{"role": "user", "content": "look",
          "metadata": {"attachments": [{"id": "up_1", "name": "shot.png",
                                        "mime": "image/png"}]}}]
 ody_attachment_handles(hist)
-check("an Odysseus image upload becomes an {ody_id,name} handle",
-      hist[0]["attachment"] == {"ody_id": "up_1", "name": "shot.png"})
+check("an Odysseus image upload becomes an image handle",
+      hist[0]["attachment"] == {"ody_id": "up_1", "name": "shot.png",
+                                 "mime": "image/png", "kind": "image"})
 check("…and it is NOT the sidecar's {id} shape (different bytes source)",
       "id" not in hist[0]["attachment"])
 h2 = [{"role": "user", "content": "x", "attachment": {"id": 7, "name": "a"},
@@ -160,7 +174,9 @@ h3 = [{"role": "user", "content": "x",
        "metadata": {"attachments": [{"id": "u", "name": "notes.txt",
                                      "mime": "text/plain"}]}}]
 ody_attachment_handles(h3)
-check("a NON-image attachment gets no thumbnail handle", "attachment" not in h3[0])
+check("a NON-image attachment gets an honest file handle, not a thumbnail",
+      h3[0]["attachment"] == {"ody_id": "u", "name": "notes.txt",
+                                "mime": "text/plain", "kind": "file"})
 h4 = [{"role": "assistant", "content": "x",
        "metadata": {"attachments": [{"id": "u", "name": "a.png",
                                      "mime": "image/png"}]}}]
@@ -331,6 +347,16 @@ def test_flows():
 
     client = TestClient(A.app)
 
+    # The panel prevents this combination, but the HTTP entry point is public on
+    # loopback too. It must refuse independently before runner/Odysseus state changes.
+    note = "data:text/plain;base64," + base64.b64encode(b"hello").decode()
+    r = client.post("/api/chat/direct", json={"session": "s1", "message": "read",
+                                               "file": note,
+                                               "file_name": "notes.txt"})
+    check("direct backend: a document is explicitly refused rather than ignored",
+          r.status_code == 200 and "direct Chat accepts images only" in r.text
+          and r.text.rstrip().endswith("data: [DONE]"))
+
     # ---- the Agent lane -----------------------------------------------------
     calls = {}
 
@@ -392,6 +418,19 @@ def test_flows():
           json.loads(calls["stream"]["attachments"]) == ["up_9"])
     check("…while the message text itself is untouched",
           calls["stream"]["message"] == "what is this")
+
+    calls.clear()
+    note = "data:text/plain;base64," + base64.b64encode(b"alpha,beta\n1,2\n").decode()
+    r = client.post("/api/ody/chat", json={"session": "s1", "message": "summarise",
+                                           "file": note, "file_name": "notes.csv",
+                                           "file_mime": "text/csv"})
+    up = [c for c in calls.get("req", []) if c[1] == "/api/upload"]
+    check("agent lane: a document uses Odysseus's native upload contract",
+          r.status_code == 200 and len(up) == 1
+          and up[0][2]["files"]["files"][0] == "notes.csv")
+    check("…and the returned upload id reaches chat_stream",
+          json.loads(calls["stream"]["attachments"]) == ["up_9"])
+    check("…without emitting image-only vision provenance", '"vision"' not in r.text)
 
     # ---- vision prep rides the Agent lane (v1.5.32) -------------------------
     calls.clear()
@@ -464,6 +503,10 @@ def test_flows():
                 if self.fail_attach:
                     raise RuntimeError("unsupported image extension: .tif")
                 return {"attached": True, "path": "/tmp/x.png", "count": 1}
+            if method == "file.attach":
+                return {"attached": True, "ref_text": "@file:notes.txt"}
+            if method == "pdf.attach":
+                return {"attached": True, "pages_attached": 1}
             if method == "prompt.submit":
                 self.q.put_nowait({"type": "message.complete",
                                    "payload": {"status": "complete"}})
@@ -510,6 +553,27 @@ def test_flows():
     check("…and prompt.submit is NEVER reached (no answer without the image)",
           "prompt.submit" not in [c[0] for c in hcalls])
     fake.fail_attach = False
+
+    hcalls.clear()
+    note = "data:text/plain;base64," + base64.b64encode(b"hello file").decode()
+    r = client.post("/api/hermes/chat", json={"session_id": "gw1", "message": "read it",
+                                              "file": note, "file_name": "notes.txt",
+                                              "file_mime": "text/plain"})
+    names = [c[0] for c in hcalls]
+    check("Hermes document: file.attach runs before prompt.submit",
+          names.index("file.attach") < names.index("prompt.submit"))
+    prompt = [c[1]["text"] for c in hcalls if c[0] == "prompt.submit"][0]
+    check("…and its upstream @file reference is included in the prompt",
+          "@file:notes.txt" in prompt)
+
+    hcalls.clear()
+    pdf = "data:application/pdf;base64," + base64.b64encode(b"%PDF-1.4\n%%EOF").decode()
+    r = client.post("/api/hermes/chat", json={"session_id": "gw1", "message": "read it",
+                                              "file": pdf, "file_name": "brief.pdf",
+                                              "file_mime": "application/pdf"})
+    check("Hermes PDF uses pdf.attach rather than a generic opaque file",
+          "pdf.attach" in [c[0] for c in hcalls]
+          and "file.attach" not in [c[0] for c in hcalls])
 
     hcalls.clear()
     r = client.post("/api/hermes/chat", json={"session_id": "gw1", "message": "m",

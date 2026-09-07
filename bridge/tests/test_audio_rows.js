@@ -242,7 +242,7 @@ check('junk never throws',
 check('the note is rendered on the audio detail pane',
       /omnivoiceBf16Hint\(a\)[\s\S]{0,200}md-imnote/.test(html));
 check('nothing about it is automatic — it never calls a download or a default',
-      !/omnivoiceBf16Hint[\s\S]{0,400}(dlStart|setVoiceDefault)/.test(html));
+      !/(dlStart|setVoiceDefault)/.test(grab('omnivoiceBf16Hint')));
 
 console.log('');
 console.log(fails.length ? 'FAILED: ' + fails.join(', ') : 'ALL PASS');

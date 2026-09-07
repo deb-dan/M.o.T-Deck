@@ -5,6 +5,7 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 from ..core.analytics import _log_ody_metrics
 from ..core.appctx import app
+from ..core.chatattachments import decode_chat_file
 from .ody import _ody, _ody_login, _ody_req, ody_vision_prepare
 from .sampling import IMAGE_MAX_CHARS
 from .sidecars import parse_data_url
@@ -49,6 +50,9 @@ async def agent_events(body: dict):
     """Produce upstream Agent SSE frames independently of a browser response."""
     image = body.get("image") or ""
     image_name = (body.get("image_name") or "")[:200]
+    chat_file, file_error = decode_chat_file(
+        body.get("file") or "", body.get("file_name") or "",
+        body.get("file_mime") or "")
     fields = {
         "session": body.get("session", ""),
         "message": body.get("message", ""),
@@ -60,18 +64,28 @@ async def agent_events(body: dict):
     async def gen():
         import json as _json
         tail = ""   # rolling tail of the stream, for best-effort metrics logging
-        if image:
+        if image or body.get("file"):
             # Upload FIRST: no part of this turn starts until we know the attachment
-            # landed. Every failure ends the turn with its own reason.
-            err = ody_attach_error(image)
-            mime, raw = (None, None) if err else parse_data_url(image, IMAGE_MAX_CHARS)
-            if not err and not raw:
-                err = "that image could not be decoded — attach removed"
+            # landed. Every failure ends the turn with its own reason.  Images keep
+            # the vision-preparation path; documents ride Odysseus's native upload
+            # contract and are processed by its document handler.
+            err = "attach one file at a time" if image and body.get("file") else file_error
+            is_image = bool(image)
+            if is_image:
+                err = err or ody_attach_error(image)
+                mime, raw = (None, None) if err else parse_data_url(image, IMAGE_MAX_CHARS)
+                upload_name = image_name or "image"
+                if not err and not raw:
+                    err = "that image could not be decoded — attach removed"
+            else:
+                mime = chat_file.get("mime") if chat_file else None
+                raw = chat_file.get("raw") if chat_file else None
+                upload_name = chat_file.get("name") if chat_file else "file"
             if not err:
                 try:
                     r = await _ody_req(
                         "POST", ODY_ATTACH_UPLOAD,
-                        files={"files": (image_name or "image", raw,
+                        files={"files": (upload_name, raw,
                                          mime or "application/octet-stream")},
                         data={"session_id": fields["session"]})
                     if r.status_code != 200:
@@ -99,19 +113,20 @@ async def agent_events(body: dict):
                             # "attachment upload failed" — blaming the transport
                             # for a preparation step AND failing a turn whose
                             # image already landed.
-                            try:
-                                vis = await ody_vision_prepare(
-                                    ids[0], raw, mime or "", image_name or "image")
-                            except Exception as ve:              # noqa: BLE001
-                                vis = {"source": "none", "model": "",
-                                       "note": f"vision prep failed: {str(ve)[:140]}"}
-                            # Tell the panel HOW the model got at this image, so a
-                            # described answer can never wear the clothes of a
-                            # seen one (the LIES-TO-USER rule, requirement 4).
-                            yield ("data: " + _json.dumps(
-                                {"type": "vision", "source": vis.get("source"),
-                                 "model": vis.get("model"),
-                                 "note": vis.get("note")}) + "\n\n")
+                            if is_image:
+                                try:
+                                    vis = await ody_vision_prepare(
+                                        ids[0], raw, mime or "", upload_name)
+                                except Exception as ve:          # noqa: BLE001
+                                    vis = {"source": "none", "model": "",
+                                           "note": f"vision prep failed: {str(ve)[:140]}"}
+                                # Tell the panel HOW the model got at this image, so a
+                                # described answer can never wear the clothes of a
+                                # seen one (the LIES-TO-USER rule, requirement 4).
+                                yield ("data: " + _json.dumps(
+                                    {"type": "vision", "source": vis.get("source"),
+                                     "model": vis.get("model"),
+                                     "note": vis.get("note")}) + "\n\n")
                 except Exception as e:
                     err = f"Odysseus attachment upload failed: {str(e)[:160]}"
             if err:

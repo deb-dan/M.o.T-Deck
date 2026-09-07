@@ -18,6 +18,7 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const html = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'index.html'), 'utf8');
+const help = fs.readFileSync(path.join(ROOT, 'docs', 'USER-EXPLAINERS.md'), 'utf8');
 
 let fails = [];
 function check(name, cond) {
@@ -314,27 +315,25 @@ check('the group heads with the count of rows out of sync',
 check('exactly ONE adopt chip for the whole group',
   (out2.match(/hermesToolsAdopt/g) || []).length === 1);
 check('the Check chip is always offered', out2.indexOf('hermesToolsCheck(this)') >= 0);
-// HONEST MOVE: this sentence used to sit on the preset row and said only "what
-// HERMES reports". It now sits in the group header and is strictly stronger — it
-// also NAMES the platform these switches govern, which is the fact whose absence
-// sent Debi to cross-check a second app.
-check('the group says out loud that the switches show HERMES’s answer',
-  /Every switch shows what HERMES reports/.test(out2));
-check('...and NAMES the platform it controls',
-  out2.indexOf('<b>cli</b> platform') >= 0
-  && /the one this chat runs on/.test(out2));
-check('...and still NAMES the trap (Hermes’s own page fetches once on open, '
-    + 'SkillsPage.tsx:155-174, and never live-refreshes)',
-  /Skills → TOOLSETS/.test(out2) && /never refreshes itself/.test(out2));
+// S15/S16: the everyday header is now glanceable. The quiet chips state source,
+// platform and timing; the full explanation remains one click away in Help.
+check('the group says the switches show Hermes’s live answer',
+  /live from Hermes/.test(out2));
+check('...and NAMES the platform/lane it controls',
+  /cli lane · next chat/.test(out2));
+check('...and links the complete behavior rather than deleting it',
+  /showView\('help'\)/.test(out2) && /How Hermes tools work/.test(out2));
+check('Help still NAMES the stale-upstream-page trap',
+  /Skills page fetches its list once/.test(help) && /never refreshes/.test(help));
 // The shell reloads that webview whenever our config generation has moved and a Hermes
 // surface is on screen — on a tab switch (maybeReloadStaleHermes) AND on a poll while it
 // is already visible (updateHermesGenTimer), which is what covers split view. The copy
 // may therefore promise the automatic reload for BOTH, and the only case left uncovered
 // is a Hermes dashboard open outside this app, which it must still name.
-check('...and now promises the automatic reload, not a tab switch you have to make',
-  /MOT Deck reloads that tab for you/i.test(out2));
+check('Help promises the automatic reload, not a tab switch you have to make',
+  /MOT Deck[\s\S]{0,80}reloads an open Hermes tab/.test(help));
 check('...covering split view explicitly, and still naming the one case it cannot reach',
-  /split view/i.test(out2) && /outside<\/i> this app/i.test(out2) && /⌘R/.test(out2));
+  /split view/.test(help) && /outside[\s\S]{0,20}MOT Deck/.test(help) && /⌘R/.test(help));
 check('the defaults preset chip no longer promises "everything"',
   out2.indexOf('Everything back on') < 0
   && out2.indexOf(">Hermes's defaults<") >= 0);

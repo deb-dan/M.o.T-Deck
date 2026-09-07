@@ -262,6 +262,52 @@ UNDO_FENCE_REFUSAL = ("that workbook changed on disk after the change was applie
 # Read caps. The 2000 is the write cap reused deliberately: one number for "how much of
 # a spreadsheet fits in one exchange", so a model that can write a block can read it back.
 READ_MAX_CELLS = ACT_MAX_CELLS
+OP_KINDS = ("set", "style", "create_workbook", "sheet", "add_sheet",
+            "resize", "sort", "insert", "delete_rc")
+
+
+def ops_json_schema() -> dict:
+    """JSON Schema generated from the validator's operation vocabulary and caps.
+
+    This teaches MCP clients the discriminated shapes without becoming a second
+    behavioural validator.  ``validate_ops`` remains authoritative for ranges,
+    aliases, cross-field rules and the shared cell budget.
+    """
+    scalar = {"type": ["string", "number", "boolean", "null"]}
+    row = {"type": "array", "minItems": 1, "items": scalar}
+    grid = {"type": "array", "minItems": 1,
+            "items": {"type": "array", "minItems": 1, "items": scalar}}
+    # act_grid deliberately accepts all three unambiguous authoring shapes.
+    values = {"oneOf": [scalar, row, grid]}
+    style = {"type": "object", "properties": {
+        key: {} for key in ("bl", "it", "ul", "st", "ff", "fs", "cl", "bg",
+                            "ht", "vt", "tb", "n")}}
+    fields = {
+        "set": {"at": {"type": "string"}, "values": values, "value": values,
+                "as_text": {"type": ["boolean", "string"]}},
+        "style": {"at": {"type": "string"}, "set": style, "style": style},
+        "create_workbook": {},
+        "sheet": {"add": {"type": "string"}, "rename": {"type": "string"},
+                  "at": {"type": "string"}},
+        "add_sheet": {"name": {"type": "string"}},
+        "resize": {"rows": {"type": ["number", "string"]},
+                   "cols": {"type": ["number", "string"]}},
+        "sort": {"col": {"type": ["string", "number"]},
+                 "at": {"type": ["string", "number"]},
+                 "desc": {"type": ["boolean", "string"]},
+                 "dir": {"type": "string"}, "order": {"type": "string"}},
+        "insert": {"what": {"type": "string"}, "axis": {"type": "string"},
+                   "at": {"type": ["string", "number"]},
+                   "n": {"type": ["number", "string"]}},
+        "delete_rc": {"what": {"type": "string"}, "axis": {"type": "string"},
+                      "at": {"type": ["string", "number"]},
+                      "n": {"type": ["number", "string"]}},
+    }
+    variants = [{"type": "object", "required": ["op"],
+                 "properties": {"op": {"const": kind}, **fields[kind]}}
+                for kind in OP_KINDS]
+    return {"type": "array", "minItems": 1, "maxItems": ACT_MAX_OPS,
+            "items": {"oneOf": variants}}
 STATS_MAX_COLS = 64             # column stats past this is a wall of text, not an answer
 
 
@@ -524,6 +570,8 @@ def validate_ops(raw):
         if not isinstance(o, dict):
             return None, None, at + "not an object"
         kind = ("" if o.get("op") is None else str(o["op"])).strip().lower()
+        if kind not in OP_KINDS:
+            return None, None, at + "unknown operation " + json.dumps(kind)
         if kind == "set":
             rg = act_range(o.get("at"))
             if rg is None:
@@ -2130,6 +2178,22 @@ def op_list(root) -> dict:
                       "as a workbook of its own."]}
 
 
+def read_page_range(rg, cap=READ_MAX_CELLS):
+    """Return ``(page, next_range)`` for a bounded A1 rectangle.
+
+    Columns are already bounded to A:GR (200), so at least one complete row always
+    fits. Pagination therefore preserves whole rows and gives the caller one exact A1
+    continuation range rather than forcing it to invent chunk arithmetic.
+    """
+    r0, c0, r1, c1 = rg
+    width = max(c1 - c0 + 1, 1)
+    rows = max(1, int(cap) // width)
+    end = min(r1, r0 + rows - 1)
+    page = (r0, c0, end, c1)
+    nxt = None if end >= r1 else (end + 1, c0, r1, c1)
+    return page, nxt
+
+
 def op_read(root, name, sheet=None, cell_range=None):
     """values + formulas-as-text + cached values + merges, for a range.
 
@@ -2152,12 +2216,14 @@ def op_read(root, name, sheet=None, cell_range=None):
                           "A1:D20")
     else:
         rg = (0, 0, max(urows - 1, 0), max(ucols - 1, 0))
-    r0, c0, r1, c1 = rg
+    asked = rg
+    r0, c0, r1, c1 = asked
+    if r0 > ACT_MAX_ROW or c0 > ACT_MAX_COL:
+        return None, ("that range starts past " + col_name(ACT_MAX_COL)
+                      + str(ACT_MAX_ROW + 1))
     r1, c1 = min(r1, ACT_MAX_ROW), min(c1, ACT_MAX_COL)
-    area = max(r1 - r0 + 1, 0) * max(c1 - c0 + 1, 0)
-    if area > READ_MAX_CELLS:
-        return None, (f"that range is {area} cells and the read cap is "
-                      f"{READ_MAX_CELLS} — ask for it in a few smaller pieces")
+    bounded = (r0, c0, r1, c1)
+    (r0, c0, r1, c1), next_rg = read_page_range(bounded)
     cells, formulas, dates, uncached = [], 0, 0, 0
     styles = snap.get("styles") if isinstance(snap.get("styles"), dict) else {}
     for r in range(r0, r1 + 1):
@@ -2240,10 +2306,25 @@ def op_read(root, name, sheet=None, cell_range=None):
     if sh.get("truncated"):
         notes.append(f"this sheet is larger than the {office.MAX_CELLS}-cell reader "
                      "and was truncated — the tail is not in this result.")
+    if next_rg:
+        notes.append("this is one bounded page of the requested range; read "
+                     f"{a1(next_rg[0], next_rg[1])}:{a1(next_rg[2], next_rg[3])} "
+                     "next to continue without overlap")
+    if asked != bounded:
+        notes.append("the requested range extends past MOT Deck's readable sheet "
+                     f"boundary and was bounded to {a1(bounded[0], bounded[1])}:"
+                     f"{a1(bounded[2], bounded[3])}")
     # `content_trust` BEFORE `cells` — the boundary is read before the content it
     # governs (UNTRUSTED_CONTENT_NOTE). The cells themselves are untouched.
     return {"ok": True, "name": os.path.basename(target), "sheet": sh.get("name"),
             "range": f"{a1(r0, c0)}:{a1(r1, c1)}",
+            "requested_range": f"{a1(asked[0], asked[1])}:"
+                               f"{a1(asked[2], asked[3])}",
+            "bounded_range": f"{a1(bounded[0], bounded[1])}:"
+                             f"{a1(bounded[2], bounded[3])}",
+            "truncated": bool(next_rg or asked != bounded),
+            "next_range": (f"{a1(next_rg[0], next_rg[1])}:"
+                           f"{a1(next_rg[2], next_rg[3])}" if next_rg else None),
             "used_range": (f"A1:{a1(max(urows - 1, 0), max(ucols - 1, 0))}"
                            if urows and ucols else "(empty sheet)"),
             "content_trust": UNTRUSTED_CONTENT_NOTE,

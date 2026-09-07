@@ -450,6 +450,7 @@ def office_mcp_status() -> JSONResponse:
                            "nothing to card; office_stage_changes records a proposal "
                            "the bridge holds and only a person can apply it"},
         "tools": [t["name"] for t in _office_mcp.tool_specs()],
+        "catalog_sha256": _office_mcp.catalog_sha256(),
     })
 
 

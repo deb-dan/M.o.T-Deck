@@ -147,6 +147,8 @@ FILES: tuple[str, ...] = (
     "core/hermesturn.py",
     "core/hermesreplay.py",
     "core/localsecrets.py",
+    # A2 shared, deliberately narrow Agent/Hermes document-attachment contract.
+    "core/chatattachments.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

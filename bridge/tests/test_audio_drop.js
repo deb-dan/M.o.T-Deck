@@ -62,8 +62,8 @@ check('the shell routes audio drops to motdeckNativeAudioDrop',
 check('the shell accepts the same four suffixes',
       /audioMimes = \["wav": "audio\/wav", "mp3": "audio\/mpeg",[\s\S]{0,80}"flac": "audio\/flac", "m4a": "audio\/mp4"\]/
         .test(swift));
-check('the shell caps audio at 15 MB (the bridge\'s REF_AUDIO_MAX_BYTES)',
-      /isAudio \? 15 \* 1024 \* 1024 : 8 \* 1024 \* 1024/.test(swift));
+check('the shell caps audio at 15 MB, documents at 10 MB, and images at 8 MB',
+      /isAudio \? 15 \* 1024 \* 1024 : \(isFile \? 10 \* 1024 \* 1024 : 8 \* 1024 \* 1024\)/.test(swift));
 check('the bridge cap really is 15 MB',
       /REF_AUDIO_MAX_BYTES = 15 \* 1024 \* 1024/
         .test(fs.readFileSync(path.join(ROOT, 'bridge', 'voice.py'), 'utf8')));

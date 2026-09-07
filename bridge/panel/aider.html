@@ -47,7 +47,8 @@
   button.primary{background:var(--cream);color:var(--bg);border-color:var(--cream)}
   .grow{flex:1 1 auto}
   #note{flex:none;padding:8px 16px;color:var(--faint);font-size:11.5px;
-        border-bottom:1px solid var(--line);background:var(--bg2)}
+        border-bottom:1px solid var(--line);background:var(--bg2);display:flex;
+        align-items:center;gap:6px;flex-wrap:wrap}
   #note b{color:var(--dim);font-weight:600}
   #wrap{flex:1 1 auto;min-height:0;padding:8px 10px 10px;background:var(--bg)}
   #term{width:100%;height:100%}
@@ -98,20 +99,14 @@
   <button id="btn-stop" style="display:none">End session</button>
 </header>
 <div id="note">
-  aider edits files in <b id="ws-dir">data/aider-workspace</b> — it asks before every
-  change, and git is its undo (<b>/undo</b>, <b>/diff</b>). Nothing is auto-committed.
-  Reloading this tab does <b>not</b> end the session — it reattaches and replays the
-  last <b id="sbk">256</b>KB of the terminal. With no tab attached it keeps running for
-  <b id="grace">10 minutes</b>, then stops. <b>End session</b> stops it now.
+  <span class="pill" title="Aider edits only inside this workspace; it asks before a change, never auto-commits, and git provides /undo and /diff.">workspace · <b id="ws-dir">data/aider-workspace</b></span>
+  <span class="pill" title="Reload reattaches and replays bounded terminal scrollback.">reattach · <b id="sbk">256</b>KB</span>
+  <span class="pill" title="With no tab attached the session stays alive for this grace period. End session or /exit stops it immediately.">grace · <b id="grace">10 minutes</b></span>
 </div>
 <div id="msg"></div>
 <div id="logwrap"><pre id="logbox"></pre></div>
 <div id="wrap"><div id="term"></div></div>
-<div id="foot">aider is a lane, not a component — it has no MOT Deck card to start or
-  stop. It outlives a reload but not the grace window above, and <b>End session</b> or
-  <code>/exit</code> stops it at once. Aider keeps no session list of its own: its
-  history lives in the workspace, which is why this tab offers a reattach and not a
-  picker.</div>
+<div id="foot" title="Aider is a tab-owned lane, not a component. Its history lives in the workspace, so it reattaches rather than offering a separate session picker.">Full behavior: MOT Deck → Help → Aider.</div>
 
 <script src="/assets/vendor/xterm.js"></script>
 <script src="/assets/vendor/xterm-addon-fit.js"></script>

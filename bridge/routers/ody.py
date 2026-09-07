@@ -416,9 +416,9 @@ def ody_attachment_handles(history_rows):
     handle carries `ody_id` instead of `id`; the panel reads that as "these bytes
     live in Odysseus" and serves them from /api/ody/attachment/<id>.
 
-    Only IMAGE attachments get a handle (a thumbnail of a .txt is nothing), only the
-    FIRST per row (the composer stages one image per message), and never over a
-    handle the local sidecar already set. Never raises.
+    Images render as thumbnails; supported documents render as named download/open
+    rows. Only the FIRST per row (the composer stages one attachment per message),
+    and never over a handle the local sidecar already set. Never raises.
     """
     try:
         for m in (history_rows or []):
@@ -433,11 +433,12 @@ def ody_attachment_handles(history_rows):
                     continue
                 mime = str(a.get("mime") or "")
                 name = str(a.get("name") or "image")
-                if not (mime.startswith("image/")
-                        or name.lower().endswith((".png", ".jpg", ".jpeg",
-                                                  ".webp", ".gif"))):
-                    continue
-                m["attachment"] = {"ody_id": str(a["id"]), "name": name}
+                is_image = (mime.startswith("image/")
+                            or name.lower().endswith((".png", ".jpg", ".jpeg",
+                                                      ".webp", ".gif")))
+                m["attachment"] = {"ody_id": str(a["id"]), "name": name,
+                                   "mime": mime,
+                                   "kind": "image" if is_image else "file"}
                 break
     except Exception:
         pass

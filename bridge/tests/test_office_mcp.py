@@ -144,6 +144,18 @@ check("…and an unknown key is dropped rather than promised",
       office_ops.act_style_set({"border": "thin"}) is None
       and office_ops.act_style_set({"bl": 1, "border": "thin"}) == {"bl": 1})
 
+_catalog = office_mcp.catalog_sha256()
+check("the Office catalog has a deterministic SHA-256 identity",
+      len(_catalog) == 64 and _catalog == office_mcp.catalog_sha256())
+_original_payload = office_mcp.tool_list_payload
+try:
+    office_mcp.tool_list_payload = lambda: [dict(_original_payload()[0],
+                                                 description="changed contract")]
+    check("the catalog identity covers descriptions/schemas, not only tool names",
+          office_mcp.catalog_sha256() != _catalog)
+finally:
+    office_mcp.tool_list_payload = _original_payload
+
 
 # ══ 2. THE PURE TABLES, mirrored from bridge/tests/test_office_ai.js ═════════
 print("\n── 2a. references, ranges, grids, columns ──")
@@ -595,8 +607,23 @@ if HAVE_XL:
           "mistake a cached number for a computed one",
           office_ops.CACHED_NOTE in out["notes"])
     out, reason = office_ops.op_read(TMP, "read.xlsx", None, "A1:BZ200")
-    check("a read over the cell cap is refused with the number in the sentence",
-          out is None and str(office_ops.READ_MAX_CELLS) in reason)
+    check("a read over the cell cap returns a bounded first page, not a refusal",
+          reason is None and out["truncated"] is True
+          and out["range"] == "A1:BZ25")
+    check("…with an exact non-overlapping continuation range",
+          out["next_range"] == "A26:BZ200"
+          and out["requested_range"] == "A1:BZ200"
+          and out["bounded_range"] == "A1:BZ200")
+    # Five bounded rows fit within the read budget, so this isolates column-boundary
+    # clipping from row pagination. The result is truncated, but has no next page.
+    out, reason = office_ops.op_read(TMP, "read.xlsx", None, "A1:ZZ5")
+    check("…and a range beyond the supported grid names both the user's request and "
+          "the honest bounded rectangle",
+          reason is None and out["requested_range"] == "A1:ZZ5"
+          and out["bounded_range"] == "A1:GR5"
+          and out["truncated"] is True
+          and out["next_range"] is None
+          and any("bounded to A1:GR5" in n for n in out["notes"]))
     out, reason = office_ops.op_read(TMP, "read.xlsx", None, "not a range")
     check("…and a junk range is refused rather than read as something else",
           out is None and "not a cell or a range" in reason)
@@ -1193,6 +1220,20 @@ check("…and names the TTL, so a model that comes back in an hour is not surpri
       "expires after 10 minutes" in STAGE)
 OPSDOC = [t for t in PAYLOAD if t["name"] == "office_stage_changes"][0][
     "inputSchema"]["properties"]["ops"]["description"]
+OPSSCHEMA = [t for t in PAYLOAD if t["name"] == "office_stage_changes"][0][
+    "inputSchema"]["properties"]["ops"]
+eq("S34: the JSON Schema variants are generated from the validator's exact op table",
+   [v["properties"]["op"]["const"] for v in OPSSCHEMA["items"]["oneOf"]],
+   list(office_ops.OP_KINDS))
+eq("…and the schema carries the validator's operation cap",
+   OPSSCHEMA["maxItems"], office_ops.ACT_MAX_OPS)
+check("…while set/style expose their real structured fields rather than opaque objects",
+      "values" in OPSSCHEMA["items"]["oneOf"][0]["properties"]
+      and "set" in OPSSCHEMA["items"]["oneOf"][1]["properties"])
+eq("…and set advertises every unambiguous shape act_grid accepts: scalar, row, grid",
+   [shape.get("type") for shape in OPSSCHEMA["items"]["oneOf"][0]
+    ["properties"]["values"]["oneOf"]],
+   [["string", "number", "boolean", "null"], "array", "array"])
 check("the ops grammar teaches every op the changeset grammar accepts, create_workbook "
       "and add_sheet included (absorbed from the retired office_create)",
       all(k in OPSDOC for k in ('"op":"set"', '"op":"style"', '"op":"sort"',

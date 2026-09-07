@@ -2866,19 +2866,20 @@ eval(grab('extPlan'));
     check('csRows survives junk input (case ' + i + ')', !threw && r && !r.lines.length);
   });
 
-  // ── the card's words: a PROPOSAL, and the two guarantees behind Apply ──
+  // ── the card's standing words stay concise; the two guarantees remain on the
+  //    persistent status chips as hover disclosures rather than repeating per card. ──
   const t = csCardText(cs);
   check('the card says how many operations, and names the workbook',
         /3 operations/.test(t) && t.indexOf('ZZ final A.xlsx') > 0);
   check('…carries the bridge\'s own summary line rather than re-deriving one',
         t.indexOf(cs.summary) > 0);
-  check('…SAYS NOTHING HAS BEEN WRITTEN, which is the sentence the whole lane rests on',
-        /Nothing has been written/.test(t) && /this is a proposal/.test(t));
-  check('…that Apply is the only thing that touches the file',
-        /Apply is the only thing\s+that touches the file/.test(t.replace(/\n/g, ' ')));
-  check('…and that Apply checkpoints first, so the click is responsible rather than '
-        + 'merely quick (spec §3)',
-        /keeps a checkpoint first/.test(t) && /can be undone/.test(t));
+  check('…does not repeat policy prose on every card',
+        !/Nothing has been written|checkpoint first|can be undone/.test(t));
+  check('the not-applied chip preserves the no-write guarantee in its disclosure',
+        /lang\.title\s*=\s*'Nothing is written until you choose Apply\.'/m.test(html));
+  check('the undoable chip preserves the checkpoint guarantee in its disclosure',
+        /undoable\.textContent\s*=\s*'undoable ✓'/.test(html)
+        && /Apply saves a checkpoint first/.test(html));
   eq('one operation is not "1 operations"', /1 operation\b/.test(
      csCardText({ op_count: 1, name: 'a.xlsx', summary: '' })), true);
   check('csCardText survives junk', (() => {

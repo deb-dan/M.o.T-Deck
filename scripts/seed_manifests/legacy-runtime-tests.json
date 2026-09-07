@@ -1,0 +1,538 @@
+{
+  "algorithm": "sha256",
+  "evidence": [
+    "v1.5.75 clean FAT release at 970df3bd1e6c3a9407bb3b10dda77e7506bcf6bc",
+    "v1.5.81 verified clean FAT release at 5729c9f5c54365ae1e2b5b0ee314163c2dedc532",
+    "v1.5.84 verified clean FAT release at c484561f5c99b36bdf90d311b451077bcb339f48"
+  ],
+  "files": {
+    "bridge/contract_tests/test_aider_contract.py": [
+      "09315325984360a7c7a459fc4d7a706ed5e4c9e218ceb83fb81c8b81dfeffaef",
+      "6421adc72e4ed9af760694c47988b86f9c05527d1dfaf6b1122c9f88350ccf8d",
+      "f4f42c1118a90c1e98bd1f267e41dba9aecf546cc8cbcdb011897695856472a0"
+    ],
+    "bridge/contract_tests/test_app_identity_contract.py": [
+      "24d74a5d8988966cc7f39108877cc60b48660e93383f84adae323fb25346d988",
+      "649979597eb51d767e6cd4a393e76f4a33627e5338584fb0971879e840c6c2d9",
+      "8b1d9c30efd27114a4c58bcd294d5c54bbf5a6e70e961c55b605009ee964a33f"
+    ],
+    "bridge/contract_tests/test_attach_lanes_contract.py": "0fde3d078badf2b5c0e32ba4b0d0948acf0cde8cac85d9042839fb1f0a422785",
+    "bridge/contract_tests/test_canonical_root_severance.py": [
+      "03a0b4ac78607579585e92c6d86cce12d040958199a8105d852d663d4a47e52c",
+      "d40a4be801db43a25df6cab1da075b7e6d3f80e56dd3abdef9c011683da7bfd7"
+    ],
+    "bridge/contract_tests/test_detached_spawn_contract.py": [
+      "7c50a9df705708f0df2a869b4e4d0986b7fe54c644395d41061542ee9f811dda",
+      "9117e53a444ea0ab6fa86f05cc97b0880f3d9ca878c9b4cc7d7722b872c7e019",
+      "d62e3ed41a99198a3f0b9dcd9a25a9fc0ca70ef09cff2fb9a2a93c5cbd6c492b"
+    ],
+    "bridge/contract_tests/test_goose_contract.py": [
+      "45bc81b0d8eb4141058385f51c67541846ba6a04a71b1644f2721b029320d5bf",
+      "b09d8b2cc59a4cbf865c6cab94e9350510e077ddcb237cf0330e6b1944739221"
+    ],
+    "bridge/contract_tests/test_gooseui_contract.py": [
+      "544f84e7b75695937742e8a9a946c53e9e5abd17440a610783127c66e7ed3731",
+      "63771a3a0c7f8fd79376b4fabe0ff987486735b244cc4b629aad068ab887d0af",
+      "de0888936269d3986ea96d7e3783657355b59e284f0bb35b4de2c7dddee8528f"
+    ],
+    "bridge/contract_tests/test_hermes_provider_contract.py": "a0069bc54194673481f9dca02d68ab2535c0d19f8d58356ae300baddc4e1c6ed",
+    "bridge/contract_tests/test_hermes_skills_contract.py": [
+      "0c2df83e051a556f6e7695da40e45f1f5e0a6fcb95df0473c6c7af5809693333",
+      "3c73a4f33bd7f6cbd2b2249034882f82922e224b7f4d1b9471a10e25220611bf"
+    ],
+    "bridge/contract_tests/test_hermes_toolsets_contract.py": [
+      "40979db9985a23ee7c5bf7b02199124d3660e70fe6b5aefb08faf2f2cc3fd800",
+      "f1dce888a5238ed52adfb5557dd6dec3f82f5ce860b770bcf958dcb634a2624e"
+    ],
+    "bridge/contract_tests/test_hermes_ws_contract.py": [
+      "164fd23a7263cc5c43b3d2263b2761a8866e8de42e86ef5c4668194c34fb0483",
+      "b1d0d90147d7d8a84f935688d05caf95c67f675ce66826e43ef2502089f9672a"
+    ],
+    "bridge/contract_tests/test_installers_contract.py": [
+      "83e71d178e424ebc78d48576c1477c44e243f9cb26efb8b63d6b81a7af45be0d",
+      "c464765bbc76e18019b34ffa7fdb8daedb24f12802259de52e73181d8d62bd3a"
+    ],
+    "bridge/contract_tests/test_legacy_process_migration.py": "638a1de7addb159e5d4a4c8b31a64b18bb82ab00aaa11ba501ec4ddd9c933234",
+    "bridge/contract_tests/test_llama_server_contract.py": [
+      "4d61ae20b79a5c1095e51443647cf9d754cf1ca56782663ee0f2fb600393611a",
+      "59e400d22fe55cd667dd0d9d825fcdefb0f03da3668919469cede3ec2f7575ed",
+      "e60eecde7998a5b453fd23f0a19f96bf866d73dd8be8948b07debcd951eaf449"
+    ],
+    "bridge/contract_tests/test_llama_tts_contract.py": [
+      "8e3115399d9ae417b2a8f4c4efae27921e900d8c51efd469cf46a777a8c73757",
+      "b446874b3f871d4fc5f495621a7d2a5cb1505fbb76737c263f7b2c378cc8957b"
+    ],
+    "bridge/contract_tests/test_local_secret_migration.py": [
+      "3debcc196db49cfd04e3c3b5d962e16cd7fb20f07da9965cf621bb9b31376c7a",
+      "d30cc1a9fadc0cd6d82e4055494a67ebe984df8272ddbf3ba3faa6866e315a1b"
+    ],
+    "bridge/contract_tests/test_local_secrets.py": [
+      "1a09cf7d3258badfdf6364605123464759e6a28ce3283a9f50153433c79add18",
+      "749366d9f96152b23a1eff15dc0a8b604dbde0c08a5d5eed5ec0a7308630f34d"
+    ],
+    "bridge/contract_tests/test_manifest_reader.py": [
+      "3e2871233d498067667e7c79313dcc17172db4ee26966532acf3f025ce815c18",
+      "c6c08db666473127ed2c37573f3016349ac2c9f0c881172bdf582d1ddd43ee15"
+    ],
+    "bridge/contract_tests/test_mlx_audio_stt_contract.py": [
+      "0e9c843a4c4244e149f98b525248fb96783569bff395c450450daf2b8894b681",
+      "fe48ec58aea071280276e07dce4f834a8fcd3fbe55405a1f08d2dae53414f2c2"
+    ],
+    "bridge/contract_tests/test_mlx_whisper_contract.py": [
+      "5e8811bd119472d1e4ebc05b887b1bbce89562d8054c72707e77224ac509c9ad",
+      "c244609bc6fa94e9dda642158168e8ccf23b023128889efbdacebd9de0c33bc4"
+    ],
+    "bridge/contract_tests/test_motdeck_identity_migration.py": "8ce26996967ef1b7e1d7f1e93194426ed63da15200bd3eeb24dbabbf91233dde",
+    "bridge/contract_tests/test_motdeck_memory_identity.py": "4c6091cc406b4c297e01d8bf1e75840fb4f9982b1b2abd54b174772dde1970c9",
+    "bridge/contract_tests/test_no_name_kills_contract.py": [
+      "31971d4607f734d9d15b219bb060f99b224af6288c6e480719500e6ceeb4e839",
+      "b3c2c666be0dd09c95d2e39eea91cd7cc6c6d14b7732a8923212b0fe98faa6e9",
+      "ec76311f772bce26cb70374df5d42a0d1ed85021d169094316bbc0b791985a06"
+    ],
+    "bridge/contract_tests/test_odysseus_managed_handoff.py": "012e203cb2a5bc82aeba636a0ec0ac8903ab46b313780abe0484d5b394ccbcb4",
+    "bridge/contract_tests/test_odysseus_msg_contract.py": "96e2c1871fdd940585f75a06c9bf041dd8ef940389c76d4921705501b1d1cc9f",
+    "bridge/contract_tests/test_odysseus_seed_contract.py": "d15e006239fd641d13b44760028a9483a70179f12b98e6f48e569a03370d60f5",
+    "bridge/contract_tests/test_office_mcp_contract.py": [
+      "624d08e4fea9632cedc118c32dc590ebaca9e3cd0ebc278b24fbe39f67c1f902",
+      "fcef5accd8cb7c7d5e8830ce861676502ea70c856a167901828a0077af3a06b6"
+    ],
+    "bridge/contract_tests/test_opencode_contract.py": [
+      "b3611c0b1e00c567b81bd83e796532a16e911212b02693eff02a6e5a7f2003ac",
+      "e10b340d5bd2c049b49748b54380418928eaeac9a460d8bc6fa9659943ad7afe"
+    ],
+    "bridge/contract_tests/test_pidfile_port_contract.py": [
+      "0fb38dd460c5cf42daab9ac7724e437eeb5a31114b1cc5386161d8ce1595fe53",
+      "89e17abd52f6300c30f83c8fb0b0f8f42548fb163219c8beafa7a14216958c65",
+      "c234b8e796fa6d1bcab50e84fbede08905b12624fd179cb2650ee4844b193834"
+    ],
+    "bridge/contract_tests/test_quitall_contract.py": [
+      "7293f63b2d14d1bfbd2fc13ff9201f243cd250154f1d4fe0617de429ff8111eb",
+      "858e7909106ef93346ce3c4cd1463635808b4689605d326911daa66e0f201faa",
+      "8f5b700e3a5ef7fa32d03e54136f67c784c8dee9daea1a4c9efff01a84a3b688"
+    ],
+    "bridge/contract_tests/test_seam.py": [
+      "c08834fc6e7077f7ea1832eea968599ea5c3af9dd40db93177a5aac0464df9f1",
+      "f8bdb087887d2c1e476ad55e7424f6fe1c8c633d16daedfefde8762405b32d76"
+    ],
+    "bridge/contract_tests/test_turn_buffer_contract.py": "0cbc1bc92d5a68f9fa08aac2583410744f9957f4d4aef6bcbea5a6b975800bbf",
+    "bridge/contract_tests/test_univer_assets_contract.py": "ecd21cceec593052a3280b03807de3df384c5e7ccab10f394e21a896e81a2325",
+    "bridge/contract_tests/test_version_truth_contract.py": [
+      "3fae3d2c8f3462f54ef7a99b6033cda2e3e3e44db77204dbff3d9d00cd153c20",
+      "b99f7a75aedfbb0b262da86acdf425e997b046921c62c120294a6b1def6706de"
+    ],
+    "bridge/contract_tests/test_voicebox_contract.py": [
+      "1ed1ba50e639e7aebdfd9bd33825f77e007984d7fd19359df9f6369e2eeed370",
+      "fa001dff8607fef17cba99404b9ccca17d308b844ee1000028480dece70fd793"
+    ],
+    "bridge/contract_tests/test_voicestudio_contract.py": [
+      "3203fcfb00a3898b48c4ae25b3d3d54d6d7100dc92568dabfd14578b884c0cb6",
+      "8af59f6204c935a88d4230bb7f9db76cf2775056fab65ca16f7efeaaa1be8f3a"
+    ],
+    "bridge/contract_tests/test_wire_id_contract.py": [
+      "1dd8018b3ee2a298e9943ef13d4c62adf7480d762c5caaf68a47ebc2790fc600",
+      "364d27f7310df5b7b60b0597677dd08aa01812a53095454f0b3ed43570247be1"
+    ],
+    "bridge/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bridge/tests/_appsrc.js": "b4f22d265a4d95c28525bd1f8073365800a69f9fb50d8954c5fb7623facc4246",
+    "bridge/tests/conftest.py": "fac101988988b14eecc19b61fcd45cd0e611576c96f28904fca4324e27d9c093",
+    "bridge/tests/model_fixture.py": "90691b41c47ea77f3c41eb992ba901f4ebc15cab29ab7b5aa3f8fe195d512889",
+    "bridge/tests/standalone_manifest.py": "f4cf3b9050380bb383360ee02827f5156fea324bd793ef2a4b8fd298bdf6bda4",
+    "bridge/tests/test_aider_lane.py": [
+      "3fac838ee9232b89ab40b904ae067cd3b86ed842b4bc097893bc51c0f9121d7a",
+      "522e3a4a1c90ba23c1ab40929efe48771b41fd97cf5f5d007c1a115a322d4272",
+      "e50c61cf81ba2cdff6f40d800f93b19fde6fb9d3e14e5188ea4ed840301c566b"
+    ],
+    "bridge/tests/test_api_keys.py": [
+      "36576019482bc82df6d2fe02ea8f529b6dc46cf625ec99d952acd0093fe5bfc5",
+      "c67ac7ae536843e65c1a39da7915ef98622aac540a0993de627403ef80b1f484"
+    ],
+    "bridge/tests/test_api_view.js": [
+      "269fc76390b6bb2df3a81e4ace90c42a06368556b30ed26b5b9e7ef26d5977ae",
+      "98358f8c845e547f2899433ba4c78cc369276328180a5391a85982cef2c7a2a3"
+    ],
+    "bridge/tests/test_app_facade.py": [
+      "1ec3c7c56ad31380a99a6ba194c1722e829080df2dc27c0cfb2af3fdf1a33a88",
+      "7066d63a0a8147f2a29b0527245b88610063eb65d23feeed7c8599fb9d8591f2",
+      "d209f1237611f928de9151419bb3bc0bf09c4b9ba90cfda1ffa37a8f49816ea4"
+    ],
+    "bridge/tests/test_artifact_kind_v2.js": "0532f872224b0956faefe5014bf63fe531b5a394470afa0aa5c3314857d26ef9",
+    "bridge/tests/test_artifact_save.py": "a021392b6a46912d6df076b9ca40f7b0e6557575eaebc92121b4942020cb234c",
+    "bridge/tests/test_attach_marker.js": "f1dbb1a3221e65387dbebd56680d407c8746084349381a57d9e2fd4cd700c13f",
+    "bridge/tests/test_audio_drop.js": [
+      "502f8d0db14113af41d46695ac83411ce8a79573b8af01a50fab17f97e73ba5e",
+      "f3501b9bfe3fd94ecbedbfa5a0a5034a02f13af97f0cc2c8e2f7fbfacbd60e22"
+    ],
+    "bridge/tests/test_audio_registry.py": [
+      "361458f1753ce5a19692e6b0fe7187dab614294b81139b889ff98fe5907281db",
+      "7529eea17267099f6149ad0f9c4d228a42ffc7eb2d739dd13eb6c6b2840d94cf",
+      "b108a5c5e5a985b9b8a511fcc5146fe5090b3944459776243dffca3b88ff4c5e"
+    ],
+    "bridge/tests/test_audio_rows.js": "7adcecbef782b41d351d203ff880682dbaa8e51f6afffc70122069d265f32141",
+    "bridge/tests/test_audio_search.js": "0af9776f3f0be9d76a07e9b5e0a102b88d5c15fe0c1d56f281d14219731fc6ae",
+    "bridge/tests/test_audio_search.py": "dcaad1fd2194b6fed3d82885e10ca4fa4eee3967e40dbddd007540596bf3b1c5",
+    "bridge/tests/test_audio_switch.js": "28bcc1b9af2aeca4e1451529eda95162ffc1e5e8c7bbf3bae7e71f0722f3cf69",
+    "bridge/tests/test_bug_echo_ledger.py": "1d826ba7b5a863def94546ce183c81fbe16ff197e4e3c9402db2f96ec07e6ab7",
+    "bridge/tests/test_canvas_logic.js": [
+      "a2efcb2bf1d1b40941082b251442beaf270fd73b4e18302f26a26c38f0bc9651",
+      "d43ac856576a92b572234196264d199c619f6bd0b3444ad478dfb514972bd4a4"
+    ],
+    "bridge/tests/test_caps_map.py": "8f1e49f11370a8e7b30fc3a9259d72c7d946110bba99fd09c6242f863b573c43",
+    "bridge/tests/test_chat_toolerr.js": [
+      "5aceac4f15c62ddb9b8272a0075a95e50f826ca423fd979fd7aad92924d790cf",
+      "68536091402e0c73081ed23309ae97ce076949871e2a0bc214192a2ca14228ca"
+    ],
+    "bridge/tests/test_comfy_lane.py": [
+      "bd3749b5e7b3e20a842e6782f8c95daac6f2d4394d9ad3664a05c21e229a004c",
+      "e1fe0f93e2dec8da0ef1bc1a9e0f2b754c3a8a9527f9cb0ca85913c8d5e7caea"
+    ],
+    "bridge/tests/test_comfy_page.js": [
+      "800a7b192afa19f0e96902623b7f6afd7b20d8c56fff4cefc3753db0b6291a28",
+      "c701b82ba2e7e9476a5367d0e693440695ba06d4f65e327bf12f39decab3b453"
+    ],
+    "bridge/tests/test_compose_page.js": [
+      "21067f38732165ba0d9e7da642fd8016f5ac9dff3cd7de13c19719d4005d35d5",
+      "9c577e0b75bbf4d259e2cf117cc87e3b72a4dc43a113ff394edc49690218c103"
+    ],
+    "bridge/tests/test_conv_mode.js": [
+      "06a6294043e664eea467870ee6c5dff6ec8ced9ad7a9b38e52e0abdca27c5e45",
+      "a1a1421ff6f3d0789583bf4f65672b12284b7bee9e192270a525206373570378",
+      "c0ef8fb524c2d1eaa275c48ad5544cababbf2044ad6a5d1abbbea8d4213729f2"
+    ],
+    "bridge/tests/test_csv_parse.js": "3e39129d1e3dff198021a31e263d742255990123374e275b2c9a44e53dcf2155",
+    "bridge/tests/test_deepseek_lane.py": [
+      "11672b347b37b419b30caa9bd7e81958b92488ffe58bac83d492b786355447c9",
+      "340a5a4f99687c9653ebc6241a198b87b6a5d493283dfca455f191c7dca4d374",
+      "43dfd53f68a880bf44195cc5fdef561c6062d1c0d3721e1334a479d5a65bc8ee"
+    ],
+    "bridge/tests/test_dep_signal.py": [
+      "3a45bc6dcd4b94d5f1021036d8436d431d8b3d81cf9dc90f868ef5e5eb05417d",
+      "8b50d70f000a4a99174388a4b7903a3517234989d53b3972c8b94610208de367",
+      "af543d19240bde84646f7f36865062176f485837819bc788e368cea861091664"
+    ],
+    "bridge/tests/test_download_rows.js": [
+      "16604b7743ecf6f48b82d908352aea0e70040ba47b940024643de2a953ff9ee0",
+      "8cf865d0ea894db5f93965050a66dc14534e655b6ad185e7b9621b4d6d6ef361"
+    ],
+    "bridge/tests/test_download_verify.py": "36f036f7b196c8c875f1543738b04d37d9bf9d92daf4d19c20da7352a7aa4345",
+    "bridge/tests/test_editorial_debt.js": [
+      "4bf9cfa68b81515dd7d577501295d880ed2a2b9ff10c77e2e888af90a4fdba4f",
+      "cb3037837f6a5ea543b9052c8707ab8b8e2ec09a4ddc22bbc59624dbbc709f93"
+    ],
+    "bridge/tests/test_events_hub.py": [
+      "606279bc6ccf8f0135148e95c9b8fbd1fcd0d40193a3e58b7af6d00df4f6b8df",
+      "f97a2b1c379ed2570dfdb53fbc29fadce80b209907afee32658aa005f1e7524f"
+    ],
+    "bridge/tests/test_fence_classify.js": "4f9b5f8c65ecad6ba93902daac6539861808d5fc502493e39be31cc29a2e098a",
+    "bridge/tests/test_fit_advisor.py": [
+      "9f2173c1dcbdc77e46aa1210dd39ca4c08e1eabfa485b5d722a8272589647eba",
+      "be6950b10d08059e2b5bc39b90f8f5a7221d97f52ac2a30cefcd135cdd910a43"
+    ],
+    "bridge/tests/test_float_surface.js": "22ea0c498b6804c29065dab79fc0d61005fbe9160e1fa6e15feaff1a90682527",
+    "bridge/tests/test_goose_empty_prune.py": "018abfc623cd85627f731c4e042b84d6475b5ce76578575338e5d1c95b13eed1",
+    "bridge/tests/test_goose_lane.py": [
+      "036799ac74a9bec394f13bb765c8972059efbe62755c3bb3dcb7afbcb29495b9",
+      "6ccedfff9086ac237605d500e28457df268bcd2431b347f33daf1e70561416ba",
+      "a1fbb7b904d5195e69b37438c0cd151edc6c6e0a5c1838abe5e6855393802f0f"
+    ],
+    "bridge/tests/test_gooseui_lane.py": [
+      "77bc330083bdd3f7f69fa3ae3de02a0d4184a6e88113c1b0322ae0e846988df5",
+      "8f04d9642b768fee28a04442a15644a5d14722feb896865b0b0f7126bfcee7a4",
+      "f5b41c0898278e9138570309b7925833f85be2a856713afeeb2cc22204de110c"
+    ],
+    "bridge/tests/test_help_route.py": "c85566335e7d0ea162f509bd2556ab96aed392788d9637126739d2aabccb620f",
+    "bridge/tests/test_help_view.js": "777bdf43e9205b793c7e67185ede6fa1301a6df408de2fb71d9712cf2815a65d",
+    "bridge/tests/test_hermes_cfg_gen.py": [
+      "35011ac75c53d8572cfa0c629d6317dc2de7880f5729ae9dcaff2f9670fb33b0",
+      "54d8bad9ddbfd86f5701062a2042ad70548d122d915bcf3a40c952a2a89390d7"
+    ],
+    "bridge/tests/test_hermes_max_turn.py": [
+      "01e02f87ae122ed70cef6f9e0a5596a13a8cc0429370d1e69253d0ab64b57bda",
+      "62895dd0000a2813230072e6431ca54e1a379683b8bc20268d46859a8d70e548",
+      "858c2427ce095d02a00fb55d97bab8044b1de1e5da8858189d122738b7327181"
+    ],
+    "bridge/tests/test_hermes_provider_seed.py": [
+      "4408718b259a50db9acd60059ee791971a49622c71f35fbab1c6630fbb782751",
+      "46ddf3368a1aee67a45692b8cbd5427ae03c7a54b96634910a52ce970e31f272",
+      "8985dde65583250b640051e53b5ba9e72cc9c8df612df455fd854348bcc4ab93"
+    ],
+    "bridge/tests/test_hermes_sessions.py": [
+      "8fda5da9f27b21465d5a71e6f6d9194f97e1ceccf978c0332a1fa8b7e1b78c55",
+      "c9f4e01fefcd41bbb0ce8996c607ff9243a7e044b677cca3ba25afd45a233491"
+    ],
+    "bridge/tests/test_hermes_skills.js": [
+      "02e0f97bcfec7d61d271f7ba169e20791779b63e76bee9162f92a2a67389cf3b",
+      "09957ee0cff4bc1ab68577ce820c5def5a33b400db6d86610f22a8f119215a51"
+    ],
+    "bridge/tests/test_hermes_skills.py": [
+      "278e5430917208a0fd5f759fd39623f887270f72661dab8cc229f5d1890abee8",
+      "cfe5d8c5d3a1a59693b324e4226d907747b7502cba610402bade1fc13abc8773"
+    ],
+    "bridge/tests/test_hermes_sse_map.py": [
+      "07867bf40506ab795e65d6f2b091f6f0f014b65624781b9ec22a69c356a11841",
+      "36e2867bc6d64a457d042a645a78221cc74f64160939add3405a0254ac9591dc",
+      "e7b76b14dc5729b988ca5ed9674b1dfe244c2e7508003960e3f7ccec5a7053ea"
+    ],
+    "bridge/tests/test_hermes_toolsets.js": [
+      "65cc9a9188266cf918b9497f981684fa4f99fda74c18825e24f46297b9f44f72",
+      "d4222c88e90631b1a06c4c9f9de85b40d067de27e11627cd84537073a095bf95"
+    ],
+    "bridge/tests/test_hermes_toolsets.py": [
+      "699ecb82778950bcddb38665f160d63411e6f3479c8f383c6eb180107cf2eb39",
+      "85ecccda2e8be3556f553256ec8bb0291ef0792fa7445388436903139eb855bf"
+    ],
+    "bridge/tests/test_hermes_turn_durability.py": "2f77971c1f41f908d12e9c46bdd78a3097d60ab2fcb14769c759711e2d9da05b",
+    "bridge/tests/test_hermes_whatsapp_route.py": "42d20736d146aea377c069f18c536d8bf4192dd55745f9bcb78decfe3df741ae",
+    "bridge/tests/test_hermes_whatsapp_state.py": "477edfb25bc3f757190498d91644938468868177ceced9bca0ac0c867f945a03",
+    "bridge/tests/test_identity_migration.js": "7bcc2a2d8d3ac1044791e32c6ae7b2810ac76fa9f16186f077b0113250c6b00d",
+    "bridge/tests/test_image_sidecar.py": [
+      "689f94b45670c4b830c7f2b882c5ff1a49c54219eb8526b111c29de616222615",
+      "9e865218133d66e233575edacbc5bebdbc16c1841a28f3606c877eaa16bccc23"
+    ],
+    "bridge/tests/test_installed_flip.py": [
+      "79e1ede886cbe4f8c786ba3e02d1fd69592769ee858039164762f83d171c0fca",
+      "8a1dae1fae0044af20a41e36d81b8bcb235d682067dac0a15bf6e77c830cadf3",
+      "ee866ab73c5fb7376dc7b55984776e685c7e5f712978346de9e77e954e69dd40"
+    ],
+    "bridge/tests/test_lane_affordances.js": [
+      "16e3d1e3a35ebc762c95cc7d54573a0a3893006ee9f009577ae60c1059d4b822",
+      "299a3a4651fff99c4b8cc21fbfbd1b1fd27975083227914ee541ce71c9d68f4c",
+      "63ea916d8d65ec2c2362cf4482df520e1893c4f4ef61f3dd6d1f908cab764424"
+    ],
+    "bridge/tests/test_lane_attach.py": "aea73d0f24e50dadc14571a24be3ec540b3928668d8352891b927cf736a1ad02",
+    "bridge/tests/test_load_switch.py": [
+      "212229e1c530bf49a1fe5ebc3acdb17078dbbfc8116fded21415aa03735fe53e",
+      "82f4907123e58054a5291598ad435f37871ab7e1112e6708e91c9c1bdfdb6879",
+      "87e10dbe40e4e7a1b1b9a55a69ebee3aa0aa6da663adda1eb3a53c56153aa5ea"
+    ],
+    "bridge/tests/test_loffice_stored_history.py": "698cf9d425abf3bcae6afcbb5c70eeeb7326f404c12a63e1dcad0f66b6d56107",
+    "bridge/tests/test_model_artifact_integrity.py": [
+      "711f4fae2c5ff920ab5581de4a763bddb73f1169484fa19ac0514a4ac57f434f",
+      "af61c5034151968bbd7548c7b225368c8a067fba2543cfcc252d6745814c7a4f"
+    ],
+    "bridge/tests/test_model_delete.py": [
+      "8f810ab425e7360eeb5f6d45435a0fdbdf066c79428facec847533a748146771",
+      "ffa659e9b3a00bb47ef1468fc50a2400599d73a7ff9965d24b516b3c21d7ca09"
+    ],
+    "bridge/tests/test_model_load.py": [
+      "6139589da8ebdc117d0dbb9868f55443284166992694acaf1b23105002e3f206",
+      "b63ffc2728641b927b651a2c0175b8dc9d826ba42ff6c089a188595048253275",
+      "f9f0766d0794e04abb2077cf3fb957063a5e04cf779f006c3d1fbe6688381e07"
+    ],
+    "bridge/tests/test_model_process_safety.py": "d698274e9269827ac86c2f2c4c197dc9fea097dcb52f0f249f672b17cd9cc8cb",
+    "bridge/tests/test_model_settings.py": [
+      "5120bf960cd8850bc31254c5fecc3c3112b37572a9e82d161de1a1af460e06a3",
+      "9b8a62acb63460da45ab0ac980830c31f880a57ea9313a926bb74e55b2869cc2",
+      "a1ef65ea46be6a30677ebe13c325c390ef806ca1f472ec34737fc179e6d4a4ac"
+    ],
+    "bridge/tests/test_model_settings_ui.js": [
+      "163ad1b46b2f4ddb4593bdd04f64b2ca76049d959f3c87cd7709085e8d091f1a",
+      "32470110ea726abaec7883c057fc1f521475fa1a22529a3e0206201b71ddccdc",
+      "377de3c47a3777f01e2003c6afc62da4f25ba62802f5e9cbefe8d2b6b9626253"
+    ],
+    "bridge/tests/test_model_source_adapters.py": [
+      "ce848104af75686ad1526dece509f23dfbc35437b3c630ac15df321c36cbd099",
+      "e37e2116483f0cf24f0cfa811d922e00ebd9874f7fed4c68411082a9c3c72e0d"
+    ],
+    "bridge/tests/test_model_source_availability.py": [
+      "489539e7d69f1f6f485cc66c4033c4ae09bf2aa0f05e578cfd7410c5d9364ecb",
+      "94b137ed1cde9471e63e198c0ad2a5c697642fd689f0aa2da5178fdd991f8a45"
+    ],
+    "bridge/tests/test_model_tools.py": "2e6df938cb4810b9aacef1cbace588c62c3049c6c2ab2958450e5e5078577413",
+    "bridge/tests/test_msg_actions.py": "126922e61bb2c884ed44bad9de2a3ccddf92ff04d631281aa9fa60bddc54b046",
+    "bridge/tests/test_mtp_detect.py": [
+      "874383dd3e35faec95d632b0606363942b0f73ed119e16f045098c01dc1ed27f",
+      "d0ac98f5007ee17459b8fdf13d08bb5dd31b0f9b467e2e1be580f17e623d9564"
+    ],
+    "bridge/tests/test_music_deck.js": [
+      "a8c44f9c9093d0b03eed58804775f66a2cea8adb27b46d7621321a0bfc30ddf3",
+      "c71a8dbdd634ec80f9a9b5526b75d7b79b6a5b66aa8720eee4e5938cd4c3b9aa"
+    ],
+    "bridge/tests/test_music_lane.py": [
+      "26ed40b8d86b8339c426e374649ea7344afe1960c9a182f107b02dafcbd52306",
+      "f7fbcfe426b4dad54a0fd07dbc963b1c60a7fbe402b1d396a05e42568ecc3c98"
+    ],
+    "bridge/tests/test_mutation_origin_fence.py": "a53f088244b00a1472f829e6ad831b69d71cf19b2101e4610d7b79b6f5e9e8fa",
+    "bridge/tests/test_nav_model.py": [
+      "374791d797049c7afb7c67e66adfc357b589fa4aff9663b1372d0bac72816169",
+      "aa6e553d63cbf343b02d5e1e3d323c004a3d295b205d563eb96c7061879ac42b"
+    ],
+    "bridge/tests/test_nav_panel.js": [
+      "447335d53abad5a7b2bacaabbe25ab0d85879fa4abe58a31e129a069a197c89e",
+      "aa3ca9c330484708d4cfed6af83a0f43d3d6ee31eac2bd9fedce2b67684b823a"
+    ],
+    "bridge/tests/test_ody_historical_models.py": "4f89203bf082989741a3142a6c86107ea5ab89265918f5403f68d6ec5501858c",
+    "bridge/tests/test_ody_vlshim.py": "2db17d2b45f1207e4a8bce328caaefffcc7a7b80c3ca9a94cea8a938b97cb1a8",
+    "bridge/tests/test_odysseus_seed.py": [
+      "68da77d26c1bcfc41c16e2d0b894ac6c69395a99f168ad0a6f5d080244be212a",
+      "ea2aada41b9fd0a422a2ddd2f35072eaa02762db152f6f189262d26d5f04dc52",
+      "ec813ad6303c625f9ec6f5507363d40f96d66fd9265ee8f64933901f196c2c5c"
+    ],
+    "bridge/tests/test_office_adversarial.py": [
+      "bcea34112f5be6359d6000a795f415e5a8d5c192a8b6a346dfa1d6fe0cc0dd0f",
+      "d666f285ec4337ffdc569b78c2f6420e82a67eba8520c3ce9e722acb550ab99b"
+    ],
+    "bridge/tests/test_office_ai.js": [
+      "6521b2ee00b4cd26969cb2fc30b6237f8c407c44e6a2910b4d4fbc4435142290",
+      "99bb1b2a84a2912b01eaad5e41d707403b60a4a00daaeb491862942cfc57007d",
+      "c97353fcca1f2031e086c67df0bb87f915c8c81da9dff65198bfeb82ffcb4547"
+    ],
+    "bridge/tests/test_office_grid.js": [
+      "0dda81d10205efa8a6737fcd6850a8c73a8e687e9d1a611bf82ab22ec62005ea",
+      "7f0d28c2ebf0767815f1341184b1a3a5783a096cdcaaad09f75f0fbbd98e4084",
+      "f6dc6132a4bdb4e58788da05e9d1fb690805cf7dd8f0d421f8952de0d1c17332"
+    ],
+    "bridge/tests/test_office_journey.py": [
+      "96757d95feb36b51b7e14ad4ef3e511500d46f1b4f479f4f75d27bd107abf188",
+      "9790292cd86817f15543f3c7f42217d3547d9dec79511011095e9bced3806184"
+    ],
+    "bridge/tests/test_office_lane.py": [
+      "32274c406460760831fe517277ac3dbd591afbeb622f380d7f73514e3e2de01a",
+      "62275cfb7dff4d00feebd7fe3b21ebec36f7ce1e57c7ab44723dbb93cd284b20"
+    ],
+    "bridge/tests/test_office_mcp.py": [
+      "3712d6c72129b7fdf3a14a31f292a75159f256826c18ae5015b8a2f29af16a98",
+      "993b9b55edacdc3826192a28b265a0e32d3735cf4b6373b94d9079e62d9428ac",
+      "c64d4b9671c4f8ea1d051bb98d536d7590e237b548d1dd01812e3793dc9f58a6"
+    ],
+    "bridge/tests/test_office_types.py": "7a1f5a0c2dfc9fd6eb23d97eeee132c151a5c96086f35753e06f552b2d595309",
+    "bridge/tests/test_oo_ai_lane.py": [
+      "9c75e1cbe267a6398f2c32ca8a3069ab1a0c2de7c741b5daa5232ef2e662ad98",
+      "c7b3b110c70e5b07e5bb8ddd0de7a44fcd8c978f9e6d76441c2466ce899ab31f"
+    ],
+    "bridge/tests/test_oo_lane.py": [
+      "4448477a0042ec96264eb1770df701ed127d03a89c89a4d46f895b9512a93610",
+      "7232c67da5e75701e5ace66080a9fd7a45b04a91326de3518348a47e9e1e7b1e",
+      "f26d45b42bf0ef82930f55ac2c2f240b6d9e5136f19faa883fb16fd440b760d5"
+    ],
+    "bridge/tests/test_opencode_draft_label.js": [
+      "708823d646ff8b1880ea404dd83ebcfc10db70bdcf3ba473167ebc7967ea4620",
+      "cec04a53c3c3d4a921f0b9185f378cf970fd62443d50eda2fd881590ef7bb44e"
+    ],
+    "bridge/tests/test_opencode_lane.py": [
+      "1d24fdcc81ef267160eb117cde463a6ca4cf4485803b6088708ffa4284dbfb7b",
+      "740d4e3ee7e8d2f1499cc0d26fcb2cf305f0c134ea3b3aa1d63071bb5e49fe05",
+      "e98f2db0c4ca1dedd487325ea11b55b49f3e85b1f2f75451d92d31616c37e1f6"
+    ],
+    "bridge/tests/test_opencode_runtime_model.py": "6bcefb7846968c6e373cc3e74778118ef0842ce502192585bbe759aa8ce5eb6f",
+    "bridge/tests/test_ops_hardening.py": [
+      "480d4c3d68b04cae78b422607fedce60ebc08ab13913620405c86542218e868d",
+      "cdd833d6470247c8318a3ab0c57b1c43d393901171921de68e5e3c1daf36ceef",
+      "d29bf0c26e6c1f19391ab9a779332b56130e2356d153fa08c29d34afe8d3769c"
+    ],
+    "bridge/tests/test_optional_components.py": [
+      "62175c994130add93adedd10b3eef13c90f5649b19a0f14943669214b9c4c34a",
+      "8ed5d30b9ece150b1d8237bde028fb8efa1975c63a4ffc768c07d34aab065c0f",
+      "c1cd8e4bf21325f6c1750463b68739915bd24250f4f078e460f75ffc4733225f"
+    ],
+    "bridge/tests/test_parakeet_stt.py": [
+      "1d025408fb86fa031785ae73a22a675887a264141147991651e39d20eda191aa",
+      "a8e8011cb39060a6d17e67bf03a5af9693e959a786b28c47f7b7fa40ba4cd5a1"
+    ],
+    "bridge/tests/test_path_guard.py": [
+      "aa859073d2410fbb3f8bbb90837a2c4ebb7cd11aa92e6c5bad2e62c8f92aac75",
+      "d79b42656b93fa46aab787736eb6ea4adec02299a52e3d0966315ff6d329a16a"
+    ],
+    "bridge/tests/test_port_kill.py": [
+      "06d180d6dc5820495f275bcf11908453cfe0f8d04776085d9573fcfdbe7718c3",
+      "5d5bba83f52359ce2ec4f611bef79b1e50fb8cf051684cb5f16a3e04ebf54b50"
+    ],
+    "bridge/tests/test_process_launch_ownership.py": [
+      "7f41fffa17a200deb7195f73a72a65a41d131808c538f5f23a5c2dd0ae0f79c0",
+      "f658eff02b255da66f02b0ac72dab175efa205b05c0479e761a8446672bf36e5"
+    ],
+    "bridge/tests/test_quitall_lane.py": "63669646584febf61052f3198859e5b8184fa49dd9a0cacd2037ad30c5eb78a9",
+    "bridge/tests/test_react_prep.js": "c8a232320015613584b539551d657eff6340abcef0e2722a4706ce48d245ca33",
+    "bridge/tests/test_recovered_turn_abort.js": [
+      "6319090f10034fc943a3b2c8cac474bcbc799359ee742560c38d34c1752be185",
+      "d37c4540a54c09fe48bb8689640f756b6f24dc5a5fd8e731db7a29bde4a036de"
+    ],
+    "bridge/tests/test_registry_hygiene.py": [
+      "611ce323441146c9ef9b0498b946ab28e07810e90b9f672d5e925901c0484aba",
+      "6d1b84ecbb5097da6f03974761385aea7ff05359ee61c812b148cb179c2b4a96",
+      "e20b82372c8dacae56996ccad14d794f82ce4e07ee902525b1a34c6268bb1431"
+    ],
+    "bridge/tests/test_registry_writer_durability.py": [
+      "638a33457e549d3c54ebec3afa75ab1cfdd5d88004793cef42879d7314e62db6",
+      "6fab2e10a25adcf95d57add24d921f0ffa29022258cf4330910370037450feb1"
+    ],
+    "bridge/tests/test_rewrite_cdns.js": "1acc5c2e687e21789a34a6a09d9a9703e43f43a48b22db8ef44786e071d4e823",
+    "bridge/tests/test_runner_launch_provenance.py": "878625929f64e4e9a7bdf424520e313303ac98aa4e972a6bb2a1cde1fbf845cc",
+    "bridge/tests/test_script_hygiene.py": "592eda7bbf592addd4a6d83b87d425cceeb7024651e109fa9074f7336f6a05c6",
+    "bridge/tests/test_speak_text.js": "31b4f5855ceae3a7d127c811ed7e63d900348ffb4cb795b289ca8657c57d2f10",
+    "bridge/tests/test_sse_hybrid.js": "671549fd52fd6599464099c6910f30cd9fdd73f15b322f73ebb9664036092476",
+    "bridge/tests/test_standalone_corpus.py": "763beab820d0537b9361ab6101e00d204a9a5f72c39ca23bf0fd6d2bc8ece543",
+    "bridge/tests/test_starter_voices.py": "2ea18fe902c319f5f9a0fbf23565413c3c3ec5bbee00e3f47fbda286ac958a19",
+    "bridge/tests/test_state_durability.py": [
+      "307f83fb177cbfc2a63c1dac267e2395eabfca2b248574c9e5d1c1682d7876af",
+      "3dc90b6b80b7f9ae45f42fe80914ebcdf2f96d9c4e5bf0ac531d3a1cf9a034aa"
+    ],
+    "bridge/tests/test_studio_chrome.js": [
+      "391edd499e12e6cf9f405ff17219cd79cda563d782cfd8b51550a9185065024e",
+      "e2ae1ee53c81fb0963fbf692b96b0e4928c740368f5857506b4a4df9ff9915db",
+      "e4e12ca709db727c6af7c627baa1d1434452adfa423736322a39c64c2d376966"
+    ],
+    "bridge/tests/test_studio_design.js": [
+      "09336742bfd0995954932fc9834c7a86018e8e83339d89d669be53fb1b200610",
+      "8e398bc9c8b77244de4ad6bb252ed9eebcfc356ef9ac6823e9cbb8851ca0bfb8"
+    ],
+    "bridge/tests/test_studio_office.js": [
+      "cfa71519c424cd67aa716b6f69e58aab495d8ec37180b3cf92fa2172a7aa6d15",
+      "f802b4cac069f5d7b74e652a3a728cc3673fa9269e5b177e1c38bb76ed68fa1e"
+    ],
+    "bridge/tests/test_talk_helpers.js": "acf1f6764c4e3972d0f8abdf73e3aa561b51939187db4cdfd1a6e6fcfed411c8",
+    "bridge/tests/test_theme_packs.js": [
+      "a32c6527819c474fbe37c652b83d598f2df691e1975576db279e2f71e4ad7a19",
+      "d37fd02667977eac063184723eddafce19be36c27e64b1d8efca88525f771666"
+    ],
+    "bridge/tests/test_theme_rendering.js": "e74b629da05ea7735aa9dfb1937db97a73202c2e331239aee083ee6a7a85a68e",
+    "bridge/tests/test_thinking_sidecar.py": [
+      "b264a30b824c885ed186d94325e44782fef12fb86239a53f11f64cc5231819fd",
+      "b5e97dde2937cd350ab93a31ebae4d25072f845737c0e8fa8f3caf8633871588"
+    ],
+    "bridge/tests/test_turn_lifecycle.js": [
+      "294c299a388c537911c423fff550a059d066f79017bb1fd217bc8f53d11b5125",
+      "3d301be5a8b55619f1607171ce5d9d9efefc92329d0045ffc3fa38b19c1d7bbd",
+      "b9fabec465445d96b016e1f3a7db103544224bc1a272bb17142cc0578e7c058a"
+    ],
+    "bridge/tests/test_turn_recovery_marker.js": [
+      "1fde9c2a50986756d27e170f0be8826c1b11da2460f65e54d655803f40672d33",
+      "964192a4cac94087b3d047fb0c8b469a5caca1cab40b7e309dd821aeb3011baf"
+    ],
+    "bridge/tests/test_turn_stream_renderer.js": [
+      "1f32a5fe430dd61b5d9626a4644ca1bdb43e24fdc6c30237d8e57cd144b6d103",
+      "bb640bbe6f96d39e5b543bc28ffd552d7ba637d0522d15de71c14cdfbb348f02"
+    ],
+    "bridge/tests/test_u74_recovery_hardening.py": [
+      "6ca8ff99cb601851570176817f49c2be367a24620cdcbe4aa2ccc24a84dd62ff",
+      "a4b0ca6164d70b054ee77b1dc4474a3768dc9cb9dc629f37b7de97e104c7da9e"
+    ],
+    "bridge/tests/test_vad_segmenter.js": [
+      "56d156019bcd7f640195186f88d09e4297956cf6bdc0db59a82e25583e65c0e0",
+      "a829126727ff4d774ba640a5cea6fb52cd01e1200113c871d95e418f77f78b97"
+    ],
+    "bridge/tests/test_vision_content.py": [
+      "4ca0ae2b95804853329846e6e365ca628a1201803c32d86d84d84fd81ff518eb",
+      "5c494ddbda315f1877590a65794295cb236c3e7c6ceb621c63b19a8cd659aeda"
+    ],
+    "bridge/tests/test_voice_cache.py": [
+      "2fecef1c8b43d08a35e9bfb2d9b9b73f84735246dc913a6441b90d870c4587f6",
+      "492a593dd644355a778d46eb8ace1eab0e5344ac10932bcac4c901af3aaf7de6"
+    ],
+    "bridge/tests/test_voice_mcp.py": [
+      "7fa5d09e675cd3df8ad4656c11112195374ac57f4224982296f19c9e8bb0795e",
+      "cf4af1169a96f23017ec710a322154c975f43270c7206e94d4f79cc2ad5ee003"
+    ],
+    "bridge/tests/test_voice_ref.py": "8d524d9de58207ec1d01072ebe43727019fed5917c7c18a6d5c5bd848621e57a",
+    "bridge/tests/test_voice_stt.py": [
+      "aef557ee7e9a12077049d7f8c244f3b714e31b1e694f4f086e92597135374913",
+      "b1a54e481dafd7dc5661e0dce54da7413953beb8185f39d37fa2258eed000c75"
+    ],
+    "bridge/tests/test_voice_tts.py": [
+      "203b307fd6e34207a0ff6636372388cf0ffbc9405aa07eb02ae31a211f22f0ab",
+      "b4d37f4561fe634bcb5a833a0c8d14130fe4c992a4f63825f2a520c7c5182fdd",
+      "c2e87f2be092c2f453b8d56305a284bc559fa7d5cf8fc4bab6e4513548f3aacb"
+    ],
+    "bridge/tests/test_voice_worker.py": "885614342e3788b1f003d0f2e2f34e815cee3ce213b6b6e7c2694c049a34bf22"
+  },
+  "format": 1
+}

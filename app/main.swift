@@ -533,6 +533,10 @@ final class DropWebView: WKWebView {
         dragLog("perform: url=\(url?.path ?? "nil")")
         guard let url = url else { return super.performDragOperation(sender) }
         let mimes = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"]
+        let fileMimes = ["txt": "text/plain", "md": "text/markdown", "csv": "text/csv",
+                         "json": "application/json", "py": "text/x-python",
+                         "js": "text/javascript", "html": "text/html",
+                         "pdf": "application/pdf"]
         // PHASE 2 — a dropped audio file is a VOICE CLIP, not an attachment. Same
         // suffix set as the bridge's REF_AUDIO_SUFFIXES and the same 15 MB cap, so a
         // file the shell accepts is a file /api/voice/library/save will accept.
@@ -543,24 +547,36 @@ final class DropWebView: WKWebView {
         }
         let ext = url.pathExtension.lowercased()
         let isAudio = audioMimes[ext] != nil
-        guard let mime = mimes[ext] ?? audioMimes[ext] else {
+        let isFile = fileMimes[ext] != nil
+        guard let mime = mimes[ext] ?? audioMimes[ext] ?? fileMimes[ext] else {
             dragLog("perform: rejected ext=\(url.pathExtension)")
-            note("only png / jpeg / webp images or wav / mp3 / flac / m4a audio"); return true
+            note("choose a supported image, voice clip, text/code file, or PDF"); return true
         }
         guard let data = try? Data(contentsOf: url) else {
             dragLog("perform: unreadable file")
-            note(isAudio ? "could not read that audio file" : "could not read that image"); return true
+            note(isAudio ? "could not read that audio file"
+                         : (isFile ? "could not read that file" : "could not read that image")); return true
         }
-        let cap = isAudio ? 15 * 1024 * 1024 : 8 * 1024 * 1024
+        let cap = isAudio ? 15 * 1024 * 1024 : (isFile ? 10 * 1024 * 1024 : 8 * 1024 * 1024)
         guard data.count <= cap else {
             dragLog("perform: too large (\(data.count) bytes)")
-            note(isAudio ? "audio too large (max 15 MB)" : "image too large (max 8 MB)"); return true
+            note(isAudio ? "audio too large (max 15 MB)"
+                         : (isFile ? "file too large (max 10 MB)" : "image too large (max 8 MB)")); return true
         }
-        let name = url.lastPathComponent
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let hook = isAudio ? "motdeckNativeAudioDrop" : "motdeckNativeDrop"
-        let js = "window.\(hook) && \(hook)(\"\(name)\", \"data:\(mime);base64,\(data.base64EncodedString())\");"
+        // Serialize strings as JSON fragments instead of hand-escaping two characters:
+        // Finder permits control characters and Unicode line separators that can break
+        // a JavaScript literal while still being a valid filename.
+        let jsString = { (value: String) -> String in
+            guard let bytes = try? JSONSerialization.data(withJSONObject: [value]),
+                  let array = String(data: bytes, encoding: .utf8), array.count >= 2
+            else { return "\"\"" }
+            return String(array.dropFirst().dropLast())
+        }
+        let name = jsString(url.lastPathComponent)
+        let hook = isAudio ? "motdeckNativeAudioDrop" : (isFile ? "motdeckNativeFileDrop" : "motdeckNativeDrop")
+        let dataURL = jsString("data:\(mime);base64,\(data.base64EncodedString())")
+        let extra = isFile ? ", \(jsString(mime))" : ""
+        let js = "window.\(hook) && \(hook)(\(name), \(dataURL)\(extra));"
         dragLog("perform: injecting \(data.count) bytes as \(mime) via \(hook)")
         evaluateJavaScript(js) { _, err in
             self.dragLog(err == nil ? "perform: js ok" : "perform: js ERROR \(err!)")
@@ -3526,6 +3542,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         return nil
     }
 
+    // Native JavaScript panels (S12). WKWebView does not supply these itself: without
+    // all three delegate methods, an upstream page can wire a real button to alert(),
+    // confirm(), or prompt() and the click appears dead. These are shell capabilities,
+    // so they apply uniformly to first-party and embedded upstream tabs.
+    private func presentJavaScriptPanel(_ alert: NSAlert, for webView: WKWebView,
+                                        completion: @escaping (NSApplication.ModalResponse) -> Void) {
+        if let host = webView.window ?? window {
+            alert.beginSheetModal(for: host, completionHandler: completion)
+        } else {
+            completion(alert.runModal())
+        }
+    }
+
+    func webView(_ webView: WKWebView,
+                 runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping () -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message.isEmpty ? "This page has a message." : message
+        alert.addButton(withTitle: "OK")
+        presentJavaScriptPanel(alert, for: webView) { _ in completionHandler() }
+    }
+
+    func webView(_ webView: WKWebView,
+                 runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping (Bool) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message.isEmpty ? "Confirm this action?" : message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        presentJavaScriptPanel(alert, for: webView) {
+            completionHandler($0 == .alertFirstButtonReturn)
+        }
+    }
+
+    func webView(_ webView: WKWebView,
+                 runJavaScriptTextInputPanelWithPrompt prompt: String,
+                 defaultText: String?,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping (String?) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = prompt.isEmpty ? "Enter a value" : prompt
+        let field = NSTextField(string: defaultText ?? "")
+        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        presentJavaScriptPanel(alert, for: webView) {
+            completionHandler($0 == .alertFirstButtonReturn ? field.stringValue : nil)
+        }
+    }
+
     // <input type="file"> — WKWebView shows NO file dialog unless the app provides one.
     // Without this, the panel's ⊕ image-attach button silently does nothing.
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
@@ -3576,8 +3645,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     //     is worse than one that refuses, because nothing is left to see them from;
     //   · losing contact mid-quit is reported as UNKNOWN, not as success.
     //
-    // ⚠️ NSAlert, not confirm(). alert()/confirm() are silent no-ops in this WKWebView
-    // shell — a panel-side confirm would return instantly and always false.
+    // ⚠️ NSAlert remains deliberate here: the app-level quit plan and its partial-stop
+    // recovery belong to the shell, not to whichever page happens to be visible.
     var quitAllSheet: NSWindow?
     // ⚠️ ONE AT A TIME (adversarial pass, 2026-09-02). ⌥⌘Q twice in a second — an
     // impatient second press while the first sweep is still working — used to stack a

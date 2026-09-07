@@ -141,7 +141,8 @@
        · #foot is a FOOTNOTE and is the first thing dropped when the window is short. */
   #note{flex:0 1 auto;overflow:auto;max-height:26vh;
         padding:8px 16px;color:var(--faint);font-size:11.5px;
-        border-bottom:1px solid var(--line);background:var(--bg2)}
+        border-bottom:1px solid var(--line);background:var(--bg2);display:flex;
+        align-items:center;gap:6px;flex-wrap:wrap}
   #note b{color:var(--dim);font-weight:600}
   #wrap{flex:1 1 auto;min-height:160px;padding:8px 10px 10px;background:var(--bg)}
   #term{width:100%;height:100%}
@@ -281,15 +282,10 @@
   <button id="btn-stop" style="display:none">End session</button>
 </header>
 <div id="note">
-  goose edits files in <b id="ws-dir">data/goose-workspace</b> — it asks in the
-  terminal below before it writes or runs anything, and <b>Enter</b> is the answer.
-  It is pointed at
-  <b id="ep">this machine's runner</b>; nothing leaves this Mac. Reloading this tab does
-  <b>not</b> end the session — it reattaches and replays the last <b id="sbk">256</b>KB
-  of the terminal. With no tab attached it keeps running for
-  <b id="grace">10 minutes</b>, then stops. The model pill above is the model actually
-  loaded by the single-model runner. Choosing another name inside goose requests that
-  name but does not load its weights; load it in MOT Deck → Models first.
+  <span class="pill" title="Goose edits only inside this workspace and asks in the terminal before it writes or runs anything; Enter answers the prompt.">workspace · <b id="ws-dir">data/goose-workspace</b></span>
+  <span class="pill" title="This lane uses MOT Deck's local runner. The model pill names what is actually loaded; choosing another name in Goose does not load its weights.">runner · <b id="ep">this machine's runner</b></span>
+  <span class="pill" title="Reload reattaches and replays bounded terminal scrollback.">reattach · <b id="sbk">256</b>KB</span>
+  <span class="pill" title="With no tab attached the session stays alive for this grace period.">grace · <b id="grace">10 minutes</b></span>
 </div>
 <div id="sess" class="hide">
   <div class="shead">
@@ -305,18 +301,7 @@
 <div id="msg"></div>
 <div id="logwrap"><pre id="logbox"></pre></div>
 <div id="wrap"><div id="term"></div></div>
-<div id="foot">goose is a lane, not a component — it has no MOT Deck card to start or
-  stop, because it lives in this tab and runs only while the tab is open. Its home and
-  its history stay under <code>data/goose/</code> — the strip above lists what goose
-  itself has kept, and deleting a row runs goose's own <code>session remove</code>.
-  Old sessions delete while another one is running; only the LIVE session has to be
-  Ended first, because goose would otherwise delete it out from under this terminal.
-  The terminal keeps a dark ground in
-  every theme: the colours in it are goose's own. <b>Goose UI</b> in the sidebar is the
-  same agent with a graphical surface — it keeps its own home and its own sessions, so
-  the two lanes never share a conversation and can run at the same time. Over there,
-  hovering a chat in the sidebar's CHATS list shows a ✕ that deletes it (two-step, and
-  it runs goose's own deletion) — upstream only offers that on its Session History page.</div>
+<div id="foot" title="Goose CLI is a tab-owned lane. Its own session store and the separate Goose UI store do not share conversations; deleting a listed session uses Goose's native removal command.">Full behavior: MOT Deck → Help → Goose CLI.</div>
 
 <script src="/assets/vendor/xterm.js"></script>
 <script src="/assets/vendor/xterm-addon-fit.js"></script>

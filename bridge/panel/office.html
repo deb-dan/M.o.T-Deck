@@ -6263,10 +6263,10 @@ async function aiRefreshModel() {
     // so it costs nothing at all. The other two gates are agentProbe's job.
     const h = j && j.components && j.components.hermes;
     agentEnv.hermes = !!(h && h.running);
-    agentProbe(aiModel);
+    await agentProbe(aiModel);
     if (!aiModel) aiStatus('No model is loaded. Open MOT Deck → Models and '
                            + 'load one — this panel uses the same model the Chat lane does.');
-    else if (!aiBusy) aiStatus('');
+    else if (!aiBusy) aiStatus(agentCatalogNotice || '');
   } catch (e) {
     aiModel = '';
     agentEnv.hermes = false;
@@ -8106,6 +8106,7 @@ const AGENT_USER_MARKER = '\n\n--- M.O.T LOffice user question ---\n\n';
 const LS_LANE = 'motdeck-office-lane';
 const LS_AGENT_SID = 'motdeck-office-agent-sid';
 const LS_AGENT_STORED = 'motdeck-office-agent-stored';
+const LS_AGENT_CATALOG = 'motdeck-office-agent-catalog';
 // ⚠️ TWO VARIABLES, NOT ONE, AND THE SECOND ONE IS A BUG FIX FOUND ON THE REAL PAGE.
 // `aiLane` is the lane IN EFFECT; `laneWant` is the lane Debi ASKED for. They have to be
 // separate because the gate is probed ASYNCHRONOUSLY: for the first few hundred
@@ -8117,6 +8118,7 @@ const LS_AGENT_STORED = 'motdeck-office-agent-stored';
 let aiLane = LANE_QUICK, laneWant = LANE_QUICK;
 let agentSid = '', agentStored = '', agentNamed = false, agentNaming = false;
 let agentHistoryLoading = false, agentHistoryRestoredFor = '';
+let agentCatalogHash = '', agentCatalogPending = '', agentCatalogNotice = '';
 // What the last probe found. `tools` is TRUE / FALSE / NULL and the third value is the
 // point — see agentGate.
 let agentEnv = { hermes: false, mcpRegistered: false, mcpInSync: false,
@@ -8397,6 +8399,7 @@ async function agentProbe(pin) {
     const j = await r.json();
     agentEnv.mcpRegistered = !!(j && j.registered);
     agentEnv.mcpInSync = !!(j && j.in_sync);
+    await agentCatalogReconcile(String((j && j.catalog_sha256) || ''));
   } catch (e) {
     agentEnv.mcpRegistered = false; agentEnv.mcpInSync = false;
     bx('agent-mcp-fail', String((e && e.message) || e).slice(0, 120));
@@ -8421,6 +8424,63 @@ async function agentProbe(pin) {
   lanePaint();
 }
 
+// S1 — an agent session remembers the tool contract it was born with. Registration
+// status can flicker and names can stay the same while schemas change, so only the
+// canonical full-catalog fingerprint is allowed to trigger a rollover.
+function agentCatalogPlan(remembered, current, hasSession, busy) {
+  const oldHash = String(remembered || '').trim();
+  const newHash = String(current || '').trim();
+  if (!newHash || oldHash === newHash) return 'none';
+  // A session created before this fingerprint existed has no comparison evidence.
+  // Adopt the first observed value; retiring that session would guess that it is stale.
+  if (!oldHash) return 'adopt';
+  if (!hasSession) return 'adopt';
+  return busy ? 'defer' : 'rollover';
+}
+
+function agentCatalogRemember(value) {
+  agentCatalogHash = String(value || '').trim();
+  try {
+    if (agentCatalogHash) localStorage.setItem(LS_AGENT_CATALOG, agentCatalogHash);
+    else localStorage.removeItem(LS_AGENT_CATALOG);
+  } catch (e) { /* private mode */ }
+}
+
+function agentCatalogRollover(nextHash) {
+  const previous = agentStored;
+  agentSid = ''; agentStored = ''; agentNamed = false;
+  agentHistoryRestoredFor = '';
+  try {
+    localStorage.removeItem(LS_AGENT_SID);
+    localStorage.removeItem(LS_AGENT_STORED);
+  } catch (e) { /* private mode */ }
+  agentCatalogRemember(nextHash);
+  agentCatalogPending = '';
+  [].forEach.call(el('ai-log').querySelectorAll('.aim'), n => n.remove());
+  aiEmpty();
+  agentCatalogNotice = 'Office tools changed, so the next Agent message starts a fresh '
+    + 'session. The previous conversation remains in Hermes history.';
+  aiStatus(agentCatalogNotice);
+  bx('agent-catalog-rollover', (previous || 'legacy-session') + ' → ' + nextHash);
+}
+
+async function agentCatalogReconcile(current) {
+  const plan = agentCatalogPlan(agentCatalogHash, current,
+    !!(agentSid || agentStored), !!aiBusy);
+  if (plan === 'adopt') {
+    agentCatalogRemember(current); agentCatalogPending = '';
+  } else if (plan === 'defer') {
+    agentCatalogPending = current;
+    agentCatalogNotice = 'Office tools changed while this turn was running. This turn '
+      + 'will finish; the next message will start a fresh Agent session.';
+    aiStatus(agentCatalogNotice);
+    bx('agent-catalog-defer', current);
+  } else if (plan === 'rollover') {
+    agentCatalogRollover(current);
+  }
+  return plan;
+}
+
 // ── the turn ─────────────────────────────────────────────────────────────────
 // The SAME reader aiSend() has, over the SAME frame vocabulary the main panel's Hermes
 // mode reads (bridge/app.py hermes_event_to_frames): {delta,thinking?}, tool_start,
@@ -8432,6 +8492,10 @@ async function agentSend() {
   const q = (el('ai-in').value || '').trim().slice(0, AI_Q_MAX);
   if (!q) return;
   if (!agentGate(agentEnv).ok) { aiStatus(agentGate(agentEnv).why, true); return; }
+  // The rollover explanation belongs to the empty, newly-created session. Once the
+  // user actually starts that session it has served its purpose; retaining it would
+  // let the 15-second capability poll resurrect stale copy after every later turn.
+  if (!agentSid && agentCatalogNotice) agentCatalogNotice = '';
   const ctx = aiCtxOn ? aiContext() : null;
   // Full grounding rides the FIRST message of a session only — the session keeps its
   // history, so later turns need just the one line that can change (agentBrief).
@@ -8548,6 +8612,9 @@ async function agentSend() {
   // First-turn auto-title happens as Hermes commits this exchange. Rename only now:
   // the stored row exists and the automatic title cannot race in behind our label.
   await agentName();
+  // A catalog change discovered during this turn was deliberately deferred. The old
+  // session gets to finish exactly once; only the NEXT turn moves to the new contract.
+  if (agentCatalogPending) await agentCatalogReconcile(agentCatalogPending);
   aiPaint(true);
   el('ai-log').scrollTop = el('ai-log').scrollHeight;
   // Nothing on this lane writes a workbook any more, so the file only moves when SHE
@@ -8924,10 +8991,7 @@ function csCardText(cs) {
   const c = cs || {};
   const n = Number(c.op_count || 0);
   return 'Hermes proposes ' + n + ' operation' + (n === 1 ? '' : 's') + ' on “'
-       + String(c.name || '?') + '”. ' + String(c.summary || '')
-       + ' Nothing has been written: this is a proposal, and Apply is the only thing '
-       + 'that touches the file. Apply keeps a checkpoint first, so this exact change '
-       + 'can be undone.';
+       + String(c.name || '?') + '”. ' + String(c.summary || '');
 }
 
 // The badge, from a RECEIPT and from nothing else. PURE.
@@ -8959,7 +9023,13 @@ function csCard(host, cs) {
   const lang = document.createElement('span');
   lang.className = 'lang';
   lang.textContent = 'proposed change · not applied';
+  lang.title = 'Nothing is written until you choose Apply.';
   bar.appendChild(lang);
+  const undoable = document.createElement('span');
+  undoable.className = 'lang';
+  undoable.textContent = 'undoable ✓';
+  undoable.title = 'Apply saves a checkpoint first, so this exact change can be undone.';
+  bar.appendChild(undoable);
   const line = document.createElement('div');
   line.textContent = csCardText(cs);
   head.appendChild(line);
@@ -9533,7 +9603,12 @@ function aiSetOpen(open, why) {
   document.body.classList.toggle('aioff', !open);
   try { localStorage.setItem('motdeck-office-ai', open ? '1' : '0'); } catch (e) { /* private mode */ }
   bx(open ? 'ai-open' : 'ai-collapse', why || '');
-  if (open) { aiEmpty(); aiPaint(true); aiRefreshModel(); }
+  if (open) {
+    aiEmpty(); aiPaint(true);
+    // Boot awaits this probe before restoring history so a stale-catalog transcript
+    // cannot flash on screen and then disappear. User-opened panels still refresh now.
+    if (why !== 'boot') aiRefreshModel();
+  }
   aiPaint();
 }
 
@@ -10155,6 +10230,7 @@ async function boot() {
     if (localStorage.getItem(LS_LANE) === LANE_AGENT) laneWant = LANE_AGENT;
     agentSid = localStorage.getItem(LS_AGENT_SID) || '';
     agentStored = localStorage.getItem(LS_AGENT_STORED) || '';
+    agentCatalogHash = localStorage.getItem(LS_AGENT_CATALOG) || '';
     // An id proves continuity, not its title. Rename is idempotent after the next
     // durable turn, and only its accepted response establishes naming success.
     agentNamed = false;
@@ -10172,7 +10248,11 @@ async function boot() {
   // page that does not yet know whether ONLYOFFICE is installed would show an
   // INTERACTIVE grid for a beat and then take it away — i.e. offer an edit it was
   // about to discard.
-  await Promise.all([loadFiles(), ooProbe(), agentRestoreHistory()]);
+  // Catalog reconciliation precedes transcript restoration. If an existing session
+  // remembers an older (or pre-fingerprint) tool contract, it is retired visibly and
+  // its Hermes history remains untouched; otherwise its transcript is restored once.
+  const agentBoot = async () => { await aiRefreshModel(); await agentRestoreHistory(); };
+  await Promise.all([loadFiles(), ooProbe(), agentBoot()]);
   bx('tier1-ready', 'files=' + files.length
      + ' editor=' + (ooInstalled ? 'installed' : 'no'));
   await autoOpen();

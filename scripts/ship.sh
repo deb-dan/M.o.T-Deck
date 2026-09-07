@@ -301,6 +301,17 @@ for d in scripts guards policies; do
   [[ -d "$ROOT/$d" ]] && mkdir -p "$DST/$d" && cp -R "$ROOT/$d/." "$DST/$d/"
 done
 
+# Older FAT seeds copied the authoring tests into the runtime root even though no
+# runtime path imports or executes them. Retire only exact bytes recorded from known
+# historical seeds. Modified/unknown files are preserved and named by the helper.
+# This is intentionally after the new helper reaches the snapshot and before restart.
+_LEGACY_TEST_MANIFEST="$ROOT/scripts/seed_manifests/legacy-runtime-tests.json"
+if [[ -f "$_LEGACY_TEST_MANIFEST" ]]; then
+  "$VENV_REPAIR_PY" "$DST/scripts/seed_ownership.py" clean-known-tests \
+    "$DST" "$_LEGACY_TEST_MANIFEST" \
+    || { echo "[ship] ERROR: legacy seed cleanup refused or failed"; exit 1; }
+fi
+
 # Config.swift is generated source, but a fat snapshot carries a copy beside its app
 # sources.  Recompiling the installed binary from the canonical repo is not enough:
 # leaving that copy behind made a forensic root-severance scan truthfully report the

@@ -15,7 +15,7 @@
  *   TTS speak-back  composer-level — one control, no lane branch
  *   stop/interrupt  Send→Stop       Send→Stop       Send→Stop (+ session.interrupt)
  *   sessions/new    Odysseus rail   Odysseus rail   Hermes rail
- *   lane note       one source (laneNote), three sentences
+ *   lane status     one capability summary or one transient notice, never both
  *
  * Run: node bridge/tests/test_lane_affordances.js   (from repo root)
  */
@@ -68,10 +68,10 @@ function grab(name) {
   throw new Error('unbalanced braces extracting ' + name);
 }
 
-const src = grab('attachVerdict') + '\n' + grab('laneNote');
+const src = grab('attachVerdict');
 // eslint-disable-next-line no-new-func
-const mod = new Function(src + '; return {attachVerdict, laneNote};')();
-const { attachVerdict, laneNote } = mod;
+const mod = new Function(src + '; return {attachVerdict};')();
+const { attachVerdict } = mod;
 
 const LANES = ['chat', 'agent', 'hermes'];
 
@@ -151,8 +151,9 @@ check('a text-only model on the agent lane with nothing configured anywhere stil
 const staged = grab('showAttachedImage');
 check('the chip renders the warning OR the note, in their own classes',
       /v\.why \|\| v\.note/.test(staged) && /'anote' : 'ainfo'/.test(staged));
-check('…and only `why` greys the ⊕ / flips aria-disabled (a note is not a refusal)',
-      /classList\.toggle\('off', !!v\.why\)/.test(grab('applyVisionUi')));
+check('…and a document-capable lane stays usable when only its image path is refused',
+      /const filesWork = chatPane\.mode !== 'chat'/.test(grab('applyVisionUi'))
+      && /const usable = v\.on \|\| filesWork/.test(grab('applyVisionUi')));
 check('…and .ainfo is a real, themed class rather than an inline colour (ALL-DESIGNS)',
       /#chat-attachstrip \.ainfo \{ color:var\(--faint\); \}/.test(html));
 
@@ -179,14 +180,16 @@ console.log('\n-- the ⊕ is grey-not-hide, and never a silent no-op --');
 const vis = grab('applyVisionUi');
 check('applyVisionUi never hides the ⊕ on a lane or a model (btn.hidden = false)',
       /btn\.hidden\s*=\s*false/.test(vis) && !/btn\.hidden\s*=\s*!/.test(vis));
-check('…it greys it with a class and states the reason as the title',
-      /classList\.toggle\('off'/.test(vis) && /btn\.title\s*=\s*v\.why/.test(vis));
+check('…it greys only when neither images nor documents can work, and states why',
+      /classList\.toggle\('off', !usable\)/.test(vis)
+      && /Supported text, code and PDF files still work/.test(vis));
 check('…and marks it aria-disabled rather than `disabled` (still focusable, '
       + 'still able to explain itself)',
-      /aria-disabled/.test(vis) && !/btn\.disabled\s*=/.test(vis));
+      /aria-disabled/.test(vis) && /usable \? 'false' : 'true'/.test(vis)
+      && !/btn\.disabled\s*=/.test(vis));
 check('a STAGED image gets its caveat repainted on a lane switch (stage on Hermes '
       + 'with no caveat, switch to Agent, and the Odysseus warning must appear)',
-      /else if \(chatPane\.attachedImage\)[\s\S]{0,120}?showAttachedImage/.test(vis));
+      /else if \(chatPane\.attachedImage\)[\s\S]{0,260}?showAttachedImage/.test(vis));
 check('a blocked ⊕ still SPEAKS when clicked (the silent-no-op class)',
       /attachNote\(v\.why\)/.test(grab('pickImage')));
 check('#chat-attach.off is styled by opacity only — no colour token, so all six '
@@ -205,8 +208,9 @@ const nativeDrop = html.slice(html.indexOf('window.motdeckNativeDrop'),
 check('the NATIVE Finder-drop path gates on attachVerdict too (it is the path a '
       + 'Mac user actually uses, and it had its own copy of the lane check)',
       /attachVerdict\(chatPane\.mode, liveVision, odyVisionCfg\(\)\)/.test(nativeDrop));
-check('the drag-drop and ⌘V paste handlers gate on attachVerdict too',
-      (html.match(/const v = attachVerdict\(chatPane\.mode, liveVision, odyVisionCfg\(\)\)/g) || []).length >= 4);
+check('the drag-drop and ⌘V paste handlers use the shared file/image classifier',
+      (html.match(/acceptImageFile\(file\)/g) || []).length >= 2
+      && /if \(f\) acceptImageFile\(f\)/.test(html));
 check('NO handler still says "images attach in Chat mode"',
       html.indexOf('attach in Chat mode') < 0);
 check('the vision pill no longer claims chat-mode-only either',
@@ -227,11 +231,10 @@ check('sendChat was located for these assertions (a rename must fail loudly, not
       _sendAt > 0 && send.length > 2000);
 check('sendChat takes the staged image on ANY lane (no mode === chat guard)',
       /const img = chatPane\.attachedImage \|\| null;/.test(send));
-check('…and the Hermes body carries image + image_name like the others',
-      /session_id: chatPane\.hermesSid[\s\S]{0,300}?image: img\.data, image_name: img\.name/
-        .test(send));
-check('…as does the Odysseus/direct body',
-      /mode:chatPane\.mode[\s\S]{0,300}?image: img\.data, image_name: img\.name/.test(send));
+check('the shared payload still carries image + image_name for picture attachments',
+      /img\.kind === 'file'[\s\S]{0,180}?image:img\.data, image_name:img\.name/.test(send));
+check('…and BOTH Hermes and Odysseus\/direct bodies receive that same payload',
+      (send.match(/\.\.\.attachPayload/g) || []).length === 2);
 check('the live ✕ only claims a delete on the lane that owns the bytes',
       /_lane === 'chat'[\s\S]{0,200}?liveAttachDrop/.test(send)
       && /Remove from this view/.test(send));
@@ -239,9 +242,9 @@ check('a reopened AGENT turn rehydrates from Odysseus (ody_id → the proxy rout
       /att\.ody_id/.test(grab('addRestoredAttachment'))
       && /\/api\/ody\/attachment\//.test(grab('addRestoredAttachment')));
 
-check('an image with NO message says why nothing was sent (all three backends '
+check('an attachment with NO message says why nothing was sent (all three backends '
       + 'refuse an empty message — the silent-no-op class, found by the adversarial pass)',
-      /if \(!text\)\{[\s\S]{0,700}?attachNote\('add a message to send with this image'\)/
+      /if \(!text\)\{[\s\S]{0,700}?attachNote\('add a message to send with this attachment'\)/
         .test(send));
 
 console.log('\n-- stop / interrupt: every lane --');
@@ -254,18 +257,6 @@ check('…while the Hermes branch still additionally interrupts upstream',
 check('the composer is released for every lane when the turn ends',
       /sb\.disabled = false; sendPaint\('Send'\);/.test(html));
 
-console.log('\n-- the lane note has ONE source --');
-check('laneNote gives each lane its own sentence',
-      laneNote('agent') !== laneNote('chat')
-      && laneNote('hermes') !== laneNote('chat')
-      && /Hermes/.test(laneNote('hermes')));
-check('…and Hermes is never described as "plain model — no tools" (it is the lane '
-      + 'with the MOST tools) — the browse-toggle used to print exactly that',
-      laneNote('hermes').indexOf('no tools') < 0
-      && html.indexOf("'plain model — no tools'") < 0);
-check('both painters call laneNote rather than repeating the strings',
-      (html.match(/laneNote\(/g) || []).length >= 3);
-
 console.log('\n-- affordances that are composer-level, and must stay that way --');
 for (const fn of ['toggleTalk', 'toggleAuto', 'toggleConv']) {
   check(fn + ' has no lane branch — audio in is one control for all three lanes',
@@ -276,13 +267,30 @@ check('the mic, the audio switch and the ⊕ all live in the ONE composer row, s
       /id="chat-inputrow"[\s\S]{0,4000}id="chat-attach"/.test(html)
       && /id="chat-inputrow"[\s\S]{0,6000}id="chat-audiosw"/.test(html));
 
-console.log('\n-- KNOWN GAPS the audit recorded (change these WITH the table) --');
+console.log('\n-- lane-truthfulness fences --');
 check('web search is still a hardcoded allow_web_search:true on the agent lane — '
       + 'there is no per-turn toggle in the composer yet (queued finding)',
       /allow_web_search:true/.test(send));
-check('the caps strip still reads Odysseus features on every lane (queued finding: '
-      + 'it is meaningless on the Hermes lane)',
-      /renderCapsStrip/.test(html) && /api\/ody\/caps/.test(html));
+eval(grab('capsStripText'));
+const capFixture = {features:{web_search:true, deep_research:false, memory:true},
+                    builtin_tools:[{enabled:true},{enabled:false}]};
+check('only Agent reports Odysseus capabilities',
+      /web ✓/.test(capsStripText('agent', capFixture))
+      && !/web|research|memory/.test(capsStripText('chat', capFixture))
+      && !/web|research|memory/.test(capsStripText('hermes', capFixture)));
+check('Chat names its real direct-runner boundary',
+      capsStripText('chat', capFixture) === 'direct chat · runner only');
+check('Hermes names its own tool/skill surface',
+      capsStripText('hermes', capFixture) === 'Hermes · tools + skills');
+check('Browse state is added only to the lanes that can use it',
+      /browser on/.test(capsStripText('agent', capFixture, true))
+      && /browser on/.test(capsStripText('hermes', capFixture, true))
+      && !/browser/.test(capsStripText('chat', capFixture, true)));
+check('an unavailable Odysseus snapshot is stated only on Agent',
+      /unavailable/.test(capsStripText('agent', null)));
+check('a lane switch repaints the capability strip', /renderCapsStrip\(\)/.test(grab('setMode')));
+check('a lane switch clears stale progress/error notices before repainting',
+      /chatNotice\(''\)/.test(grab('setMode')));
 
 console.log('\n-- the smooth-scroll no-op, swept --');
 /* The fixed sites DOCUMENT the bug in a block comment, and that comment naturally

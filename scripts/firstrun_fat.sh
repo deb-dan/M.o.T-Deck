@@ -101,6 +101,7 @@ mkdir -p "$DEST"
 tar xzf "$SEED" -C "$DEST" || fail "could not extract the seed into $DEST"
 # record which bundle this install came from, so the NEXT installer can compare.
 [[ -f "$DEST/SEED_STAMP" ]] && cp "$DEST/SEED_STAMP" "$DEST/.seed_stamp"
+[[ -f "$DEST/SEED_FILES.json" ]] && cp "$DEST/SEED_FILES.json" "$DEST/.seed_files.json"
 cd "$DEST"
 
 LOGDIR="$DEST/data/logs"; mkdir -p "$LOGDIR"

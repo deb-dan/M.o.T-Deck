@@ -21,6 +21,13 @@ short, plain, and honest about limits — no marketing voice.
 **Browse** toggles a browser-automation tool for the agent lanes. **Tools** opens
 Capabilities.
 
+The **⊕** beside the composer stages one attachment. Images work in all three lanes;
+Direct Chat sends the pixels to a vision-capable runner, while Agent and Hermes can
+describe an image when the loaded model cannot see it. Text, Markdown, CSV, JSON,
+Python, JavaScript, HTML and PDF files work in **Agent** and **Hermes**. Direct Chat
+has no file-tool layer, so it refuses those documents without clearing your draft.
+The 10 MB document and 8 MB image limits are checked before anything is submitted.
+
 Why Hermes turns can feel slow: Hermes hands the model a large system prompt (tool
 schemas + a skill index). A small local model has to read all of it before it says a
 word. That is what the Hermes tools lever (below) exists to shrink.
@@ -57,10 +64,27 @@ tab. They are different things:
 
 ### Why Hermes's own page used to disagree
 Hermes's Skills page fetches its list once when the tab opens and never refreshes
-itself. Changing something here and then looking there showed a stale page. The app
-now reloads that tab for you when you switch to it after a change. (Exception: a
-Hermes pane already open *beside* the panel in split view never "becomes visible", so
-press ⌘R there.)
+itself. Changing something here and then looking there showed a stale page. MOT Deck
+now reloads an open Hermes tab for you within a few seconds of a change, including a
+pane already visible beside the panel in split view. A Hermes dashboard open outside
+MOT Deck is the one surface the app cannot reload; press ⌘R there.
+
+### Capabilities → Tools: three different kinds of tool
+
+- **Hermes tools** shape only the Hermes lane. Every enabled toolset—and the skills
+  index when that toolset is on—adds to its system prompt. Changes take effect on the
+  next Hermes chat without a restart. **Minimal** keeps file, terminal and clarify;
+  **Hermes's defaults** restores the set Hermes itself ships enabled, not every row.
+  **Check** asks Hermes what it will actually hand the model. A Hermes page open in an
+  outside browser still needs ⌘R after a change.
+- **Tools** are Odysseus's built-in Agent tools. A category switch controls all tools
+  under it; expand the row when you want individual control. They do not apply to
+  Direct Chat or the Hermes lane.
+- **Connected tools (MCP)** are external servers attached to Odysseus. Their server and
+  per-tool switches likewise affect Agent. The separate **Voice tools (MCP)** rows are
+  MOT Deck-managed registrations written to both Hermes and Odysseus. A voice component
+  must be installed and running before its registration can be enabled; Hermes uses a
+  newly registered server on a new chat.
 
 ---
 
@@ -117,6 +141,53 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
   *you* made inside one of those apps is never overwritten — but if one of them is
   still holding a model that no longer exists, a thin banner appears above that tab
   naming both models with the one button that fixes it.
+
+### Memory and the fit chips
+
+- The memory strip reports **pressure first**. A mostly full Mac at normal pressure is
+  healthy; amber means macOS is compressing to keep up, and red means it is swapping.
+  The fill bar is context, not a warning by itself.
+- **Free now** is the budget for another model alongside what is already resident.
+  **+… GB on eject** is what becomes available if the current runner model is replaced.
+  Open **Details** to see MOT Deck's measured processes, everything else on the Mac,
+  peaks, compression/swap information and the GPU-wireable ceiling. The ledger can name
+  other processes, but never stops or changes them.
+- `Fits · ~N GB` means the projected need is comfortably inside that budget.
+  `Tight · ~N GB` means it is close enough that normal variation may cause compression
+  or swap. `Over by ~N GB` names the estimated shortfall. `Live · ~N GB` is a measured
+  resident model rather than a prediction. `No estimate` means MOT Deck lacks enough
+  evidence and is deliberately not guessing.
+- Click **Show the arithmetic** in a model's detail pane (or hover its chip) for the
+  weights, context/cache, working-memory estimate and any caveat. GGUF estimates are
+  upgraded by llama.cpp's own fit probe when available; MLX remains a labelled formula
+  because it allocates lazily.
+- A hard Metal wire-limit refusal has no in-app bypass. An operator who has measured a
+  safe exception may start the bridge with `MOT_DECK_ALLOW_METAL_OVERCOMMIT=1`; this is
+  deliberately an environment-level override because a bad estimate can exhaust the
+  machine, not an everyday **Load anyway** choice.
+
+---
+
+## Aider
+
+- Aider is a tab-owned coding lane, not a separately running component, so it has no
+  card on MOT Main. **Start** opens one terminal-backed session and **End session** (or
+  `/exit`) stops it.
+- It edits only the workspace named in the chip, asks before each change, never
+  auto-commits, and uses git for `/undo` and `/diff`.
+- Reloading the tab reattaches and replays the bounded terminal scrollback. With no tab
+  attached, the process stays alive for the displayed grace period and then stops.
+- Aider has no independent conversation picker: its history is the workspace and git.
+
+---
+
+## Navigation and appearance
+
+- **Customize** opens over Capabilities. Drag within a group to reorder; switch a row
+  off to hide it. Fixed entries remain visible, and rejected layouts roll back.
+- **Editorial / Studio** changes layout, typography, spacing, and control shape. The ✦
+  top-bar button switches design; ◐ switches the active light/dark variant.
+- A **Theme** changes the colour system and is remembered. The Office tab follows it.
 
 ---
 
@@ -480,6 +551,29 @@ or the middle, returns to off. ↑ / ↓ / Home / End move between the three.
 - **It is a developer preview and MOT Deck pins it.** DeepSeek says so itself. MOT Deck
   installs one fixed version and never updates it behind your back.
 
+## LOffice — spreadsheets, documents and the AI panel
+
+- LOffice's start screen and file rail stay inside the LOffice tab. `.xlsx` files open
+  first in its quick local grid; **Full editor** opens the same workbook inside the
+  bundled ONLYOFFICE surface. `.docx` and `.pptx` are full-editor documents and are
+  preserved as files rather than forced through the spreadsheet grid.
+- The quick grid is deliberately narrower. It edits cells, formatting, find/replace,
+  statistics and safe sheet sorts. Charts, images, hyperlinks, filters, validation and
+  richer document layout belong to the full editor. **Help → What round-trips** inside
+  LOffice names exactly what each save path preserves.
+- The AI panel sends the sheet **as last saved**; press **⌘S** first when you want it to
+  see current edits. Proposed writes arrive as review cards. Apply changes the editor,
+  **⌘Z** normally undoes it, and **⌘S** writes it to disk. A sort is the explicit
+  exception: it goes through the file and its card says so before Apply.
+- Reload restores the visible human conversation without showing the internal workbook
+  grounding. If the Office tool catalogue changes, LOffice does not let an old Agent
+  session keep retired tools: it explains the change and starts a fresh Agent session
+  on the next question. The earlier conversation remains in Hermes history.
+- Useful shortcuts in LOffice: **⌘O** open, **⌘S** save, **⌘\\** file rail,
+  **⌘F** find, **⇧⌘H** find and replace, **⌘Z** undo, **⇧⌘Z** redo, and
+  **⌘B / ⌘I / ⌘U** bold, italic and underline. The LOffice **Help** menu is the
+  authoritative complete list for that surface.
+
 ## API — letting other apps use your model
 
 MOT Deck's model runs an OpenAI-compatible server on your own machine, and the **API**
@@ -570,8 +664,13 @@ live there, in the order you need them.
   Cyber. **▣** is an optional denser button chrome (opt-in). **✦** is a separate axis
   again — it flips the whole panel to the Studio design, and one more click puts
   Editorial back exactly as it was.
-- Drop an **image** on the Chat view to attach it; drop a **wav/mp3** on the panel to
-  add it to the voice clip library.
+- App shortcuts: **⌘R** reloads the focused tab; **⌘⇧T** shows or hides the tab strip;
+  **⌘K** opens the MOT Deck command palette; **⌘\\** toggles its sidebar. Plain
+  **⌘Q** closes the app window but deliberately leaves local services running.
+  **⌥⌘Q** offers the separate, explicit quit-everything path.
+- Drop an **image** on the Chat view to attach it. Text/code files and PDFs can be
+  dropped there for Agent or Hermes. Drop a **wav/mp3/flac/m4a** on the panel to add it
+  to the voice clip library instead.
 
 ---
 

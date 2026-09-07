@@ -100,6 +100,18 @@ async def direct_events(body: dict):
     endpoint as a thin subscriber preserves callers that still expect its original
     SSE shape.
     """
+    # Direct Chat has no document-ingestion contract. Reject the alternate API entry
+    # explicitly; silently dropping a caller-supplied file would be worse than refusal.
+    if body.get("file"):
+        async def _file_refusal():
+            import json as _json
+            yield ("data: " + _json.dumps({
+                "type": "proxy_error",
+                "error": "files work in Agent or Hermes; direct Chat accepts images only",
+            }) + "\n\n")
+            yield "data: [DONE]\n\n"
+        return _file_refusal()
+
     sid = body.get("session", "")
     request_id = str(body.get("request_id") or "")[:200]
     user_msg = (body.get("message") or "").strip()

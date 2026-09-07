@@ -111,6 +111,7 @@ if [[ $PORTABLE -eq 1 ]]; then
   tar czf "$SEED" -C "$ROOT" \
     --exclude='./.git' --exclude='./.gitmodules' --exclude='./vendor' \
     --exclude='./data' --exclude='./dist' \
+    --exclude='./bridge/tests' --exclude='./bridge/contract_tests' \
     --exclude='./node_modules' --exclude='*/node_modules' \
     --exclude='*/__pycache__' --exclude='*.pyc' --exclude='.DS_Store' \
     .
@@ -229,6 +230,7 @@ if [[ $FAT -eq 1 ]]; then
   rm -rf "$STAGE"; mkdir -p "$STAGE"
   rsync -a \
     --exclude='.git' --exclude='.gitmodules' --exclude='node_modules' \
+    --exclude='bridge/tests' --exclude='bridge/contract_tests' \
     --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' \
     vendor scripts bridge app skills policies motdeck.yaml VERSION "$STAGE/" 2>/dev/null || {
       echo "ERROR (fat): rsync of the seed failed."; exit 1; }
@@ -262,6 +264,12 @@ if [[ $FAT -eq 1 ]]; then
     echo "dirty_files=${SEED_DIRTY_FILES}"
     echo "components=$(awk '/^components:/{f=1;next} f && /^[^ ]/{exit} f && /^  [A-Za-z0-9_-]+:/{n++} END{print n+0}' motdeck.yaml)"
   } > "$STAGE/SEED_STAMP"
+  # Ownership is per file and digest. It lets a later, explicit upgrade retire an
+  # obsolete seed-owned file without ever claiming a whole directory as disposable.
+  "$PYBIN" "$ROOT/scripts/seed_ownership.py" write "$STAGE" "$STAGE/SEED_FILES.json" \
+    || { echo "ERROR (fat): could not record seed file ownership"; exit 1; }
+  [[ ! -d "$STAGE/bridge/tests" && ! -d "$STAGE/bridge/contract_tests" ]] \
+    || { echo "ERROR (fat): runtime seed unexpectedly contains tests"; exit 1; }
   echo "[motdeck] seed stamp: $(tr '\n' ' ' < "$STAGE/SEED_STAMP")"
   # sanity: web_dist made it into the seed
   [[ -f "$STAGE/vendor/hermes/hermes_cli/web_dist/index.html" ]] \

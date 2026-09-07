@@ -943,17 +943,19 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
           && /await create\(\)/.test(grab('newBlank'))
           && !/create\(['"]/.test(grab('newBlank')));
     // ⚠️ WIDENED AT loffice-2026-08-28a, AND THE REASON IS THE POINT OF THE WIDENING:
-    // the file list, the "is the editor installed?" probe, and the read-only stored
-    // Agent-history repaint are now asked TOGETHER (one Promise.all — three small GETs
-    // on the same loopback bridge, none needing another's answer), and ALL are awaited
-    // before the landing. The second half is
+    // the file list and the "is the editor installed?" probe are independent. Agent
+    // boot has one necessary order of its own: read/reconcile the current tool-catalog
+    // fingerprint BEFORE repainting stored history, so a proven-stale transcript never
+    // flashes and disappears. All three arms finish before the landing. The second half is
     // not a nicety: autoOpen → showWorkbook decides whether the grid is an interactive
     // editor or a read-only interstitial, and a page that did not yet know would offer
     // an edit it was about to discard.
-    check('boot() runs the landing, and only AFTER the file list, editor probe, and '
-          + 'stored Agent-history repaint are all in',
-          /await Promise\.all\(\[loadFiles\(\), ooProbe\(\), agentRestoreHistory\(\)\]\);[\s\S]{0,400}await autoOpen\(\);/
-            .test(grab('boot')));
+    const bootSrc = grab('boot');
+    check('boot() reconciles the Agent tool catalog before restoring its history, '
+          + 'then runs the landing only after that arm, the file list and editor probe',
+          /const agentBoot = async \(\) => \{ await aiRefreshModel\(\); await agentRestoreHistory\(\); \};/.test(bootSrc)
+          && /await Promise\.all\(\[loadFiles\(\), ooProbe\(\), agentBoot\(\)\]\);[\s\S]{0,400}await autoOpen\(\);/
+            .test(bootSrc));
 
     // ── create(): the empty name used to be a silent no-op ──
     const src = grab('create');

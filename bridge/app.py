@@ -297,8 +297,8 @@ _LANES = (
     "core.hermesturn",
     "core.hermesreplay",
     "core.localsecrets",
+    "core.chatattachments",
 )
-
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,
 # /docs, /docs/oauth2-redirect, /redoc) plus the /assets mount above. Frozen here so
 # the reordering below can never touch them.

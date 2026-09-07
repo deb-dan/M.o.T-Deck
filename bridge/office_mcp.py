@@ -93,6 +93,7 @@ pins the upstream facts that make the annotation load-bearing.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
@@ -143,14 +144,11 @@ _SHEET_ARG = {"type": "string",
                              "exist falls back to the first sheet and the result SAYS "
                              "so."}
 
-# ⚠️ `ops` is described rather than fully schema'd on purpose. The grammar is the LOffice
-# action block's, it is validated by office_ops.validate_ops with a sentence per refusal,
-# and a JSON Schema strict enough to be worth having here would be a SECOND validator
-# that could disagree with the first. The description teaches it; the validator enforces
-# it; the refusal explains it.
-_OPS_ARG = {
-    "type": "array",
-    "description": (
+# S34: the machine-readable operation variants come from office_ops' validator tables;
+# there is no separately maintained MCP grammar to drift. Semantic/cross-field refusal
+# remains validate_ops' job and still produces the human-readable sentence.
+_OPS_ARG = office_ops.ops_json_schema()
+_OPS_ARG["description"] = (
         "the WHOLE change, as a list of operations (max 60, and max 2000 cells across "
         "all of them — over either cap the whole change is refused, never half-staged). "
         "Send every operation the request needs in ONE call: Debi sees one card per "
@@ -199,9 +197,7 @@ _OPS_ARG = {
         '  {"op":"resize","rows":500,"cols":40}  — grows the sheet; clamped, not '
         "refused.\n"
         "Merged ranges are renumbered on an insert or a delete, but FORMULA REFERENCES "
-        "ARE NEVER REWRITTEN — a formula travels as text, and the result says so."),
-    "items": {"type": "object"},
-}
+        "ARE NEVER REWRITTEN — a formula travels as text, and the result says so.")
 
 
 def tool_specs() -> list:
@@ -241,7 +237,9 @@ def tool_specs() -> list:
                 "cached in the file by whichever real engine last saved it, and any "
                 "merged ranges. NOTHING HERE RECOMPUTES ANYTHING — there is no formula "
                 "engine — so a cached value can be stale and every result says so. Cap "
-                f"{office_ops.READ_MAX_CELLS} cells; omit `range` for the used range. "
+                f"{office_ops.READ_MAX_CELLS} cells per response; larger ranges return "
+                "`truncated: true` plus an exact `next_range` to read next. Omit "
+                "`range` for the used range. "
                 "SPREADSHEETS (.xlsx) ONLY: a .docx or .pptx is refused with a sentence "
                 "saying so — there is no way to read inside one from here."),
             "schema": {"type": "object", "properties": {
@@ -318,6 +316,13 @@ def tool_list_payload() -> list:
             ent["annotations"] = {"destructiveHint": True, "title": t["name"]}
         out.append(ent)
     return out
+
+
+def catalog_sha256() -> str:
+    """Stable identity of the complete model-visible Office tool contract."""
+    raw = json.dumps(tool_list_payload(), ensure_ascii=False, sort_keys=True,
+                     separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 def write_tool_names() -> list:
