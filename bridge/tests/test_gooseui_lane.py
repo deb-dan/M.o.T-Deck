@@ -724,6 +724,105 @@ def test_the_sidebar_delete_speaks_gooses_own_protocol():
         G.acp_calls = real
 
 
+def test_the_product_rename_repairs_only_the_proven_legacy_workspace_via_goose():
+    """U34's native reload walk exposed four Goose sessions whose persisted cwd was
+    the retired product support root.  The repair must use Goose's own ACP update and
+    verification methods; a sqlite edit, symlink, basename guess, or broad home-prefix
+    rewrite would silently claim ownership of user state we do not own."""
+    import asyncio
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        canonical = os.path.realpath(os.path.join(td, "MOT Deck", "data", "goose-workspace"))
+        os.makedirs(canonical)
+        legacy = os.path.join(td, "Harness", "data", "goose-workspace")
+        neighbour = os.path.join(td, "Harness", "my-own-project")
+
+        calls = []
+
+        async def fake(_url, _origin, requested, **_kwargs):
+            calls.append(requested)
+            method, params = requested[0]
+            if method == "session/list":
+                return [{
+                    "sessions": [
+                        {"sessionId": "20260905_1", "cwd": legacy, "title": "old"},
+                        {"sessionId": "20260905_2", "cwd": neighbour, "title": "mine"},
+                        {"sessionId": "20260905_3", "cwd": canonical, "title": "new"},
+                    ]
+                }], ""
+            ok(method == "_goose/unstable/session/working-dir/update",
+               "the migration uses Goose's supported owner, never its private sqlite")
+            ok(params == {"sessionId": "20260905_1", "workingDir": canonical},
+               "only the exact proven legacy row is changed to the exact canonical cwd")
+            ok(requested[1] == ("_goose/unstable/session/info",
+                                {"sessionId": "20260905_1"}),
+               "an empty update receipt is not proof; the row is independently re-read")
+            return [{}, {"session": {"sessionId": "20260905_1",
+                                      "cwd": canonical}}], ""
+
+        real = G.acp_calls
+        try:
+            G.acp_calls = fake
+            report = asyncio.run(G.migrate_legacy_session_workdirs(
+                "ws://goose", "http://127.0.0.1:8700", canonical, [legacy]))
+        finally:
+            G.acp_calls = real
+
+        ok(report["ok"] is True and report["migrated"] == ["20260905_1"],
+           "the verified migrated session id is reported")
+        ok(report["untouched"] == 2 and not report["errors"],
+           "the canonical row and the user-owned neighbouring path remain untouched")
+        ok(len(calls) == 2,
+           "one list plus one update-and-verification transaction; no hidden write path")
+
+
+def test_legacy_workspace_migration_fails_closed_when_evidence_changes():
+    import asyncio
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        canonical = os.path.realpath(os.path.join(td, "MOT Deck", "data", "goose-workspace"))
+        os.makedirs(canonical)
+        legacy = os.path.join(td, "Harness", "data", "goose-workspace")
+
+        async def vanished(_url, _origin, requested, **_kwargs):
+            if requested[0][0] == "session/list":
+                return [{"sessions": [{"sessionId": "20260905_1",
+                                         "cwd": legacy}]}], ""
+            return [{}, {"session": {"sessionId": "20260905_1",
+                                      "cwd": "/somewhere/else"}}], ""
+
+        real = G.acp_calls
+        try:
+            G.acp_calls = vanished
+            report = asyncio.run(G.migrate_legacy_session_workdirs(
+                "ws://goose", "o", canonical, [legacy]))
+        finally:
+            G.acp_calls = real
+        ok(report["ok"] is False and report["migrated"] == [] and report["errors"],
+           "a changed or unverifiable row is a visible refusal, never a claimed repair")
+
+        os.makedirs(legacy)
+        report = asyncio.run(G.migrate_legacy_session_workdirs(
+            "ws://unused", "o", canonical, [legacy]))
+        ok(report["ok"] is True and report["migrated"] == [],
+           "an extant legacy workspace is still usable and is never redirected")
+
+
+def test_the_session_path_repair_is_part_of_startup_and_visible_in_status():
+    router = (ROOT / "bridge" / "routers" / "gooseui.py").read_text()
+    ok("_repair_legacy_session_workdirs(acp)" in router,
+       "the repair runs before the page receives a usable ACP endpoint")
+    ok('"session_path_migration": dict(_SESSION_MIGRATION)' in router,
+       "its verified ids or refusal remain inspectable through status")
+    ok('_SESSION_MIGRATION_RUNTIME = runtime if report.get("ok") else ""' in router,
+       "a transient ACP refusal remains retryable within the same daemon runtime")
+    paths = G.legacy_workspace_paths("/Users/example")
+    ok(paths == ("/Users/example/Library/Application Support/Harness/data/goose-workspace",),
+       "the authority set is one exact historical app-owned workspace, not a prefix")
+
+
 def test_the_sidebar_delete_is_wired_and_fenced():
     ok("/api/gooseui/session/delete" in _APP_SOURCE,
        "the route exists in the app-layer source view")
@@ -794,6 +893,9 @@ def main():
                test_absent_dependency_lands_on_something_usable,
                test_the_shim_is_complete_and_honest,
                test_the_sidebar_delete_speaks_gooses_own_protocol,
+               test_the_product_rename_repairs_only_the_proven_legacy_workspace_via_goose,
+               test_legacy_workspace_migration_fails_closed_when_evidence_changes,
+               test_the_session_path_repair_is_part_of_startup_and_visible_in_status,
                test_the_sidebar_delete_is_wired_and_fenced,
                test_every_goose_ui_log_is_reachable_in_the_panel):
         fn()

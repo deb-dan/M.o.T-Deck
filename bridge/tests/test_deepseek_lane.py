@@ -37,6 +37,9 @@ INSTALL = open(os.path.join(ROOT, "scripts", "install_deepseek.sh"),
 ENSURE_NODE = open(os.path.join(ROOT, "scripts", "ensure_node.sh"),
                    encoding="utf-8", errors="replace").read()
 SEED_SCRIPT = os.path.join(ROOT, "scripts", "seed_deepseek_config.py")
+PICKER_PATCH = os.path.join(ROOT, "policies", "deepseek-directory-picker.yaml")
+NPM_TEMPLATE = os.path.join(ROOT, "scripts", "deepseek-npm", "package.json")
+NPM_LOCK = os.path.join(ROOT, "scripts", "deepseek-npm", "package-lock.json")
 SEED_SRC = open(SEED_SCRIPT, encoding="utf-8", errors="replace").read()
 APP = _APP_SOURCE
 PANEL = open(os.path.join(ROOT, "bridge", "panel", "index.html"),
@@ -236,13 +239,38 @@ def test_the_installer_proves_it_runs_before_claiming_success():
 
 
 def test_the_lockfile_discipline_is_real_and_its_limit_is_stated():
-    """`npm ci` off a lock is reproducible; the FIRST install has no lock. Both halves
-    must be in the script, and the honest limit must be written down."""
+    """U70: first install and every repair use the reviewed repository lock."""
     assert "npm ci" in INSTALL and "package-lock.json" in INSTALL
-    assert "--save-exact" in INSTALL, "the top-level dependency is pinned exactly"
-    assert "ranges" in INSTALL or "freezes" in INSTALL, (
-        "the transitive tree is range-resolved once; the script must say so rather "
-        "than implying byte-reproducibility it cannot deliver on a first install")
+    assert "npm install --no-audit" not in INSTALL
+    assert "scripts/deepseek-npm" in INSTALL
+    package = json.load(open(NPM_TEMPLATE, encoding="utf-8"))
+    lock = json.load(open(NPM_LOCK, encoding="utf-8"))
+    pin = str(MANIFEST["components"]["deepseek"]["pin"])
+    assert package["dependencies"]["@deepseek-ai/dsh"] == pin
+    assert lock["packages"]["node_modules/@deepseek-ai/dsh"]["version"] == pin
+    assert lock["packages"][""]["name"] == "motdeck-deepseek-prefix"
+
+
+def test_the_native_picker_is_replaced_by_upstreams_in_app_browser():
+    """U67: the osascript process existed but its folder window never became reachable
+    from the native MOT Deck tab.  Compose the two upstream browse plugins via an
+    app-owned patch; do not edit DeepSeek's package or invent workspace persistence."""
+    import yaml
+    doc = yaml.safe_load(open(PICKER_PATCH, encoding="utf-8"))
+    assert doc[0] == {"id": "directory-picker", "disabled": True}
+    inserted = doc[1]["insert"]
+    assert inserted == [
+        {"id": "directory-picker-browse-host",
+         "name": "@deepseek-ai/dsh-host-directory-picker-browse"},
+        {"id": "directory-picker-browse-client",
+         "name": "@deepseek-ai/dsh-client-ui-directory-picker-browse"},
+    ]
+    b = branch()
+    assert 'DS_PICKER_PATCH="$ROOT/policies/deepseek-directory-picker.yaml"' in b
+    assert ('"$DS_NODE" "$DS_BIN" --profile web --patch "$DS_PICKER_PATCH"'
+            in b)
+    assert '"$DS_BIN" --patch "$DS_PICKER_PATCH"' not in b
+    assert '[[ -f "$DS_PICKER_PATCH" && ! -L "$DS_PICKER_PATCH" ]]' in b
 
 
 def test_the_workspace_is_created_but_never_git_initialised():
@@ -282,7 +310,7 @@ def test_start_refuses_cleanly_when_not_installed():
 
 def test_start_passes_the_port_and_the_loopback_host_explicitly():
     b = branch()
-    assert 'web --host 127.0.0.1 --port "$DS_PORT" --no-open' in b, (
+    assert '--host 127.0.0.1 --port "$DS_PORT" --no-open' in b, (
         "the tab's URL is a constant, so the port must not depend on a default we do "
         "not own — and --no-open stops a browser window popping behind our native tab")
     assert 'DS_PORT=$(_manifest_value components.deepseek.port int)' in b, (
@@ -444,6 +472,8 @@ def test_the_first_run_friction_is_named_before_the_user_hits_it():
     assert "Internal Testing Notice" in b, "upstream's own once-only modal"
     assert "choose a WORKSPACE" in b or "WORKSPACE" in b
     assert "data/deepseek-workspace" in b, "…and the answer is named"
+    assert "in-app directory browser" in b
+    assert "unreachable background macOS chooser" in b
     assert "U67" in b, "…and the ledger row that tracks retiring the friction"
 
 

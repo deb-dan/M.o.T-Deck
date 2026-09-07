@@ -242,6 +242,18 @@ def workspace_path(root) -> str:
     return os.path.join(str(root), WORKSPACE_DIR)
 
 
+def legacy_workspace_paths(home=None) -> tuple:
+    """Closed historical product roots whose Goose workspace we previously owned.
+
+    This is migration evidence, not an aliasing mechanism.  Do not widen it to every
+    directory under an old support root: users may have pointed Goose at their own
+    projects there, and those rows are not ours to rewrite.
+    """
+    base = os.path.abspath(str(home or os.path.expanduser("~")))
+    return (os.path.join(base, "Library", "Application Support", "Harness",
+                         "data", "goose-workspace"),)
+
+
 def pidfile_path(root) -> str:
     return os.path.join(str(root), PIDFILE_REL)
 
@@ -476,6 +488,96 @@ def _session_titles(result) -> dict:
         if sid:
             out[sid] = str(r.get("title") or "").strip()
     return out
+
+
+async def migrate_legacy_session_workdirs(url: str, origin: str,
+                                          canonical: str,
+                                          legacy_paths) -> dict:
+    """Repair product-owned session cwd rows through Goose's own ACP API.
+
+    U34's native journey found sessions that could be listed but not opened after the
+    product-support root was renamed: their cwd still named the former, now-absent
+    ``data/goose-workspace``.  This is deliberately *not* a general path migration.
+    The caller supplies the closed set of historical product-owned paths; a row is
+    eligible only on an exact string match, only while that old path is absent, and
+    only when the canonical workspace is a real directory rather than a symlink.
+
+    Goose owns its session database, so the update goes through its published unstable
+    ACP method and is independently verified with ``session/info``.  An empty update
+    response, a basename match, or successful transport is never called proof.
+    """
+    target = os.path.abspath(str(canonical or ""))
+    report = {"ok": True, "migrated": [], "untouched": 0, "errors": []}
+    if (not target or not os.path.isdir(target) or os.path.islink(target)
+            or os.path.realpath(target) != target):
+        report["ok"] = False
+        report["errors"].append("the canonical Goose workspace is not a real directory")
+        return report
+
+    eligible = set()
+    for raw in legacy_paths or ():
+        old = str(raw or "")
+        if (old and os.path.isabs(old) and old != target
+                and not os.path.lexists(old)):
+            eligible.add(old)
+    if not eligible:
+        return report
+
+    rows = []
+    cursor = ""
+    seen_cursors = set()
+    for _ in range(100):
+        params = {"cursor": cursor} if cursor else {}
+        result, err = await acp_calls(url, origin, [("session/list", params)])
+        if err:
+            report["ok"] = False
+            report["errors"].append(err)
+            return report
+        page = result[0] if result and isinstance(result[0], dict) else {}
+        page_rows = page.get("sessions") or []
+        rows.extend(r for r in page_rows if isinstance(r, dict))
+        nxt = str(page.get("nextCursor") or "")
+        if not nxt:
+            break
+        if nxt in seen_cursors:
+            report["ok"] = False
+            report["errors"].append("Goose repeated a session-list cursor")
+            return report
+        seen_cursors.add(nxt)
+        cursor = nxt
+    else:
+        report["ok"] = False
+        report["errors"].append("Goose session listing exceeded 100 pages")
+        return report
+
+    handled = set()
+    for row in rows:
+        sid = str(row.get("sessionId") or "").strip()
+        cwd = str(row.get("cwd") or "")
+        if sid in handled:
+            continue
+        handled.add(sid)
+        if cwd not in eligible or not valid_session_id(sid):
+            report["untouched"] += 1
+            continue
+        result, err = await acp_calls(
+            url, origin,
+            [("_goose/unstable/session/working-dir/update",
+              {"sessionId": sid, "workingDir": target}),
+             ("_goose/unstable/session/info", {"sessionId": sid})])
+        if err:
+            report["ok"] = False
+            report["errors"].append(f"{sid}: {err}")
+            continue
+        info = result[1] if len(result) > 1 and isinstance(result[1], dict) else {}
+        session = info.get("session") if isinstance(info.get("session"), dict) else {}
+        if str(session.get("cwd") or "") != target:
+            report["ok"] = False
+            report["errors"].append(
+                f"{sid}: Goose did not verify the canonical working directory")
+            continue
+        report["migrated"].append(sid)
+    return report
 
 
 async def delete_session(url: str, origin: str, sid: str) -> tuple:

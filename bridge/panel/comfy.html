@@ -807,8 +807,32 @@
    download somebody started in another tab — and at 1s only while THIS page has a live
    download or job. Nothing ticks fast when nothing is running.
    ══════════════════════════════════════════════════════════════════════════════ */
+/* MOT_ACTION_LIFECYCLE_V1_START
+   Kept byte-identical across both long-running surfaces by an executable gate. It is
+   duplicated rather than fetched because both deliberately remain single-file:
+   an unavailable helper must never turn an otherwise useful local page blank. */
+const MOTActionLifecycle = (() => {
+  function errorText(e) { return String((e && e.message) || e || 'request failed'); }
+  function run(start, timeoutMs) {
+    const controller = new AbortController();
+    let timer = null;
+    const deadline = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        resolve({ kind:'unknown' });
+        controller.abort();
+      }, Math.max(1, Number(timeoutMs) || 1));
+    });
+    const work = Promise.resolve().then(() => start(controller.signal)).then(
+      value => ({ kind:'settled', value }),
+      error => ({ kind:'failed', error:errorText(error) })
+    );
+    return Promise.race([work, deadline]).finally(() => { if (timer) clearTimeout(timer); });
+  }
+  return { run };
+})();
+/* MOT_ACTION_LIFECYCLE_V1_END */
 const S = {
-  state:null, gallery:null, form:{}, busy:false, err:null, validation:null,
+  state:null, gallery:null, form:{}, busy:false, submitUnknown:false, err:null, validation:null,
   sheet:false, adv:false, all:false, sel:null, wroteBack:null, manifest:null,
   /* which numeric fields the USER has typed in — see resetUntouched() */
   typed:{},
@@ -1046,6 +1070,7 @@ async function loadSources() {
 async function load() {
   try {
     S.state = await api('/api/comfy/state');
+    if (S.state && S.state.ok) S.submitUnknown = false;
     S.gallery = await api('/api/comfy/gallery');
     const sig = dlSig();
     if (S.catalog === null || sig !== _lastDlSig) {
@@ -2087,8 +2112,9 @@ function renderComposer() {
       ? '<span class="chip c-dim num">' + esc(dv('frames', 'length')) + 'f</span>' : '') +
     '<span class="grow"></span>' +
     '<button class="primary press" data-act="' + (job ? 'stop' : 'go') + '"' +
-      ((S.busy || !canRun || !ev.up) && !job ? ' disabled' : '') + '>' +
-      (job ? 'Stop' : S.busy ? 'Submitting…' : 'Generate') + '</button>');
+      ((S.busy || S.submitUnknown || !canRun || !ev.up) && !job ? ' disabled' : '') + '>' +
+      (job ? 'Stop' : S.busy ? 'Submitting…'
+        : S.submitUnknown ? 'Check queue…' : 'Generate') + '</button>');
 
   /* THE LIVE STATUS. Chips, and only the ones that are true right now. */
   let sl = '';
@@ -2801,6 +2827,10 @@ document.addEventListener('click', async (e) => {
   }
   else if (act === 'go') {
     readForm();
+    if (S.submitUnknown) {
+      toast('The last submission has an unknown outcome. Check Queue or refresh before retrying.', true);
+      return;
+    }
     if (!(S.form.prompt || '').trim()) { toast('Type a prompt first.', true); return; }
     const how = runMode();
     if (how === 'none') { toast('Pick a model whose files are here first.', true); return; }
@@ -2823,11 +2853,25 @@ document.addEventListener('click', async (e) => {
        so `S.busy` stayed true for the rest of the session. Nothing crashed visibly; the
        Generate button simply sat disabled reading "Submitting…" for ever, with the real
        reason only in a console nobody opens. A rejection is an ANSWER now. */
-    let r = null;
-    try { r = await api('/api/comfy/generate', { method:'POST', body: JSON.stringify(body) }); }
-    catch (e) { r = { ok:false, error:'the bridge could not be reached: '
-                                      + ((e && e.message) || e) }; }
+    const outcome = await MOTActionLifecycle.run((signal) => api('/api/comfy/generate', {
+      method:'POST', body:JSON.stringify(body), signal
+    // The bridge's longest supported submit path can spend 20s validating live node
+    // metadata, up to 6s on each model listing, then 30s on ComfyUI's /prompt. Ninety
+    // seconds clears that declared budget with room for local catalogue conversion;
+    // this watchdog is for a request that never settles, not a slow healthy submit.
+    }), 90000);
     S.busy = false;
+    if (outcome.kind === 'unknown') {
+      S.submitUnknown = true;
+      S.err = 'MOT Deck stopped waiting after 90 seconds. The request may have reached '
+        + 'ComfyUI; check Queue or refresh before trying again.';
+      S.validation = null;
+      render();
+      return;
+    }
+    const r = outcome.kind === 'settled' ? outcome.value : {
+      ok:false, error:'the bridge could not be reached: ' + outcome.error
+    };
     if (!r.ok) { S.err = r.error; S.validation = r.validation || null;
                  if (!r.validation) toast(r.error, true); }
     else {

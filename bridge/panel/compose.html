@@ -815,10 +815,34 @@
    is live, 20s otherwise (the Music view can start a render in its own tab, and a
    page that only learned about it on reload would be lying by omission).
    ══════════════════════════════════════════════════════════════════════════════ */
+/* MOT_ACTION_LIFECYCLE_V1_START
+   Kept byte-identical across both long-running surfaces by an executable gate. It is
+   duplicated rather than fetched because both deliberately remain single-file:
+   an unavailable helper must never turn an otherwise useful local page blank. */
+const MOTActionLifecycle = (() => {
+  function errorText(e) { return String((e && e.message) || e || 'request failed'); }
+  function run(start, timeoutMs) {
+    const controller = new AbortController();
+    let timer = null;
+    const deadline = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        resolve({ kind:'unknown' });
+        controller.abort();
+      }, Math.max(1, Number(timeoutMs) || 1));
+    });
+    const work = Promise.resolve().then(() => start(controller.signal)).then(
+      value => ({ kind:'settled', value }),
+      error => ({ kind:'failed', error:errorText(error) })
+    );
+    return Promise.race([work, deadline]).finally(() => { if (timer) clearTimeout(timer); });
+  }
+  return { run };
+})();
+/* MOT_ACTION_LIFECYCLE_V1_END */
 const S = {
   st:null, lib:[], err:null,
   form:{ engine:null, prompt:'', lyrics:'', seconds:null, steps:'', seed:'', format:'' },
-  busy:false, warn:'', jobErr:'',
+  busy:false, submitUnknown:false, warn:'', jobErr:'',
   sheet:null,            /* null | 'engines' | 'track' | 'presets' */
   dirEdit:false, dirValue:null,   /* the tracks-folder editor, held in STATE */
   more:false, all:false, lyricsOpen:false,
@@ -1146,7 +1170,7 @@ async function api(path, opts) {
 async function load() {
   try {
     const st = await api('/api/music/status');
-    if (st && st.ok) { S.st = st; S.err = null; }
+    if (st && st.ok) { S.st = st; S.err = null; S.submitUnknown = false; }
     else S.err = (st && st.error) || 'the music lane did not answer';
     const lb = await api('/api/music/library');
     if (lb && lb.ok) S.lib = lb.tracks || [];
@@ -1779,9 +1803,10 @@ function renderComposer() {
   /* ⑦ COMPOSE rides the line; Stop appears only while something is running. */
   const go = $('go');
   if (go) {
-    go.disabled = !!(S.busy || !e || live);
-    go.innerHTML = (live ? 'Rendering…' : S.busy ? 'Starting…' : 'Compose') +
-      (live || S.busy ? '' : '<small>⌘ ⏎</small>');
+    go.disabled = !!(S.busy || S.submitUnknown || !e || live);
+    go.innerHTML = (live ? 'Rendering…' : S.busy ? 'Starting…'
+      : S.submitUnknown ? 'Check queue…' : 'Compose') +
+      (live || S.busy || S.submitUnknown ? '' : '<small>⌘ ⏎</small>');
   }
 
   /* THE LIVE STATES THAT DEMAND A DECISION — the only other sanctioned sentences. */
@@ -2339,6 +2364,10 @@ async function startRender(confirm) {
   readForm();
   const e = current();
   if (!e) { toast('There is no engine on disk yet.', true); return; }
+  if (S.submitUnknown) {
+    toast('The last submission has an unknown outcome. Check Queue or refresh before retrying.', true);
+    return;
+  }
   if (!(S.form.prompt || '').trim()) { toast('Describe the music first.', true); return; }
   const body = { engine:e.engine, prompt:S.form.prompt, lyrics:S.form.lyrics || '',
                  seconds:secondsNow(), steps:S.form.steps || '', seed:S.form.seed || '',
@@ -2351,11 +2380,20 @@ async function startRender(confirm) {
      catch here, `S.busy` stayed true for the rest of the session: Compose disabled,
      reading "Starting…", for ever. A rejection is an ANSWER now, in the same inline row
      every other start failure already uses. */
-  let r = null;
-  try { r = await api('/api/music/generate', { method:'POST', body:JSON.stringify(body) }); }
-  catch (e) { r = { ok:false, error:'the bridge could not be reached: '
-                                    + ((e && e.message) || e) }; }
+  const outcome = await MOTActionLifecycle.run((signal) => api('/api/music/generate', {
+    method:'POST', body:JSON.stringify(body), signal
+  }), 25000);
   S.busy = false;
+  if (outcome.kind === 'unknown') {
+    S.submitUnknown = true;
+    S.jobErr = 'MOT Deck stopped waiting after 25 seconds. The render request may have '
+      + 'reached Music; check Queue or refresh before trying again.';
+    render();
+    return;
+  }
+  const r = outcome.kind === 'settled' ? outcome.value : {
+    ok:false, error:'the bridge could not be reached: ' + outcome.error
+  };
   if (!r.ok) {
     /* A RAM warning is not an error: it goes to the advisory row with a way through.
        Everything else surfaces inline, in the bridge's own words. */

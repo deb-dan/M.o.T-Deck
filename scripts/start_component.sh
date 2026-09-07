@@ -1410,7 +1410,14 @@ PYWIRE
     [[ "$DS_PORT" =~ ^[0-9]+$ ]] || DS_PORT=3080
     DS_HOME="$ROOT/data/deepseek/home"
     DS_WS="$ROOT/data/deepseek-workspace"
+    DS_PICKER_PATCH="$ROOT/policies/deepseek-directory-picker.yaml"
     mkdir -p "$DS_HOME" "$DS_WS"
+    [[ -f "$DS_PICKER_PATCH" && ! -L "$DS_PICKER_PATCH" ]] || {
+      echo "ERROR: DeepSeek's MOT Deck directory-picker policy is missing or unsafe:"
+      echo "       $DS_PICKER_PATCH"
+      echo "       Re-run ./scripts/ship.sh from the canonical repository."
+      exit 1
+    }
 
     # ── THE RUNTIME. node is dsh's RUN-time, not just its build-time, and the app
     # spawns this script from a GUI process whose PATH is not the user's shell PATH —
@@ -1524,11 +1531,16 @@ PYWIRE
       # PATH carries the resolved node's directory FIRST: the launcher is a node script
       # with a `#!/usr/bin/env node` shebang, so a stale or too-old node earlier on
       # PATH would otherwise be the one that ran it.
+      # `web` is a convenience subcommand that deliberately rejects parent launcher
+      # options such as --patch.  The equivalent --profile form is the supported seam
+      # when a composed overlay is required (proved against the pinned CLI, not inferred
+      # from Commander option ordering).
       _detached env DSH_HOME="$DS_HOME" \
       DSH_TELEMETRY_DISABLED=1 \
       "$DS_KEY_ENV"="$DS_KEY" \
       PATH="$DS_NODE_DIR:$PATH" \
-      "$DS_NODE" "$DS_BIN" web --host 127.0.0.1 --port "$DS_PORT" --no-open \
+      "$DS_NODE" "$DS_BIN" --profile web --patch "$DS_PICKER_PATCH" \
+        --host 127.0.0.1 --port "$DS_PORT" --no-open \
         >>"$ROOT/data/logs/deepseek.log" 2>&1 &
       _record_child deepseek "$!"
     )
@@ -1603,9 +1615,9 @@ PYDS
       fi
       echo "[motdeck] FIRST RUN: it shows an 'Internal Testing Notice' once, then asks you"
       echo "[motdeck]   to choose a WORKSPACE before it will take a message — click 'Add"
-      echo "[motdeck]   workspace' and pick data/deepseek-workspace. That opens macOS's own"
-      echo "[motdeck]   folder chooser, launched by dsh itself; if it does not come forward,"
-      echo "[motdeck]   click the MOT Deck icon in the Dock. (Ledger U67.)"
+      echo "[motdeck]   workspace' and use dsh's in-app directory browser to open"
+      echo "[motdeck]   data/deepseek-workspace. MOT Deck composes dsh's own browse plugins;"
+      echo "[motdeck]   it does not use the unreachable background macOS chooser. (U67.)"
     else
       echo "ERROR: deepseek did not answer on :${DS_PORT} in ~2min. Last log lines:"
       tail -20 "$ROOT/data/logs/deepseek.log"

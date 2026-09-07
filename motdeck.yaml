@@ -433,9 +433,11 @@ components:
     # ⚠️ NO pkill/killall ANYWHERE in the 455-package install (grepped). Clean.
     # ⚠️ LOOPBACK BY POLICY, not merely by default: the CLI refuses --host 0.0.0.0.
     #    No auth, by design, exactly like OpenCode's server and Hermes's dashboard.
-    # ⚠️ THE FIRST THING IT ASKS FOR IS A WORKSPACE, and its folder picker is macOS's
-    #    own (osascript `choose folder`), opened BY dsh — see ledger U67. The installer
-    #    creates data/deepseek-workspace so there is an obvious answer.
+    # ⚠️ THE FIRST THING IT ASKS FOR IS A WORKSPACE. Its native macOS osascript chooser
+    #    was proven unreachable from the embedded WKWebView tab. MOT Deck therefore
+    #    composes dsh's OWN browse-host + browse-client plugins through the checked-in
+    #    policies/deepseek-directory-picker.yaml overlay; no vendor file or workspace
+    #    store is patched. The installer creates data/deepseek-workspace as the answer.
 
 # M1 runner slot — the swappable model engine the Bridge manages headless.
 # Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
@@ -742,10 +744,9 @@ build:
   # highest number. dist.shasum 1a5112369f1c46b13a6e6f21de8af5e6afd45074;
   # dist.integrity sha512-UP1UIh6q3Gme/yXRn/QL2P8IsVlv8Shpg22TRJIZPsCRWLm4CBiA1MUvXmJAfsOEETBMLAl+xWPtFw6ICsN3wg==.
   # npm itself verifies that integrity hash on every fetch of the top-level package;
-  # the TRANSITIVE tree is range-resolved on the FIRST install and then frozen into
-  # data/deepseek/npm/package-lock.json (lockfileVersion 3, 513 entries, MEASURED), so
-  # every later repair/reinstall is `npm ci` off that lock and is byte-reproducible.
-  # That is as far as pinning goes in this ecosystem; the ledger row says so out loud.
+  # the TRANSITIVE tree is checked in at scripts/deepseek-npm/package-lock.json
+  # (lockfileVersion 3, 513 entries, MEASURED). First install and every repair use
+  # `npm ci`; installation date is not allowed to choose a different dependency tree.
   dsh_pin: "0.1.1-rc.2"
   # Node: the RUNTIME @deepseek-ai/dsh needs (>= 22.19, or >= 24). Same three-step
   # resolution and single-source-of-truth idiom as bun_pin — the user's own node on

@@ -67,12 +67,45 @@ _PROC_BIRTH = ""
 _TOKEN = ""
 _PORT = 0
 _START_ERR = ""
+_SESSION_MIGRATION_RUNTIME = ""
+_SESSION_MIGRATION = {"ok": True, "migrated": [], "untouched": 0, "errors": []}
 _RUNTIME_NAME = "goose-ui.runtime.json"
 _RUNTIME_LOCK_NAME = ".goose-ui.runtime.lock"
 
 # 40s: the pinned binary is a 270MB Mach-O whose first run pages in cold and builds the
 # session DB. Measured cold start on this Mac was ~3-6s; this is generous, not hopeful.
 _READY_TIMEOUT_S = 40.0
+
+
+def _repair_legacy_session_workdirs(acp: str) -> dict:
+    """Once per exact goosed runtime, repair only the proven product-owned cwd rows.
+
+    This synchronous wrapper is called only from this router's synchronous lifecycle
+    paths.  The asynchronous operation itself lives beside the ACP protocol in
+    bridge/gooseui.py and talks exclusively through Goose's supported methods.
+    """
+    global _SESSION_MIGRATION_RUNTIME, _SESSION_MIGRATION
+    runtime = f"{_PORT}:{_PROC_BIRTH}"
+    if runtime and runtime == _SESSION_MIGRATION_RUNTIME:
+        return dict(_SESSION_MIGRATION)
+    try:
+        import asyncio
+        report = asyncio.run(_ui.migrate_legacy_session_workdirs(
+            acp, f"http://127.0.0.1:{_bridge_port()}",
+            _ui.workspace_path(ROOT), _ui.legacy_workspace_paths()))
+    except Exception as exc:                                       # noqa: BLE001
+        report = {"ok": False, "migrated": [], "untouched": 0,
+                  "errors": [f"legacy session repair crashed: {exc}"[:240]]}
+    # A transient ACP refusal must not turn "attempted once" into "repaired" for the
+    # rest of this daemon's lifetime.  Memoize only verified success; a later page open
+    # may retry the same exact runtime after it becomes responsive.
+    _SESSION_MIGRATION_RUNTIME = runtime if report.get("ok") else ""
+    _SESSION_MIGRATION = report
+    if report.get("migrated"):
+        _log("session cwd migration: " + ", ".join(report["migrated"]))
+    if report.get("errors"):
+        _log("session cwd migration REFUSED: " + "; ".join(report["errors"]))
+    return dict(report)
 
 
 def _log(msg: str) -> None:
@@ -361,7 +394,9 @@ def _ensure() -> tuple:
         return "", f"the goose UI module failed to load: {_UI_ERR}"
     with _LOCK:
         if _alive() and _probe(_PORT):
-            return _ui.acp_url(_PORT, _TOKEN), ""
+            acp = _ui.acp_url(_PORT, _TOKEN)
+            _repair_legacy_session_workdirs(acp)
+            return acp, ""
         if _alive():
             # The process is up but not answering /status yet (or has wedged). Give it
             # the remainder of the readiness budget rather than spawning a second one.
@@ -456,7 +491,9 @@ def _ensure() -> tuple:
                 _START_ERR = ""
                 _log(f"serve ready pid={_PROC.pid} port={_PORT} model={wire or '(none)'} "
                      f"path_root={_ui.path_root(ROOT)}")
-                return _ui.acp_url(_PORT, _TOKEN), ""
+                acp = _ui.acp_url(_PORT, _TOKEN)
+                _repair_legacy_session_workdirs(acp)
+                return acp, ""
             time.sleep(0.25)
 
         _stop_locked("timeout")
@@ -825,6 +862,7 @@ def gooseui_status() -> JSONResponse:
         "runner_port": rport,
         "path_root": _ui.path_root(ROOT),
         "workspace": _ui.workspace_path(ROOT),
+        "session_path_migration": dict(_SESSION_MIGRATION),
         # THE NAMED PROVIDER, answerable from the API rather than only from a report:
         # what it is called, where its file is, whether it is on disk, how many models
         # it lists, and whose choice the main provider currently is.

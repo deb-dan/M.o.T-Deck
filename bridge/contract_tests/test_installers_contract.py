@@ -26,6 +26,7 @@ Sibling coverage, referenced rather than duplicated:
 
 Run: data/bridge-venv/bin/python -m pytest bridge/contract_tests/test_installers_contract.py -q
 """
+import json
 import os
 import platform
 import re
@@ -42,6 +43,8 @@ OO = os.path.join(SCRIPTS, "install_onlyoffice.sh")
 PLUG = os.path.join(SCRIPTS, "install_oo_ai_plugin.sh")
 GOOSE = os.path.join(SCRIPTS, "install_goose.sh")
 DSH = os.path.join(SCRIPTS, "install_deepseek.sh")
+DSH_PACKAGE = os.path.join(SCRIPTS, "deepseek-npm", "package.json")
+DSH_LOCK = os.path.join(SCRIPTS, "deepseek-npm", "package-lock.json")
 NODE = os.path.join(SCRIPTS, "ensure_node.sh")
 LLAMA = os.path.join(SCRIPTS, "install_llamacpp.sh")
 BUN = os.path.join(SCRIPTS, "ensure_bun.sh")
@@ -149,7 +152,12 @@ def test_stamp_dies_before_the_bundle_does():
 def test_deepseek_pins_the_top_level_and_refuses_a_moved_version():
     s = src(DSH)
     assert "dsh_pin" in s, "the pin is single-sourced in motdeck.yaml, not inline"
-    assert "--save-exact" in s, "the top-level dependency is written exactly, not as ^"
+    package = json.load(open(DSH_PACKAGE, encoding="utf-8"))
+    lock = json.load(open(DSH_LOCK, encoding="utf-8"))
+    pin = lock["packages"]["node_modules/@deepseek-ai/dsh"]["version"]
+    assert package["dependencies"]["@deepseek-ai/dsh"] == pin
+    assert lock["packages"][""]["dependencies"]["@deepseek-ai/dsh"] == pin
+    assert lock["packages"]["node_modules/@deepseek-ai/dsh"]["integrity"]
     # ⚠️ THE PRE-FLIGHT THAT REPLACES A DIGEST. npm verifies dist.integrity itself, but
     # only against what the registry serves NOW; reading the metadata FIRST and
     # refusing on a version mismatch is what turns "upstream unpublished or re-tagged
@@ -163,13 +171,14 @@ def test_deepseek_pins_the_top_level_and_refuses_a_moved_version():
         "a floating update in an install script defeats the pin entirely")
 
 
-def test_deepseek_uses_the_lockfile_when_it_has_one():
-    """`npm ci` is byte-reproducible but only off an existing lock, and the first
-    install has none. BOTH halves must be present, or the second install of the same
-    pin silently re-resolves the tree."""
+def test_deepseek_uses_the_repository_lockfile_even_on_first_install():
+    """U70: installation date never gets to resolve a different transitive tree."""
     s = src(DSH)
     assert "npm ci" in s and "package-lock.json" in s
-    assert "npm install" in s, "…and the first-install path that WRITES the lock"
+    code = "\n".join(ln for ln in s.splitlines()
+                     if not ln.strip().startswith(("#", "say ", "echo ")))
+    assert not re.search(r'\bnpm(?:_bin)?"?\s+install\b', code)
+    assert 'cp "$NPM_TEMPLATE_DIR/package-lock.json" "$PREFIX/package-lock.json"' in s
 
 
 def test_deepseek_verifies_the_runtime_before_it_spends_seven_minutes():

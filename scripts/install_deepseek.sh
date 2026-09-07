@@ -35,6 +35,7 @@ WS="$ROOT/data/deepseek-workspace"
 LOG="$ROOT/data/logs/deepseek-install.log"
 PKG="@deepseek-ai/dsh"
 REGISTRY="https://registry.npmjs.org"
+NPM_TEMPLATE_DIR="$ROOT/scripts/deepseek-npm"
 
 mkdir -p "$ROOT/data/logs"
 # Panel-viewable install log AS WELL AS stdout (the bridge captures stdout for the
@@ -127,6 +128,7 @@ main() {
   # different-install into a stop — the same reason install_opencode.sh reads
   # optionalDependencies before it downloads anything.
   say "checking npm metadata for ${PKG}@${pin} …"
+  mkdir -p "$DEST"
   curl -fsSL "$REGISTRY/${PKG}/${pin}" -o "$DEST.meta.json" \
     || die "could not read $REGISTRY/${PKG}/${pin} (no network? withdrawn version?)"
   local meta_ver meta_int
@@ -137,47 +139,34 @@ main() {
   [[ -n "$meta_int" ]] || say "WARN: npm published no dist.integrity for this version."
   say "registry agrees: ${PKG}@${meta_ver}${meta_int:+ (${meta_int})}"
 
-  # ── THE INSTALL. Private prefix, no global writes, no scripts we did not ask for.
-  mkdir -p "$PREFIX"
-  # A hand-written package.json rather than `npm init`: one fewer interactive surface,
-  # and `private: true` is what stops any accidental publish path dead.
-  [[ -f "$PREFIX/package.json" ]] || cat > "$PREFIX/package.json" <<'JSON'
-{
-  "name": "motdeck-deepseek-prefix",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Private npm prefix for MOT Deck DeepSeek Harness lane. Managed by scripts/install_deepseek.sh — do not edit by hand.",
-  "dependencies": {}
-}
-JSON
-
-  # ⚠️ LOCKFILE DISCIPLINE, AND ITS HONEST LIMIT. `npm ci` is byte-reproducible but
-  # ONLY off an existing lock, and the first install has none — so: `npm ci` when the
-  # lock is present AND already describes this pin, else `npm install` at the exact
-  # version (which WRITES the lock, 513 entries at this pin) and every later repair is
-  # reproducible off it. The transitive tree carries upstream's own `^` ranges, so a
-  # first install on a different day can differ; the lock is what freezes it from then
-  # on. That is as far as pinning goes in this ecosystem, and the ledger says so.
-  local mode="install"
-  if [[ -f "$PREFIX/package-lock.json" ]] \
-     && "$py" - "$PREFIX/package-lock.json" "$pin" <<'PY'
+  # ── THE INSTALL. Private prefix, no global writes, no first-run range resolution.
+  # U70: package.json AND package-lock.json ship with MOT Deck. Every installation,
+  # including the first one on a new machine, therefore uses npm ci against the exact
+  # reviewed transitive tree. The old "npm install once, freeze later" branch made
+  # installation date part of the application and is deliberately gone.
+  [[ -f "$NPM_TEMPLATE_DIR/package.json" && ! -L "$NPM_TEMPLATE_DIR/package.json" ]] \
+    || die "the reviewed DeepSeek package template is missing or unsafe: ${NPM_TEMPLATE_DIR}/package.json"
+  [[ -f "$NPM_TEMPLATE_DIR/package-lock.json" && ! -L "$NPM_TEMPLATE_DIR/package-lock.json" ]] \
+    || die "the reviewed DeepSeek lockfile is missing or unsafe: ${NPM_TEMPLATE_DIR}/package-lock.json"
+  "$py" - "$NPM_TEMPLATE_DIR/package.json" "$NPM_TEMPLATE_DIR/package-lock.json" "$pin" <<'PY' \
+    || die "the reviewed DeepSeek npm template does not match build.dsh_pin (${pin})"
 import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-except Exception:
-    raise SystemExit(1)
-pkgs = d.get("packages") or {}
-node = pkgs.get("node_modules/@deepseek-ai/dsh") or {}
-raise SystemExit(0 if node.get("version") == sys.argv[2] else 1)
+package = json.load(open(sys.argv[1], encoding="utf-8"))
+lock = json.load(open(sys.argv[2], encoding="utf-8"))
+pin = sys.argv[3]
+root = (lock.get("packages") or {}).get("") or {}
+dsh = (lock.get("packages") or {}).get("node_modules/@deepseek-ai/dsh") or {}
+ok = (package.get("name") == "motdeck-deepseek-prefix"
+      and (package.get("dependencies") or {}).get("@deepseek-ai/dsh") == pin
+      and root.get("name") == "motdeck-deepseek-prefix"
+      and (root.get("dependencies") or {}).get("@deepseek-ai/dsh") == pin
+      and dsh.get("version") == pin and dsh.get("integrity"))
+raise SystemExit(0 if ok else 1)
 PY
-  then
-    mode="ci"
-    say "package-lock.json already describes ${pin} — installing from the lock (npm ci),"
-    say "  which is byte-for-byte what the last install resolved."
-  else
-    say "no lock for ${pin} yet — resolving once (npm install), then the lock freezes it."
-  fi
-
+  mkdir -p "$PREFIX"
+  cp "$NPM_TEMPLATE_DIR/package.json" "$PREFIX/package.json"
+  cp "$NPM_TEMPLATE_DIR/package-lock.json" "$PREFIX/package-lock.json"
+  say "reviewed package-lock.json describes ${pin} — installing with npm ci."
   say "installing … (this is the several-minute part; the log above says why)"
   # --no-audit/--no-fund: two network round trips and a wall of advisory text that
   # would land in a panel log the user cannot act on from here.
@@ -185,13 +174,8 @@ PY
   # node-addon helper need their install scripts to produce a working tree, and an
   # install that "succeeds" into a broken tree is the worse failure. Said out loud
   # because it is the one place this install trusts upstream code with our shell.
-  if [[ "$mode" == "ci" ]]; then
-    ( cd "$PREFIX" && "$npm_bin" ci --no-audit --no-fund ) \
-      || die "npm ci failed — see $LOG. Delete data/deepseek/npm/node_modules and re-run to resolve from scratch."
-  else
-    ( cd "$PREFIX" && "$npm_bin" install --no-audit --no-fund --save-exact "${PKG}@${pin}" ) \
-      || die "npm install failed — see $LOG (no network? registry down?)."
-  fi
+  ( cd "$PREFIX" && "$npm_bin" ci --no-audit --no-fund ) \
+    || die "npm ci failed — see $LOG. The reviewed lock was preserved; fix the named network/filesystem error and re-run."
 
   # ⚠️ NO BACKTICKS IN THESE STRINGS. `die "... its \`bin\` mapping ..."` inside double
   # quotes is COMMAND SUBSTITUTION, not prose — it would try to run `bin`. Caught on
@@ -291,9 +275,9 @@ post_install() {
   say "FIRST RUN, two things that surprise people, both upstream's own behaviour:"
   say "  1. an 'Internal Testing Notice' modal — click Continue, it is shown once."
   say "  2. it asks you to choose a WORKSPACE before it will take a message. Click"
-  say "     'Add workspace' in its sidebar and pick data/deepseek-workspace. That"
-  say "     opens macOS's OWN folder chooser, launched by dsh itself — if it does not"
-  say "     come forward, click the MOT Deck icon in the Dock. (Ledger U67.)"
+  say "     'Add workspace' and use dsh's in-app directory browser to open"
+  say "     data/deepseek-workspace. MOT Deck composes dsh's own browse plugins because"
+  say "     its macOS osascript chooser is not reachable from the embedded tab."
   say "NOTE: pre-1.0 developer preview, pinned at build.dsh_pin (${pin}). It ships no"
   say "  auto-updater (grepped, at this pin), so nothing moves under the pin on its"
   say "  own — but never 'npm update' this prefix by hand for the same reason."

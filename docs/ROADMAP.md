@@ -7,14 +7,14 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current shipped release: **v1.5.88** (see `VERSION`). Written 2026-09-08.
+Current shipped release: **v1.5.89** (see `VERSION`). Written 2026-09-08.
 
 <!-- current-status:start
 in-progress:
 next: P6 P3 P5 S4 S7 U3
-later: U2 U9 U14 U26 U28 U29 U34 U42 U44 U45 U47 U57 U58 U67 U70
+later: U2 U9 U14 U26 U28 U29 U44 U45 U47 U57 U58
 someday: S2 U4 U5 U6 U8 U43 U46 U68
-blocked-later: P1 U1 U72 U91 U139 U142 U144
+blocked-later: P1 U1 U34 U72 U91 U139 U142 U144
 blocked-someday: P2
 withdrawn: U147
 current-status:end -->
@@ -207,6 +207,20 @@ does not adopt the slower ACE candidate, promote either broken Wan output, disab
 optional H3 workflow, add cloud execution, or change the current shared Hermes home. Release and measurement
 evidence live in `docs/FABLE-v1.5.88-MEDIA-RELOCATION-FIT-WAVE.md` and
 `docs/research/2026-09-07-a6-real-fit-validation.md`.
+
+v1.5.89 closes the locally actionable lifecycle and reproducibility wave. The exact
+post-rename Goose session roots migrate through Goose's supported ACP operations and
+same-session view reload now passes; in-flight Goose generation still cancels when its
+ACP request disconnects, so U34 moves to the upstream-blocked queue rather than being
+hidden beneath that partial success. Compose and Generate share a tested unknown-outcome
+lifecycle for connected requests that never settle, with route-derived deadlines and no
+automatic retry. DeepSeek now uses its supported in-page workspace picker composition,
+and the installed lane completed a real prompt after selecting the canonical workspace.
+Its first and later npm installs both consume the same reviewed lock through `npm ci`.
+The two archived worktrees were audited: one is fully merged and the other is superseded,
+but neither was removed because the archived original remains outside mutation scope.
+Complete evidence is in
+`docs/FABLE-v1.5.89-LOCAL-LIFECYCLE-AND-REPRODUCIBILITY-WAVE.md`.
 
 The v1.5.81 remaining-reliability wave and v1.5.82 Odysseus-login hotfix are shipped.
 U143 records v1.5.81's full repository, installed-stack, Goose UI, and clean FAT evidence;
