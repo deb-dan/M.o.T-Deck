@@ -1,6 +1,6 @@
 # MOT Deck — working memory (canonical project home)
 
-> **📍 CURRENT STATE (2026-09-07, v1.5.87 shipped) — supersedes the "2026-08-28, v1.5.12" banner
+> **📍 CURRENT STATE (2026-09-08, v1.5.88 shipped) — supersedes the "2026-08-28, v1.5.12" banner
 > below for anything about what's shipped.** Full reader-facing status (done / in
 > progress / next, by theme) now lives in `docs/ROADMAP.md`; the deferred-work ledger is
 > `docs/UNFORGET.md` (unchanged pointer, see below). Since v1.5.12: the component
@@ -52,6 +52,12 @@
 > runtime graph is exact, while Unsloth and acestep.cpp are evidence-based holds. U157
 > and `docs/FABLE-v1.5.87-UPSTREAM-UPDATE-WAVE.md` carry the exact acceptance/rejection
 > record. Protected live secrets, model registry and navigation were conserved.
+> v1.5.88 closes the media-relocation, selector-truth and real-fit wave: ACE-Step's
+> retired-root rpath is repaired transactionally, Generate's Model/Type transaction is
+> coherent, model Eject restores exact state, real MLA/SWA/MLX/projector receipts
+> calibrate advisory fit truth, and hosted Comfy nodes are refused by authoritative
+> engine metadata without adding cloud execution. U159–U164 and
+> `docs/FABLE-v1.5.88-MEDIA-RELOCATION-FIT-WAVE.md` carry the full evidence.
 > Exact-once Direct-history writes remain U139;
 > shell execution confinement remains U72; non-LM-Studio source adapters remain conditional
 > on an inventory plus launch contract (U91); auxiliary-key rotation remains U142; and

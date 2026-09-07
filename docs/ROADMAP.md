@@ -7,10 +7,10 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current shipped release: **v1.5.87** (see `VERSION`). Written 2026-09-07.
+Current shipped release: **v1.5.88** (see `VERSION`). Written 2026-09-08.
 
 <!-- current-status:start
-in-progress: A6 U159 U160 U161 U162 U163 U164
+in-progress:
 next: P6 P3 P5 S4 S7 U3
 later: U2 U9 U14 U26 U28 U29 U34 U42 U44 U45 U47 U57 U58 U67 U70
 someday: S2 U4 U5 U6 U8 U43 U46 U68
@@ -195,14 +195,14 @@ Odysseus and llama.cpp earned their pins independently; Voicebox retained its re
 while its lazy runtime became exact; Unsloth and the newer acestep.cpp stayed held. The
 complete release evidence is `docs/FABLE-v1.5.87-UPSTREAM-UPDATE-WAVE.md`.
 
-The active v1.5.88 candidate is A6/U159–U164. It repairs the reported SDXL→Wan Model/Type
+v1.5.88 ships A6/U159–U164. It repairs the reported SDXL→Wan Model/Type
 desynchronization, the ACE-Step post-rename native-library path, and the model-eject
 post-stop 500; proves fresh MiniMax/ACE/SDXL/Wan output from the renamed root; measures
 real MLA, non-Gemma SWA, MLX and vision/projector fit behavior; records evidence-based
 Wan 2.2/MiniMax H3 decisions; and makes Comfy's own `api_node` metadata enforce the
 Generate surface's local-only boundary before a hybrid template offers downloads. It
 does not adopt the slower ACE candidate, promote either broken Wan output, disable an
-optional H3 workflow, add cloud execution, or change the current shared Hermes home. Candidate and measurement
+optional H3 workflow, add cloud execution, or change the current shared Hermes home. Release and measurement
 evidence live in `docs/FABLE-v1.5.88-MEDIA-RELOCATION-FIT-WAVE.md` and
 `docs/research/2026-09-07-a6-real-fit-validation.md`.
 

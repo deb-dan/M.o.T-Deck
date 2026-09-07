@@ -1,8 +1,8 @@
 # v1.5.88 media relocation, selector truth and fit calibration
 
-Status: candidate under verification. Nothing in this document is a shipped claim until
-the release section records a clean repository gate, installed affected journeys,
-version commit, push, and FAT archive audit.
+Status: shipped and verified. The release section records the clean repository gate,
+installed affected journeys, exact-state restoration, version commit, push, and FAT
+archive audit.
 
 ## Scope and preservation boundary
 
@@ -52,7 +52,7 @@ Live repair found 70 Mach-O artifacts, zero remaining old-root rpaths, and both 
 entry points launched directly. Fresh renamed-root outputs:
 
 - ACE-Step: 10.0 s, stereo 48 kHz, 24-bit WAV, SHA-256
-  `edbc03578d89e39428a6cc3e0993eadcc8184c2feaeeb36553c6a50c256bdc45`.
+  `edbc035717bdb92450f476321653af4fce5051a3f93a8d667d420f076f2c3284`.
 - MiniMax Music3: 14.988 s, stereo 44.1 kHz WAV, SHA-256
   `7c885b17fd57d85d822e3c5eacafc0998c54a44860201e784e1def9c67c28917`.
 - SDXL: 512×512, 12 steps, 13.1 s, measured 13.06 GiB peak, SHA-256
@@ -74,8 +74,9 @@ quality win, the production pin remains `9761469`.
 The A6 setup exposed `NameError: time is not defined` after the public eject operation
 had already stopped the owned runner. `bridge/routers/models.py` now imports `time`, and
 an executable regression drives the actual `_eject_runner()` wait/clear-state seam. The
-installed API journey must return success, show no live runner, and then restore the
-exact prior 27B before this row closes.
+installed API returned success, the runner stopped with port 6767 free and blank live/pin
+state, and Switch restored the exact prior Qwen3.8 27B. Every protected live-state file
+returned to its pre-test SHA-256.
 
 ## U162 — A6 real-load calibration
 
@@ -92,7 +93,9 @@ cache/state. The fit engine now reads the pinned runtime's real shape and 2,048-
 prefill chunk. Short and 4,148-token runs bracketed measured physical footprint within
 about +10.3% and -1.5%.
 
-This is calibration, not universal MLX validation and not a new hard blocker.
+This is calibration, not universal MLX validation and not a new hard blocker. The
+installed Models view also rendered the live 27B's measured footprint separately from
+engine allocation and retained advisory fit arithmetic for every non-live row.
 
 ## U163 — Wan 2.2 and MiniMax H3 decisions
 
@@ -149,14 +152,26 @@ never treated as local. This adds no cloud provider, credential, model or networ
 execution. Local Comfy workflows, including optional user-acquired models, retain their
 existing discovery and execution behavior.
 
-## Release acceptance still required
+## Release acceptance — v1.5.88
 
-1. Full contract, repository Python, JavaScript, Bash 3.2, Swift parse, ceiling and
-   canonical-root gates.
-2. Ship from a clean candidate commit without changing live YAML/registry/secrets.
-3. Installed Generate SDXL→Wan→SDXL selector walk; MiniMax H3 remains optional and
-   unmodified rather than being promoted as the under-40 GB starter.
-4. Installed model eject success followed by exact 27B restoration.
-5. Re-hash the fresh media outputs and verify all ten components healthy.
-6. Bump VERSION only after those journeys pass; commit/push the release and ship again.
-7. Build, mount, verify and surface the clean FAT `MOT Deck.dmg`.
+- The complete shipping gate passed: 576 contract checks with only the four declared
+  checkout-local Aider skips; 716 repository tests with two upstream deprecation
+  warnings; every JavaScript suite; Bash 3.2 syntax; Swift parse; line/byte ceilings;
+  identity and canonical-root guards.
+- The installed Generate journey proved SDXL (five image types) → Wan 2.1 (seventeen
+  video types with a Wan default) → SDXL as one visible transaction. After an explicit
+  page reload, a known hosted-node workflow rendered `not local`, exposed no download,
+  and kept Generate disabled. The stale pre-reload tab retained old JavaScript exactly
+  as documented by `ship.sh`; it was not mistaken for current served behavior.
+- ACE-Step's 70 Mach-O artifacts contain no retired-root runtime path; both executables
+  launch directly with only `@loader_path`. Fresh ACE-Step, MiniMax, SDXL and Wan files
+  re-hashed to the exact values recorded above.
+- The public Eject route stopped only the launch-owned runner, cleared live/pin state,
+  and returned success. The exact prior 27B was restored; all ten components finished
+  running and healthy.
+- `motdeck.yaml`, `models.json`, `nav.json` and `.env.local` match their pre-journey
+  digests byte-for-byte. No model file, layout, credential, third-party source file, or
+  archived project was changed.
+- The final release was committed and pushed before the clean FAT build. The mounted
+  archive was checked against its seed ownership manifest and surfaced as
+  `dist/MOT Deck.dmg`.
