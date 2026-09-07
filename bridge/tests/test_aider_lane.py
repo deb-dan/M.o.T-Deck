@@ -645,10 +645,11 @@ def test_page_cannot_fail_silently():
     # Comments first — prose ABOUT a rule (including the one that explains this fix) is
     # not a rule, and a grep that cannot tell them apart finds the bug in its own note.
     css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
-    prim = [ln for ln in css.splitlines() if "button.primary{" in ln.replace(" ", "")]
-    ok(len(prim) == 1, f"the primary button has exactly one rule (found {len(prim)})")
-    ok("color:var(--bg)" in prim[0].replace(" ", ""),
-       "the ink on the cream-filled primary is var(--bg), not a hardcoded near-black")
+    prim = re.findall(r"button\.primary\s*\{[^}]*\}", css, flags=re.S)
+    ok(len(prim) == 2,
+       f"the primary has one base and one intentional Studio refinement (found {len(prim)})")
+    ok(all("color:var(--bg)" in rule.replace(" ", "") for rule in prim),
+       "both primary rules ink the cream fill with var(--bg), never a hardcoded near-black")
     ok("#171420" not in css,
        "…and the old literal is gone from the whole stylesheet")
     # And the general form, so the next copied literal is caught rather than re-found:
@@ -658,6 +659,38 @@ def test_page_cannot_fail_silently():
         if "background:var(--" in flat and re.search(r"color:#[0-9a-fA-F]{3,8}", flat):
             ok(False, f"a tokenised fill with hardcoded ink: {ln.strip()}")
     ok(True, "no rule fills with a token and inks with a hex")
+
+
+def test_page_is_theme_aware():
+    """S10: Aider follows the same read-only terminal-skin contract as Goose CLI."""
+    page = (ROOT / "bridge" / "panel" / "aider.html").read_text()
+    head = page.split("</head>", 1)[0]
+    css = head.split("<style>", 1)[1].split("</style>", 1)[0]
+    for theme in ("light", "gold", "cyber"):
+        ok(f'html[data-theme="{theme}"]' in css,
+           f"Aider carries the {theme} palette in its own document")
+    ok('html[data-chrome="studio"]' in css, "Aider carries the Studio chrome axis")
+    ok(head.index("window.syncSkin") < head.index("<style>"),
+       "the saved skin is applied before first paint")
+    ok("motdeck-theme" in head and "motdeck-chrome" in head,
+       "the page reads the two canonical preference keys")
+    ok("localStorage.setItem" not in page,
+       "the lane never writes app appearance preferences")
+    ok("theme === 'light' || theme === 'gold' || theme === 'cyber'" in head,
+       "unknown theme values fail to Editorial instead of half-painting")
+    ok("addEventListener('storage'" in page
+       and "addEventListener('focus'" in page
+       and "addEventListener('visibilitychange'" in page,
+       "live, focused and resumed tabs all reconcile appearance")
+    ok(css.index(':where(html[data-chrome="studio"]) button{')
+       > css.index("\n  button{"),
+       "zero-specificity Studio button refinements follow the base rule")
+    ok(css.index(':where(html[data-chrome="studio"]) .pill{')
+       > css.index("\n  .pill{"),
+       "zero-specificity Studio pill refinements follow the base rule")
+    term_block = page.split("term = new TermCtor({", 1)[1].split("});", 1)[0]
+    ok("background: '#0b0910'" in term_block and "foreground: '#efe9dc'" in term_block,
+       "Aider's ANSI terminal stays on its deliberate dark canvas in every palette")
 
 
 # ── 7. wiring greps (the seams that live outside this module) ────────────────
@@ -711,7 +744,7 @@ def main():
                test_install_script_is_executable,
                test_script_runner_survives_a_missing_exec_bit,
                test_install_endpoint_live, test_page_cannot_fail_silently,
-               test_wiring):
+               test_page_is_theme_aware, test_wiring):
         fn()
         print(f"  ok  {fn.__name__}")
     print(f"aider lane: {CHECKS} checks passed")

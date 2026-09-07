@@ -12,6 +12,28 @@
      it loads xterm.js, and it must not carry the panel's poll loops. The palette
      values below are the panel's tokens, copied (a separate document cannot inherit
      :root) — keep them in step by eye if the panel's palette ever moves. -->
+<script>
+  // S10 — same read-only theme/chrome contract as Goose CLI. This must run in the
+  // head, before CSS paints, and it must whitelist values rather than half-paint an
+  // unknown preference. The design axis is intentionally absent: Aider has no
+  // surface-specific Studio layout sheet, so claiming it would be a false design.
+  (function () {
+    window.syncSkin = function () {
+      var theme = null, chrome = null;
+      try {
+        theme = localStorage.getItem('motdeck-theme');
+        chrome = localStorage.getItem('motdeck-chrome');
+      } catch (e) { return; }
+      var d = document.documentElement;
+      if (theme === 'light' || theme === 'gold' || theme === 'cyber')
+        d.setAttribute('data-theme', theme);
+      else d.removeAttribute('data-theme');
+      if (chrome === 'studio') d.setAttribute('data-chrome', 'studio');
+      else d.removeAttribute('data-chrome');
+    };
+    window.syncSkin();
+  })();
+</script>
 <link rel="stylesheet" href="/assets/vendor/xterm.css">
 <style>
   :root{
@@ -19,6 +41,28 @@
     --line:#241f36; --line2:#2f2946; --fg:#efe9dc; --cream:#efe9dc;
     --dim:#a49bbb; --faint:#6f6885; --gold:#c9a44d; --bad:#c96d5a; --ok:#7fa87f;
   }
+  html[data-theme="light"]{
+    --bg:#faf7f0; --bg2:#f2eee3; --card:#ffffff; --card2:#faf6ec;
+    --line:#e6dfcf; --line2:#d6ccb4;
+    --cream:#221d14; --fg:#3d372b; --dim:#5a5447; --faint:#716a5a;
+    --gold:#886522; --ok:#177e5d; --bad:#b13d3d;
+  }
+  html[data-theme="gold"]{
+    --bg:#070608; --bg2:#0c0a09; --card:#131110; --card2:#1a1613;
+    --line:#2b2318; --line2:#3c301f;
+    --cream:#f4ecdc; --fg:#cfc7b6; --dim:#a39b88; --faint:#8d7f69;
+    --gold:#e8bf76; --ok:#4fc79b; --bad:#e77070;
+  }
+  html[data-theme="cyber"]{
+    --bg:#080c16; --bg2:#0b101d; --card:#111828; --card2:#162032;
+    --line:#1f2b45; --line2:#2c3c5e;
+    --cream:#e6edf7; --fg:#b9c6dd; --dim:#99a4b8; --faint:#7b88a6;
+    --gold:#7dd3fc; --ok:#4ade80; --bad:#fb7185;
+  }
+  html[data-chrome="studio"]{
+    --st-btn:#332b50; --st-hi:#453b6b; --st-edge:#574b83}
+  html[data-chrome="studio"][data-theme="light"]{
+    --st-btn:#e3d9c0; --st-hi:#d5c7a6; --st-edge:#b9a878}
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
   body{background:var(--bg);color:var(--fg);
@@ -80,6 +124,18 @@
   .link:hover{color:var(--gold);border-color:transparent}
   #foot{flex:none;padding:7px 16px 9px;color:var(--faint);font-size:10.5px;
         border-top:1px solid var(--line);background:var(--bg2)}
+  /* Zero-specificity refinements must follow the base controls or source order makes
+     the axis a silent no-op. The terminal canvas deliberately remains dark because
+     Aider's ANSI palette is authored for a dark terminal; the surrounding chrome is
+     what follows all four app palettes. */
+  :where(html[data-chrome="studio"]) button{
+    background:var(--st-btn);border-color:var(--st-edge);border-radius:8px}
+  :where(html[data-chrome="studio"]) button:hover{
+    background:var(--st-hi);border-color:var(--gold)}
+  :where(html[data-chrome="studio"]) button.primary{
+    background:var(--cream);color:var(--bg);border-color:var(--st-edge)}
+  :where(html[data-chrome="studio"]) .pill{
+    background:var(--st-btn);border-color:var(--st-edge);border-radius:8px}
 </style>
 </head>
 <body>
@@ -127,6 +183,17 @@ const FitCtor  = (window.FitAddon && window.FitAddon.FitAddon) || window.FitAddo
 const el = id => document.getElementById(id);
 let term = null, fit = null, sock = null, state = null;
 let logOpen = false, pollTimer = 0, lastErr = null;
+
+// The panel can change its preference while this first-party tab remains open.
+// storage covers sibling documents; focus/visibility cover suspended WebViews.
+window.addEventListener('storage', ev => {
+  if (!ev || !ev.key || ev.key === 'motdeck-theme' || ev.key === 'motdeck-chrome')
+    syncSkin();
+});
+window.addEventListener('focus', () => syncSkin());
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) syncSkin();
+});
 
 // kind: 'info' for an ordinary progress note, anything else (default) for a failure.
 function say(text, kind) {
