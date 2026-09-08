@@ -235,7 +235,9 @@ pending feature queue below. The retained post-v1.5.92 review batch is committed
 `2ebb3ae` and pushed to the approved repository, but remains unshipped and not
 release-accepted at this document revision; its
 RAM/ledger/fit experiments were reverted to the exact v1.5.92 implementation and are
-not continuation work. The approved panel-source ceiling exception is tracked separately
+not continuation work. The Voicebox installed-contract and Office AI plugin
+process-crash recovery continuation is committed as `600d915`; it also remains
+unshipped and without native/FAT acceptance. The approved panel-source ceiling exception is tracked separately
 as U171: 877,700 bytes previously, 885,000 bytes now, with the current page at 880,942
 bytes and a future investigation required. Two narrower follow-ups are intentionally
 not hidden beneath U167. U168 covers
