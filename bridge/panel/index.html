@@ -11613,9 +11613,10 @@ async function samplingPost(body, el){
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign({ id }, body)) })).json();
   } catch { r = null; }
+  if (el) el.disabled = false;
+  const stillSelected = mSel && mSel.kind === 'installed' && mSel.id === id;
   if (!r || !r.ok){
-    if (el) el.disabled = false;
-    samplingErr((r && r.error) || 'could not reach the bridge');
+    if (stillSelected) samplingErr((r && r.error) || 'could not reach the bridge');
     return;
   }
   // Patch the cached payload so the section (and the next full render) agree with
@@ -11625,10 +11626,12 @@ async function samplingPost(body, el){
     m.settings = (r.settings && Object.keys(r.settings).length) ? r.settings : null;
     m.sampling = r.sampling;
     if (r.launch) m.launch = r.launch;   // a floor change can move the launch claim
-    const host = document.getElementById('md-sampling');
-    if (host) host.innerHTML = renderSampling(m);
-    const lhost = document.getElementById('md-launch');
-    if (lhost) lhost.innerHTML = renderLaunch(m);
+    if (stillSelected && !samplingTyping()){
+      const host = document.getElementById('md-sampling');
+      if (host) host.innerHTML = renderSampling(m);
+      const lhost = document.getElementById('md-launch');
+      if (lhost) lhost.innerHTML = renderLaunch(m);
+    }
   }
   feed('models', 'sampling · ' + esc(r.id) + ' → '
        + ((r.sampling && r.sampling.changed) ? (r.sampling.changed + ' overridden')
@@ -11815,9 +11818,10 @@ async function loadPost(body, el){
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign({ id }, body)) })).json();
   } catch { r = null; }
+  if (el) el.disabled = false;
+  const stillSelected = mSel && mSel.kind === 'installed' && mSel.id === id;
   if (!r || !r.ok){
-    if (el) el.disabled = false;
-    loadErr((r && r.error) || 'could not reach the bridge');
+    if (stillSelected) loadErr((r && r.error) || 'could not reach the bridge');
     return;
   }
   const m = ((lastModels || {}).installed || []).find(x => x.id === r.id);
@@ -11825,10 +11829,12 @@ async function loadPost(body, el){
     m.load = (r.load && Object.keys(r.load).length) ? r.load : null;
     m.loadview = r.loadview;
     if (r.launch) m.launch = r.launch;
-    const host = document.getElementById('md-load');
-    if (host) host.innerHTML = renderLoad(m);
-    const lhost = document.getElementById('md-launch');
-    if (lhost) lhost.innerHTML = renderLaunch(m);
+    if (stillSelected && !samplingTyping()){
+      const host = document.getElementById('md-load');
+      if (host) host.innerHTML = renderLoad(m);
+      const lhost = document.getElementById('md-launch');
+      if (lhost) lhost.innerHTML = renderLaunch(m);
+    }
   }
   feed('models', 'load · ' + esc(r.id) + ' → '
        + ((r.loadview && r.loadview.changed) ? (r.loadview.changed + ' overridden')
