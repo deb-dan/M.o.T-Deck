@@ -53,6 +53,13 @@ live manifest, secret, model-registry and navigation files. The matching embedde
 enabled Factory reset only after the real v1.5.90 app was installed; its human preview was
 then walked and cancelled with the typed-confirmation Apply control still disabled.
 
+Music memory remains deliberately separate at the presentation layer. MOT Main's compact
+`Memory for a model` tile continues to describe resident chat/runner capacity and current
+system pressure; Music owns its engine planning, fit warning, and measured render peak.
+An active Music job may still affect the truthful global pressure/free-memory reading.
+S4 will unify the underlying Voice/Music spawn advice with the shared fit engine without
+turning MOT Main into a combined Music dashboard.
+
 **The app shell (MOT Deck / MOT Main).** Ten live components on Mission Control —
 Hermes, Odysseus, SearXNG, VoiceStudio, Voicebox, ComfyUI, Unsloth, OpenCode, DeepSeek,
 and the runner — plus Goose CLI and Goose UI as a coexisting pair, LOffice (ONLYOFFICE), and the

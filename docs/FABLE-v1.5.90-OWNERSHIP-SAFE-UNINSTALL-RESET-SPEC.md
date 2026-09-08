@@ -140,6 +140,20 @@ installed. Unavailable controls are visibly disabled with the exact component ne
 deep link to Mission Control. A disabled row is not removed, because its discoverability is
 part of the optional-install design.
 
+## Music and MOT Main memory boundary
+
+Music memory stays on the Music surface. MOT Main's compact `Memory for a model` tile is
+the entry point for the resident chat/runner model budget and current system pressure; it
+does not gain a second Music-engine ledger or present a one-shot render engine as another
+resident chat model. Music keeps its own engine planning figure, pre-render fit advice,
+and measured last-render peak beside the operation they describe.
+
+This is presentation separation, not resource blindness. A running Music job still
+changes real system pressure/free-memory truth, and the shared fit engine must account for
+actual competing residents. S4 remains the follow-up that replaces the older Voice/Music
+`budget_gb` spawn predicates with that shared advisory contract. It must not merge the
+Music and MOT Main interfaces to achieve the shared calculation.
+
 ## Composer visual contract
 
 `#chat-inputrow` is the single visible field. The textarea is transparent and borderless
@@ -207,3 +221,6 @@ selector cannot silently restore a nested textarea box.
 - The post-ship state retained the same eight intentionally running components, the same
   intentionally stopped OpenCode and DeepSeek components, and the same live 27B runner
   model. All twelve optional selections were present and truthfully marked installed.
+- The release adds no Music figure to MOT Main. The installed Main tile remains the
+  runner/model-budget entry point, while Music continues to show its own planning and
+  measured render facts. Global pressure remains shared truth rather than being hidden.
