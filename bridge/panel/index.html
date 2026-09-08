@@ -11602,6 +11602,22 @@ async function samplingSet(key, raw, el){
 
 async function samplingResetAll(btn){ await samplingPost({ reset: true }, btn); }
 
+const modelSettingsWrites = new Map();
+async function modelSettingsRequest(id, path, body){
+  // Preserve the user's edit/reset order at the server, even on a slow connection.
+  // Each model has its own queue; a failure releases the next intentional edit.
+  const payload = JSON.stringify(Object.assign({ id }, body));
+  const previous = modelSettingsWrites.get(id) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(async () => {
+    const response = await fetch(path, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload });
+    return response.json();
+  });
+  modelSettingsWrites.set(id, pending);
+  try { return await pending; }
+  finally { if (modelSettingsWrites.get(id) === pending) modelSettingsWrites.delete(id); }
+}
+
 async function samplingPost(body, el){
   const id = (mSel && mSel.kind === 'installed') ? mSel.id : '';
   if (!id) return;
@@ -11609,9 +11625,7 @@ async function samplingPost(body, el){
   if (el) el.disabled = true;
   let r = null;
   try {
-    r = await (await fetch('/api/models/settings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ id }, body)) })).json();
+    r = await modelSettingsRequest(id, '/api/models/settings', body);
   } catch { r = null; }
   if (el) el.disabled = false;
   const stillSelected = mSel && mSel.kind === 'installed' && mSel.id === id;
@@ -11814,9 +11828,7 @@ async function loadPost(body, el){
   if (el) el.disabled = true;
   let r = null;
   try {
-    r = await (await fetch('/api/models/load-settings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ id }, body)) })).json();
+    r = await modelSettingsRequest(id, '/api/models/load-settings', body);
   } catch { r = null; }
   if (el) el.disabled = false;
   const stillSelected = mSel && mSel.kind === 'installed' && mSel.id === id;
