@@ -91,5 +91,20 @@ const optional = {ok: true, options: [], job: {running: true, current: 'aider'}}
   await applying;
   assert(d.ids['storage-body'].textContent.includes('1 of 2 chats deleted'));
   assert(d.ids['storage-body'].textContent.includes('two: upstream unavailable'));
+
+  // An installation needs a selection; selecting and deselecting update the action.
+  const e = setup();
+  const choosing = e.context.openStorageManager();
+  e.reply('/api/storage/runtimes', inventory);
+  e.reply('/api/storage/optional', {options:[{id:'aider',label:'Aider',installed:false}],job:{running:false}});
+  await choosing;
+  const install = e.button('Install selected');
+  assert.equal(install.disabled, true, 'an empty selection cannot start an installation');
+  const all = node => [node, ...node.children.flatMap(all)];
+  const choice = all(e.ids['storage-body']).find(node => node.tag === 'input');
+  choice.checked = true; for (const change of choice.listeners.change) change();
+  assert.equal(install.disabled, false);
+  choice.checked = false; for (const change of choice.listeners.change) change();
+  assert.equal(install.disabled, true);
   console.log('storage dialog: preview, delayed read, Escape and partial-result journeys passed');
 })().catch(error => { console.error(error); process.exit(1); });

@@ -79,7 +79,10 @@
       const name = el('div', 'storage-name');
       const check = document.createElement('input'); check.type = 'checkbox'; check.value = row.id;
       check.disabled = !!row.installed || !!(data.job && data.job.running);
-      check.addEventListener('change', () => check.checked ? selected.add(row.id) : selected.delete(row.id));
+      check.addEventListener('change', () => {
+        check.checked ? selected.add(row.id) : selected.delete(row.id);
+        install.disabled = !selected.size || !!(data.job && data.job.running);
+      });
       name.append(check, document.createTextNode(' ' + row.label));
       line.append(name);
       const meta = el('div', 'storage-meta', row.installed ? 'Installed' : row.note);
@@ -90,7 +93,7 @@
     }
     const actions = el('div', 'storage-actions');
     const install = el('button', 'primary', data.job && data.job.running ? 'Installation running…' : 'Install selected');
-    install.disabled = !!(data.job && data.job.running);
+    install.disabled = true; // enabled only by a non-empty eligible selection
     install.onclick = async () => {
       install.disabled = true; install.textContent = 'Starting…';
       try {
