@@ -45,7 +45,7 @@ Personal AI workspace merging [Hermes Agent](https://github.com/NousResearch/her
 (agent brain) and [Odysseus](https://github.com/pewdiepie-archdaemon/odysseus)
 (web workspace) as pluggable, one-click-updatable components. macOS-native, no Docker.
 
-Full design: `docs/motdeck-architecture.md`.
+Full design: `docs/mot-deck-architecture.md`.
 
 ## Quick start
 

@@ -10,7 +10,7 @@ than restating rows.
 Current shipped release: **v1.5.90** (see `VERSION`). Written 2026-09-08.
 
 <!-- current-status:start
-in-progress:
+in-progress: U170
 next: P6 P3 P5 S4 S7 U3
 later: U2 U9 U14 U26 U28 U29 U44 U45 U47 U57 U58 U168 U169
 someday: S2 U4 U5 U6 U8 U43 U46 U68
@@ -220,7 +220,10 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 
 ## In progress / Next
 
-No release candidate is currently in progress. Two narrower follow-ups are intentionally
+U170 tracks a local, unshipped review candidate improving existing chat, download,
+storage and model-settings behavior. Its coverage and native release acceptance limits
+are explicit in `docs/REVIEW-2026-09-08-EXISTING-FEATURES.md`; it does not implement the
+pending feature queue below. Two narrower follow-ups are intentionally
 not hidden beneath U167. U168 covers
 integration-specific deletion of data in shared or third-party stores (for example the
 standalone Hermes home); it requires one supported owner adapter per store, never a

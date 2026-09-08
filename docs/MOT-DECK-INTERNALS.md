@@ -10,7 +10,7 @@ of writing — line numbers drift, symbol names don't, so functions are named to
 If this doc and the code disagree, **the code wins** — and this doc is wrong and should
 be fixed. Do not add claims here from memory or from chat history.
 
-Companion docs: `CLAUDE.md` (session log / decisions / pending QA), `docs/motdeck-architecture.md`
+Companion docs: `CLAUDE.md` (session log / decisions / pending QA), `docs/mot-deck-architecture.md`
 (original design), `docs/handoff/FABLE-*.md` (per-feature specs).
 
 ---
@@ -100,25 +100,27 @@ This has cost entire sessions. Read it twice.
   online via `bootstrap.sh`. Packaged builds cannot silently split user state by flavor.
 
 **THE RULE:** a `--fat` rebuild refreshes the bundle's seed but **never** an
-already-provisioned snapshot (`firstrun_fat.sh` only extracts when the target dir is
-absent, and writes a `.provisioned` marker at :158). After any code change the snapshot
-must be refreshed, or the fat app serves stale code:
+already-provisioned snapshot. After a verified code change, publish through the
+repository's shipping entry point so the bridge packages, panel assets and running
+process agree:
 
 ```
-DST="$HOME/Library/Application Support/MOT Deck"
-cp -R bridge/panel "$DST/bridge/panel"      # panel only, instant
-cp bridge/app.py "$DST/bridge/app.py"       # bridge code
+./scripts/ship.sh
 ```
-Clean alternative: `rm -rf "$DST"` then relaunch (full re-provision, slow).
+Shipping preserves the live snapshot's `motdeck.yaml` and `data/`. Do not copy the
+repository template over live state or copy only the `app.py` facade. A deliberate
+fresh setup uses **Installations & Storage → Factory reset**, with its exact preview,
+typed confirmation, matching FAT seed and recoverable Trash move. Removing the
+support directory by hand would bypass those safeguards and erase user state.
 
 Verify what is actually being served, **on the Mac**:
 `curl -s http://127.0.0.1:8700/ | grep -c '<marker>'`.
 Symptom of the trap: repo has the change, app shows old behavior.
 
 The panel route sends `Cache-Control: no-store` (app.py `panel`, app.py:162) — added
-because WKWebView heuristically cached `index.html`. If a stale panel persists anyway:
-`rm -rf ~/Library/WebKit/local.motdeck.app ~/Library/Caches/local.motdeck.app`
-(bundle id `local.motdeck.app`).
+because WKWebView heuristically cached `index.html`. If a stale panel persists, first
+use ⌘R in that tab and verify the served version; do not erase browser storage as a
+routine refresh, since it also holds user preferences.
 
 ---
 
