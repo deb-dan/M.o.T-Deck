@@ -7,10 +7,10 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current shipped release: **v1.5.89** (see `VERSION`). Written 2026-09-08.
+Current shipped release: **v1.5.90** (see `VERSION`). Written 2026-09-08.
 
 <!-- current-status:start
-in-progress: U167
+in-progress:
 next: P6 P3 P5 S4 S7 U3
 later: U2 U9 U14 U26 U28 U29 U44 U45 U47 U57 U58 U168 U169
 someday: S2 U4 U5 U6 U8 U43 U46 U68
@@ -25,6 +25,26 @@ current-status:end -->
 
 Grouped by theme, with the version range where the shape landed. "Done" means shipped,
 gated by tests, and walked live on the real stack — not merely coded.
+
+**Ownership-safe removal, reset and optional setup (v1.5.90).** Mission Control now
+offers an Uninstall preview for every optional runtime; Music can remove either engine's
+exact model/integration payload; Generate can remove one workflow's or one model family's
+currently downloaded files while naming every other workflow that shares them; and the
+Chat/Agent plus Hermes lanes each expose a counted clear-all preview. Apply operations
+consume short-lived evidence-bound tokens, stop only launch-provenance-owned children,
+revalidate after preview, and move exact targets to Trash with rollback rather than
+recursively deleting guessed directories. Normal runtime removal preserves sessions,
+settings, workspaces, documents, outputs and model weights. Full uninstall moves only the
+verified app bundle and canonical support root; Factory reset additionally requires an
+embedded FAT seed whose version exactly matches the running release before it can enable.
+Fresh core setup can then add allowlisted optional tools through their existing pinned
+installers. The API catalogue distinguishes configured routes from a runner that is
+actually available, and the Chat composer keeps its attach, textarea, microphone, Send
+and audio-mode controls inside one field across design axes. The installed preview/cancel
+walk caught and removed one whole-root byte scan that had blocked the bridge for roughly
+30 seconds; destructive previews now omit that presentation-only total truthfully and
+remain responsive. U168/U169 preserve the two intentionally narrower follow-ups: shared
+third-party data erasure and manifest-proven source-tree cleanup.
 
 **The app shell (MOT Deck / MOT Main).** Ten live components on Mission Control —
 Hermes, Odysseus, SearXNG, VoiceStudio, Voicebox, ComfyUI, Unsloth, OpenCode, DeepSeek,
@@ -186,25 +206,8 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 
 ## In progress / Next
 
-**U167 — ownership-safe removal, reset and optional setup (candidate, not shipped).**
-The current wave adds paired Preview/Apply transactions for component runtimes, Music
-engines and Generate workflow/model files; lane-scoped clear-all for Chat/Agent and
-Hermes; an installed-app-only factory reset and full uninstall; and one post-core
-optional-tool selector that reuses the existing pinned installers. Removal is never a
-generic recursive delete: every plan inventories exact no-follow entries, binds consent
-to current evidence, stops only launch-provenance-owned processes, moves recoverably to
-Trash, and names the data/workspaces/models/shared homes it preserves. The factory reset
-is intentionally the broader local-data tier: it moves the complete canonical
-`Application Support/MOT Deck` root, but it cannot and does not claim external model
-manager libraries, external workspaces, shared Hugging Face caches, or the standalone
-Hermes `~/.hermes` home. The API page now separates configured routes from current
-runner reachability, and the composer keeps one integrated shell in every chrome/design
-combination. This paragraph records work in progress only; U167 may move to Done and
-`VERSION` may advance only after the complete gate and non-destructive installed-app
-preview/cancel journeys pass. Binding behavior and ownership matrix:
-`docs/FABLE-v1.5.90-OWNERSHIP-SAFE-UNINSTALL-RESET-SPEC.md`.
-
-Two narrower follow-ups are intentionally not hidden beneath U167. U168 covers
+No release candidate is currently in progress. Two narrower follow-ups are intentionally
+not hidden beneath U167. U168 covers
 integration-specific deletion of data in shared or third-party stores (for example the
 standalone Hermes home); it requires one supported owner adapter per store, never a
 generic “wipe everything” glob. U169 covers removal of retained optional source/build

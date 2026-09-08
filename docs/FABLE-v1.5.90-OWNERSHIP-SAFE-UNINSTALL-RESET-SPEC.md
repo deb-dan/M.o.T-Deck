@@ -1,7 +1,8 @@
 # MOT Deck v1.5.90 — ownership-safe uninstall, reset, and optional setup
 
-Status: decision-complete engineering specification; implementation must still pass the
-repository gate and the installed human-entry journeys before `VERSION` may move.
+Status: implemented and release-accepted for v1.5.90. The non-destructive installed
+preview/cancel journeys and complete repository gate passed; the matching FAT package is
+the final distribution proof before this release commit is pushed.
 
 ## User-visible problem
 
@@ -168,3 +169,24 @@ selector cannot silently restore a nested textarea box.
 9. The composer computed-style matrix proves one shell/no inner box; attachment, Enter,
    microphone, Send, audio switch, drag/resize arrows, theme switching, and durable-turn
    recovery retain their existing behavior.
+
+## Release evidence
+
+- Contract gate: 580 passed, with four documented checkout-local Aider skips.
+- Repository Python: 753 passed; the two warnings are dependency deprecations, not failed
+  or skipped product checks.
+- Every JavaScript suite passed, including 19 storage/composer preservation checks.
+- Installed previews named the exact OpenCode runtime, both Music engine payloads, one
+  SDXL workflow file and all five workflows sharing it, 40 Odysseus sessions, 53 Hermes
+  sessions, and the app/support-root full-uninstall pair. Every preview was cancelled.
+- The full-uninstall Apply button remained disabled without the exact typed phrase.
+- The first installed full-uninstall preview exposed a roughly 30-second bridge stall:
+  it recursively sized the complete support root even though size was not safety evidence.
+  That candidate did not release. The corrected preview explicitly omits the total and
+  loaded in under one second while retaining path, identity, helper-digest and process
+  evidence.
+- The composer walk measured attach, textarea, microphone, Send and audio switch inside
+  one bordered shell; the textarea computed transparent with no border.
+- `motdeck.yaml`, `.env.local`, `models.json` and `nav.json` retained their exact pre-ship
+  digests, all ten components retained install state, and the runner retained its live
+  model.
