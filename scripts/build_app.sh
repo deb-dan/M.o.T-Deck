@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build MOT Deck.app. Flags (combinable, order-independent):
 #   --dmg       also package dist/MOT Deck.dmg
+#   --output-dir <new-directory>  keep existing builds; refuse to reuse this directory
 #   --portable  bundle a repo seed (source only, no vendor) into the .app so it can
 #               self-install on a fresh Mac WITH internet (first-run: main.swift extracts
 #               the seed to ~/Library/Application Support/MOT Deck and runs firstrun.sh).
@@ -14,18 +15,30 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
-DMG=0; PORTABLE=0; FAT=0
-for a in "$@"; do case "$a" in
+DMG=0; PORTABLE=0; FAT=0; OUT="dist"; CUSTOM_OUT=0
+while [[ $# -gt 0 ]]; do case "$1" in
   --dmg) DMG=1 ;;
   --portable) PORTABLE=1 ;;
   --fat) FAT=1 ;;
-esac; done
+  --output-dir)
+    [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || {
+      echo "ERROR: --output-dir requires a new directory path." >&2; exit 2; }
+    OUT="$2"; CUSTOM_OUT=1; shift ;;
+  *) echo "ERROR: unknown build option: $1" >&2; exit 2 ;;
+esac; shift; done
 [[ $FAT -eq 1 ]] && DMG=1   # a fat build is a distributable → always produce the dmg
 
 command -v swiftc >/dev/null || {
   echo "swiftc not found. Install Command Line Tools first:  xcode-select --install"; exit 1; }
 
-APP="dist/MOT Deck.app"
+if [[ "$CUSTOM_OUT" -eq 1 ]]; then
+  mkdir -p "$(dirname "$OUT")"
+  mkdir "$OUT" || {
+    echo "ERROR: output directory must be new; existing builds were kept: $OUT" >&2
+    exit 1
+  }
+fi
+APP="$OUT/MOT Deck.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
@@ -90,7 +103,7 @@ if [[ -f app/MOTDeck.icns ]]; then
   /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string MOTDeck" "$APP/Contents/Info.plist"
 elif [[ -f app/icon.png ]]; then
   echo "[motdeck] building icon..."
-  ICONSET=dist/motdeck.iconset; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
+  ICONSET="$OUT/motdeck.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
   for s in 16 32 64 128 256 512; do
     sips -z $s $s app/icon.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
     sips -z $((s*2)) $((s*2)) app/icon.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
@@ -240,7 +253,7 @@ if [[ $FAT -eq 1 ]]; then
   # source-only (strip .git/node_modules/caches). Staged via rsync so we can include
   # vendor/ but drop its heavy/VCS bits, and include ONLY data/llamacpp from data/.
   echo "[motdeck] staging offline seed…"
-  STAGE=dist/.fatseed
+  STAGE="$OUT/.fatseed"
   rm -rf "$STAGE"; mkdir -p "$STAGE"
   rsync -a \
     --exclude='.git' --exclude='.gitmodules' --exclude='node_modules' \
@@ -314,9 +327,9 @@ fi
 
 if [[ $DMG -eq 1 ]]; then
   echo "[motdeck] creating dmg..."
-  rm -f "dist/MOT Deck.dmg"
-  hdiutil create -volname "MOT Deck" -srcfolder "$APP" -ov -format UDZO "dist/MOT Deck.dmg" >/dev/null
-  echo "[motdeck] built dist/MOT Deck.dmg"
+  rm -f "$OUT/MOT Deck.dmg"
+  hdiutil create -volname "MOT Deck" -srcfolder "$APP" -ov -format UDZO "$OUT/MOT Deck.dmg" >/dev/null
+  echo "[motdeck] built $OUT/MOT Deck.dmg"
 fi
 
 echo "[motdeck] done — open it with:  open \"$APP\""

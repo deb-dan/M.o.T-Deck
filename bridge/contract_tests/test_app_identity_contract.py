@@ -122,7 +122,10 @@ def test_a_name_change_resigns_and_refreshes_launch_services():
 
 def test_fresh_fat_installs_get_the_same_name():
     code = _code(BUILD)
-    assert 'APP="dist/MOT Deck.app"' in code, "the build artifact filename is contract truth"
+    assert 'OUT="dist"' in code, "the default build directory remains dist"
+    assert 'APP="$OUT/MOT Deck.app"' in code, "the build artifact filename is contract truth"
+    # test_build_output_preservation.py executes the actual builder with a custom
+    # directory and verifies this same filename without changing earlier artifacts.
     assert f"<key>CFBundleDisplayName</key><string>{NAME}</string>" in code
     assert f"<key>CFBundleName</key><string>{NAME}</string>" in code
     assert "en.lproj/InfoPlist.strings" in code, \
