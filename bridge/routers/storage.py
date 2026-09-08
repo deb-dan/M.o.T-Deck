@@ -14,6 +14,7 @@ import uuid
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from ..core.appctx import ROOT, app
 from ..core.events import publish
@@ -276,7 +277,7 @@ def storage_runtimes() -> JSONResponse:
 async def storage_runtime_plan(req: Request) -> JSONResponse:
     try:
         body = await req.json()
-        plan = runtime_plan(ROOT, str((body or {}).get("target") or ""))
+        plan = await run_in_threadpool(runtime_plan, ROOT, str((body or {}).get("target") or ""))
         token, ttl = _put_plan(plan)
         return JSONResponse({"ok": True, "token": token, "expires_in": ttl, **plan})
     except StorageRefusal as exc:
@@ -373,7 +374,7 @@ def _music_asset_plan(engine: str) -> dict:
 async def storage_music_plan(req: Request) -> JSONResponse:
     try:
         body = await req.json()
-        plan = _music_asset_plan(str((body or {}).get("engine") or ""))
+        plan = await run_in_threadpool(_music_asset_plan, str((body or {}).get("engine") or ""))
         token, ttl = _put_plan(plan)
         return JSONResponse({"ok": True, "token": token, "expires_in": ttl, **plan})
     except StorageRefusal as exc:
@@ -470,9 +471,9 @@ async def storage_generate_plan(req: Request) -> JSONResponse:
             raise StorageRefusal("a Generate download is active; finish or cancel it first")
         if any(row.get("state") in ("running", "finishing") for row in JOBS.values()):
             raise StorageRefusal("a Generate job is active; stop or finish it first")
-        plan = _generate_asset_plan(await catalog_live(force=True),
-                                    str((body or {}).get("scope") or ""),
-                                    str((body or {}).get("id") or ""))
+        plan = await run_in_threadpool(_generate_asset_plan, await catalog_live(force=True),
+                                       str((body or {}).get("scope") or ""),
+                                       str((body or {}).get("id") or ""))
         token, ttl = _put_plan(plan)
         return JSONResponse({"ok": True, "token": token, "expires_in": ttl, **plan})
     except StorageRefusal as exc:
@@ -594,7 +595,7 @@ def _reset_capability() -> dict:
 async def storage_reset_plan(req: Request) -> JSONResponse:
     try:
         body = await req.json()
-        plan = _reset_plan(str((body or {}).get("mode") or ""))
+        plan = await run_in_threadpool(_reset_plan, str((body or {}).get("mode") or ""))
         token, ttl = _put_plan(plan)
         return JSONResponse({"ok": True, "token": token, "expires_in": ttl, **plan})
     except StorageRefusal as exc:
@@ -749,7 +750,10 @@ async def storage_chats_apply(req: Request) -> JSONResponse:
             raise StorageRefusal("the session list changed after preview; review it again")
         receipts = []
         for row in plan["sessions"]:
-            ok, detail = await _delete_one_chat(plan["lane"], row["id"])
+            try:
+                ok, detail = await _delete_one_chat(plan["lane"], row["id"])
+            except Exception as exc:  # retain every receipt after a partial mutation
+                ok, detail = False, f"could not confirm deletion: {str(exc)[:250]}"
             receipts.append({"id": row["id"], "ok": ok, "detail": detail})
         deleted = sum(1 for row in receipts if row["ok"])
         result = {"ok": deleted == len(receipts), "lane": plan["lane"],

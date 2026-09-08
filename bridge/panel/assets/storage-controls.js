@@ -18,11 +18,13 @@
     do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
     return (n >= 10 ? n.toFixed(1) : n.toFixed(2)) + ' ' + units[i];
   };
-  async function api(path, body) {
+  async function api(path, body, allowPartial = false) {
     const response = await fetch(path, body === undefined ? {} : {
       method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
     });
     const data = await response.json().catch(() => ({}));
+    if (allowPartial && response.status === 409 && Array.isArray(data.receipts)
+        && Number.isInteger(data.deleted) && Number.isInteger(data.count)) return data;
     if (!response.ok || data.ok === false) throw new Error(data.error || data.detail || ('HTTP ' + response.status));
     return data;
   }
@@ -38,6 +40,14 @@
   }
 
   let optionalTimer = 0;
+  let viewVersion = 0;
+  function endView() { clearTimeout(optionalTimer); optionalTimer = 0; viewVersion++; }
+  function beginView() {
+    endView(); show();
+    const version = viewVersion;
+    return () => version === viewVersion && !!dialog()?.open;
+  }
+  dialog()?.addEventListener('close', endView);
   function section(title, note) {
     const group = el('section', 'storage-group');
     group.append(el('div', 'storage-name', title));
@@ -60,7 +70,7 @@
     return group;
   }
 
-  function optionalView(data) {
+  function optionalView(data, current) {
     const group = section('Add optional tools',
       'Core is always MOT Deck, runner, Hermes, Odysseus, SearXNG, API and Capabilities. Select only the additional local tools you want.');
     const selected = new Set();
@@ -85,8 +95,8 @@
       install.disabled = true; install.textContent = 'Starting…';
       try {
         await api('/api/storage/optional/install', {ids:Array.from(selected)});
-        inventory();
-      } catch (e) { errorView(e, () => inventory()); }
+        if (current()) inventory();
+      } catch (e) { if (current()) errorView(e, () => inventory()); }
     };
     actions.append(install); group.append(actions);
     return group;
@@ -114,10 +124,12 @@
   }
 
   async function inventory(focus) {
-    show(); setNote('Runtime removal preserves histories, settings, workspaces, documents, outputs and model weights.');
+    const current = beginView();
+    setNote('Runtime removal preserves histories, settings, workspaces, documents, outputs and model weights.');
     body().replaceChildren(el('div', 'cs-empty', 'Reading exact install paths…'));
     try {
       const [data, optional] = await Promise.all([api('/api/storage/runtimes'), api('/api/storage/optional')]);
+      if (!current()) return;
       const group = section('Installed component runtimes',
         'Removing a runtime keeps its histories, settings, workspaces, documents, outputs and model weights.');
       for (const row of data.runtimes || []) {
@@ -132,23 +144,25 @@
         action.onclick = () => runtimePreview(row.id);
         line.append(action); group.append(line);
       }
-      const sections = [group, optionalView(optional), resetView(data.reset)];
+      const sections = [group, optionalView(optional, current), resetView(data.reset)];
       if ((optional.job || {}).running || (optional.job || {}).receipts?.length) sections.splice(2, 0, jobView(optional.job));
       body().replaceChildren(...sections);
       clearTimeout(optionalTimer);
-      if ((optional.job || {}).running) optionalTimer = setTimeout(() => inventory(focus), 1500);
+      if ((optional.job || {}).running) optionalTimer = setTimeout(() => { if (current()) inventory(focus); }, 1500);
       if (focus) {
         const row = Array.from(body().querySelectorAll('[data-target]')).find(node => node.dataset.target === focus);
         if (row) { row.scrollIntoView({block:'center'}); row.style.borderColor = 'var(--gold)'; }
       }
-    } catch (e) { errorView(e, () => inventory(focus)); }
+    } catch (e) { if (current()) errorView(e, () => inventory(focus)); }
   }
 
   async function runtimePreview(target) {
-    show(); setNote('Review the exact runtime removal. Nothing below includes user data or model weights.');
+    const current = beginView();
+    setNote('Review the exact runtime removal. Nothing below includes user data or model weights.');
     body().replaceChildren(el('div', 'cs-empty', 'Building ownership preview…'));
     try {
       const plan = await api('/api/storage/runtime/plan', {target});
+      if (!current()) return;
       const group = el('div', 'storage-group');
       group.append(el('div', 'storage-name', 'Uninstall ' + plan.label));
       group.append(el('div', 'storage-meta', fmtBytes(plan.bytes) + ' moves to Trash · space returns only after Trash is emptied'));
@@ -164,6 +178,7 @@
         apply.disabled = true; apply.textContent = 'Removing…';
         try {
           const result = await api('/api/storage/runtime/apply', {token: plan.token});
+          if (!current()) return;
           group.replaceChildren(el('div', 'storage-name', plan.label + ' runtime removed'));
           group.append(el('div', 'storage-meta', result.moved
             ? 'Moved to ' + result.trash + '. User data was preserved.'
@@ -171,17 +186,19 @@
           const done = el('div', 'storage-actions'); const close = el('button', '', 'Done');
           close.onclick = () => { closeStorageManager(); if (typeof refresh === 'function') refresh(true); };
           done.append(close); group.append(done);
-        } catch (e) { errorView(e, () => runtimePreview(target)); }
+        } catch (e) { if (current()) errorView(e, () => runtimePreview(target)); }
       };
       actions.append(back, apply); group.append(actions); body().replaceChildren(group);
-    } catch (e) { errorView(e, () => inventory(target)); }
+    } catch (e) { if (current()) errorView(e, () => inventory(target)); }
   }
 
   async function clearPreview(lane) {
-    show(); setNote('Conversation deletion uses the lane’s supported API. It cannot be undone.');
+    const current = beginView();
+    setNote('Conversation deletion uses the lane’s supported API. It cannot be undone.');
     body().replaceChildren(el('div', 'cs-empty', 'Reading current conversations…'));
     try {
       const plan = await api('/api/storage/chats/plan', {lane});
+      if (!current()) return;
       const group = el('div', 'storage-group');
       group.append(el('div', 'storage-name', 'Delete all ' + (lane === 'hermes' ? 'Hermes' : 'Chat / Agent') + ' chats'));
       group.append(el('div', 'storage-meta', plan.count + ' conversation' + (plan.count === 1 ? '' : 's') + ' currently stored'));
@@ -193,24 +210,27 @@
       apply.onclick = async () => {
         apply.disabled = true; apply.textContent = 'Deleting…';
         try {
-          const result = await api('/api/storage/chats/apply', {token: plan.token});
+          const result = await api('/api/storage/chats/apply', {token: plan.token}, true);
+          if (!current()) return;
           group.replaceChildren(el('div', 'storage-name', result.deleted + ' of ' + result.count + ' chats deleted'));
           const failed = (result.receipts || []).filter(row => !row.ok);
           if (failed.length) group.append(el('div', 'storage-error', failed.map(row => row.id + ': ' + row.detail).join('\n')));
           const done = el('div', 'storage-actions'); const close = el('button', '', 'Done');
           close.onclick = () => { closeStorageManager(); if (typeof initChat === 'function') initChat(); };
           done.append(close); group.append(done);
-        } catch (e) { errorView(e, () => clearPreview(lane)); }
+        } catch (e) { if (current()) errorView(e, () => clearPreview(lane)); }
       };
       actions.append(cancel, apply); group.append(actions); body().replaceChildren(group);
-    } catch (e) { errorView(e); }
+    } catch (e) { if (current()) errorView(e); }
   }
 
   async function resetPreview(mode) {
-    show(); setNote('This is the broadest local-data operation. Review every target and preserved boundary.');
+    const current = beginView();
+    setNote('This is the broadest local-data operation. Review every target and preserved boundary.');
     body().replaceChildren(el('div', 'cs-empty', 'Verifying the installed app and canonical data root…'));
     try {
       const plan = await api('/api/storage/reset/plan', {mode});
+      if (!current()) return;
       const size = plan.bytes === null || plan.bytes === undefined
         ? (plan.size_note || 'Size is not scanned while the app is running.')
         : fmtBytes(plan.bytes) + ' moves to Trash';
@@ -235,16 +255,17 @@
         apply.disabled = true; apply.textContent = 'Stopping owned services…';
         try {
           const result = await api('/api/storage/reset/apply', {token:plan.token});
+          if (!current()) return;
           group.replaceChildren(el('div', 'storage-name', result.message),
             el('div', 'storage-meta', 'This window will close. The recovery receipt is ' + result.log));
-        } catch (e) { errorView(e, () => resetPreview(mode)); }
+        } catch (e) { if (current()) errorView(e, () => resetPreview(mode)); }
       };
       actions.append(back, apply); group.append(actions); body().replaceChildren(group); confirm.focus();
-    } catch (e) { errorView(e, () => inventory()); }
+    } catch (e) { if (current()) errorView(e, () => inventory()); }
   }
 
   window.openStorageManager = focus => inventory(String(focus || ''));
-  window.closeStorageManager = () => { clearTimeout(optionalTimer); const d = dialog(); if (d && d.open) d.close(); };
+  window.closeStorageManager = () => { endView(); const d = dialog(); if (d && d.open) d.close(); };
   window.toggleChatMenu = event => {
     event.stopPropagation(); const menu = $('chat-menu'), button = $('cs-more');
     const opening = menu.hidden; menu.hidden = !opening; button.setAttribute('aria-expanded', opening ? 'true' : 'false');

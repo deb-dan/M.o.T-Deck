@@ -74,3 +74,23 @@ def test_preview_token_is_one_use(monkeypatch):
     assert client.post("/api/storage/chats/apply", json={"token": token}).status_code == 200
     again = client.post("/api/storage/chats/apply", json={"token": token})
     assert again.status_code == 409 and "expired or was already used" in again.json()["error"]
+
+
+def test_connection_loss_keeps_receipts_for_completed_and_remaining_sessions(monkeypatch):
+    async def current(_lane):
+        return [{"id": sid} for sid in ("a", "b", "c")]
+
+    async def delete(_lane, sid):
+        if sid == "b":
+            raise ConnectionError("response lost")
+        return True, "deleted"
+
+    monkeypatch.setattr(S, "_chat_rows", current)
+    monkeypatch.setattr(S, "_delete_one_chat", delete)
+    token = client.post("/api/storage/chats/plan", json={"lane": "odysseus"}).json()["token"]
+    response = client.post("/api/storage/chats/apply", json={"token": token})
+    assert response.status_code == 409
+    result = response.json()
+    assert result["deleted"] == 2 and result["count"] == 3
+    assert [r["ok"] for r in result["receipts"]] == [True, False, True]
+    assert "could not confirm" in result["receipts"][1]["detail"]

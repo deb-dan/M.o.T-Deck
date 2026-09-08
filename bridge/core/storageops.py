@@ -113,14 +113,41 @@ def _lexical_under(root: Path, rel: str) -> Path:
     return target
 
 
-def _entry_evidence(path: Path) -> dict:
+def _parent_evidence(path: Path, root: Path) -> list[dict]:
+    """A final symlink is an entry to move; a parent symlink is not ownership.
+
+    The caller explicitly owns the configured root (which may itself be a relocated
+    cache). Below that boundary, refuse indirection just as model deletion does.
+    Parent inode evidence also invalidates a preview after directory replacement.
+    """
+    relative = path.relative_to(root)
+    current = root
+    rows = []
+    for part in ("", *relative.parts[:-1]):
+        current = current / part if part else current
+        try:
+            info = current.stat() if current == root else current.lstat()
+        except FileNotFoundError:
+            rows.append({"path": str(current), "state": "absent"})
+            continue
+        if stat.S_ISLNK(info.st_mode):
+            raise StorageRefusal(f"removal parent contains a symbolic link: {current}")
+        if not stat.S_ISDIR(info.st_mode):
+            raise StorageRefusal(f"removal parent is not a directory: {current}")
+        rows.append({"path": str(current), "realpath": str(current.resolve()),
+                     "dev": int(info.st_dev), "ino": int(info.st_ino)})
+    return rows
+
+
+def _entry_evidence(path: Path, root: Path) -> dict:
+    parents = _parent_evidence(path, root)
     try:
         st = os.lstat(path)
     except FileNotFoundError:
-        return {"path": str(path), "state": "absent"}
+        return {"path": str(path), "state": "absent", "parents": parents}
     kind = "symlink" if stat.S_ISLNK(st.st_mode) else (
         "directory" if stat.S_ISDIR(st.st_mode) else "file")
-    row = {"path": str(path), "state": "present", "kind": kind,
+    row = {"path": str(path), "state": "present", "kind": kind, "parents": parents,
             "dev": int(st.st_dev), "ino": int(st.st_ino),
             "size": int(st.st_size), "mtime_ns": int(st.st_mtime_ns)}
     if kind == "symlink":
@@ -247,7 +274,8 @@ def artifact_plan(operation: str, target: str, label: str,
         if key not in seen:
             exact.append(candidate)
             seen.add(key)
-    evidence = [_entry_evidence(path) for path in exact]
+    evidence = [_entry_evidence(path, next(root for root in roots
+                                         if _is_absolute_child(root, path))) for path in exact]
     present = [row for row in evidence if row["state"] == "present"]
     return {
         "operation": operation, "target": target, "label": label,
@@ -272,6 +300,30 @@ def verify_artifact_plan(plan: dict) -> None:
         raise StorageRefusal("the artifacts changed after preview; review a fresh plan")
 
 
+def _rollback_moves(moved: list[tuple[Path, Path]], batch: Path, cause: Exception) -> None:
+    """Never conceal a stranded Trash entry or overwrite a new replacement file."""
+    failures = []
+    for src, dst in reversed(moved):
+        try:
+            if os.path.lexists(src):
+                raise StorageRefusal(f"the original path is occupied: {src}")
+            # Parents were not removal targets. If one vanished, recovery requires
+            # inspection; creating it could follow a new link into unrelated state.
+            if not src.parent.is_dir() or src.parent.is_symlink():
+                raise StorageRefusal(f"the original parent changed: {src.parent}")
+            os.replace(dst, src)
+        except Exception as exc:
+            failures.append(f"{src}: {exc}")
+    if failures:
+        raise StorageRefusal(
+            f"removal failed ({cause}); rollback incomplete. Recover retained entries "
+            f"from {batch}. " + "; ".join(failures)) from cause
+    try:
+        batch.rmdir()
+    except OSError:
+        pass
+
+
 def apply_artifact_plan(plan: dict, *, trash_root: Path | None = None) -> dict:
     """Move exact artifact entries to one Trash batch, rolling back every rename."""
     verify_artifact_plan(plan)
@@ -284,17 +336,8 @@ def apply_artifact_plan(plan: dict, *, trash_root: Path | None = None) -> dict:
             dst = batch / f"{idx:02d}-{src.name}"
             os.replace(src, dst)
             moved.append((src, dst))
-    except Exception:
-        for src, dst in reversed(moved):
-            try:
-                src.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(dst, src)
-            except Exception:
-                pass
-        try:
-            batch.rmdir()
-        except OSError:
-            pass
+    except Exception as exc:
+        _rollback_moves(moved, batch, exc)
         raise
     if not moved:
         try:
@@ -321,7 +364,8 @@ def runtime_plan(root: Path, target: str) -> dict:
     target = str(target).strip().lower()
     if target == "goose" and runtime_installed(root, "gooseui"):
         raise StorageRefusal(spec.note)
-    evidence = [_entry_evidence(_lexical_under(root, rel)) for rel in spec.paths]
+    root = Path(os.path.abspath(root))
+    evidence = [_entry_evidence(_lexical_under(root, rel), root) for rel in spec.paths]
     present = [row for row in evidence if row["state"] == "present"]
     return {
         "operation": "uninstall-runtime", "target": target, "label": spec.label,
@@ -395,17 +439,8 @@ def apply_runtime_plan(root: Path, plan: dict, *, trash_root: Path | None = None
         component = str(plan.get("manifest_component") or "")
         if component:
             set_manifest_installed(Path(root) / "motdeck.yaml", component, False)
-    except Exception:
-        for src, dst in reversed(moved):
-            try:
-                src.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(dst, src)
-            except Exception:
-                pass
-        try:
-            batch.rmdir()
-        except OSError:
-            pass
+    except Exception as exc:
+        _rollback_moves(moved, batch, exc)
         raise
     if not moved:
         try:

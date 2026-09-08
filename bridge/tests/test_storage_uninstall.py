@@ -273,3 +273,112 @@ def test_generate_plan_refuses_a_workflow_with_no_downloaded_files(tmp_path, mon
                    "present": False}]}]}]}
     with pytest.raises(S.StorageRefusal, match="no downloaded files"):
         R._generate_asset_plan(cat, "workflow", "w")
+
+
+def test_runtime_parent_link_cannot_grant_ownership_of_standalone_binary(tmp_path):
+    root, outside = tmp_path / "root", tmp_path / "standalone"
+    (root / "data").mkdir(parents=True)
+    (outside / "bin").mkdir(parents=True)
+    binary = outside / "bin/opencode"
+    binary.write_bytes(b"standalone binary")
+    (root / "data/opencode").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(S.StorageRefusal, match="symbolic link"):
+        S.runtime_plan(root, "opencode")
+    assert binary.read_bytes() == b"standalone binary"
+
+
+def test_artifact_parent_link_cannot_grant_ownership_of_external_models(tmp_path):
+    models, outside = tmp_path / "models", tmp_path / "other-manager"
+    models.mkdir()
+    outside.mkdir()
+    model = outside / "chosen.safetensors"
+    model.write_bytes(b"external model")
+    (models / "checkpoints").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(S.StorageRefusal, match="symbolic link"):
+        S.artifact_plan("remove", "x", "x", (models / "checkpoints" / model.name,),
+                        owned_roots=(models,))
+    assert model.read_bytes() == b"external model"
+
+
+def test_parent_replaced_by_link_after_preview_is_refused_before_stop(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    parent = root / "data/opencode"
+    binary = parent / "bin/opencode"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"runtime")
+    _manifest(root)
+    monkeypatch.setattr(R, "ROOT", root)
+    stopped = []
+    monkeypatch.setattr(R, "_stop_for_runtime", lambda *args: stopped.append(args))
+    token = client.post("/api/storage/runtime/plan", json={"target": "opencode"}).json()["token"]
+    outside = tmp_path / "moved-to-standalone"
+    parent.rename(outside)
+    parent.symlink_to(outside, target_is_directory=True)
+    result = client.post("/api/storage/runtime/apply", json={"token": token})
+    assert result.status_code == 409
+    assert stopped == []
+    assert (outside / "bin/opencode").read_bytes() == b"runtime"
+
+
+def test_rollback_retains_recovery_bytes_and_does_not_overwrite_a_new_file(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    first = root / "data/goose/ui.sha256"
+    second = root / "data/goose/UI-SOURCES.txt"
+    first.parent.mkdir(parents=True)
+    first.write_text("old digest")
+    second.write_text("sources")
+    plan = S.runtime_plan(root, "gooseui")
+    trash = tmp_path / "Trash"
+    trash.mkdir()
+    real_replace = os.replace
+
+    def fail_second(src, dst):
+        if Path(src) == second:
+            first.write_text("new user file")
+            raise OSError("injected second move failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(S.os, "replace", fail_second)
+    with pytest.raises(S.StorageRefusal, match="rollback incomplete") as error:
+        S.apply_runtime_plan(root, plan, trash_root=trash)
+    assert first.read_text() == "new user file"
+    assert second.read_text() == "sources"
+    batch = next(trash.iterdir())
+    assert str(batch) in str(error.value)
+    assert next(batch.iterdir()).read_text() == "old digest"
+
+
+def test_slow_preview_inventory_does_not_block_other_bridge_requests(monkeypatch):
+    import asyncio
+    import threading
+
+    async def journey():
+        inventory_entered = threading.Event()
+        allow_inventory = threading.Event()
+
+        def slow_plan(root, target):
+            inventory_entered.set()
+            # Bounded even on the unfixed implementation, so the regression cannot
+            # hang pytest. Another request must run while inventory is still waiting.
+            allow_inventory.wait(1)
+            return {"operation": "uninstall-runtime", "target": target}
+
+        class Request:
+            async def json(self):
+                return {"target": "opencode"}
+
+        monkeypatch.setattr(R, "runtime_plan", slow_plan)
+        task = asyncio.create_task(R.storage_runtime_plan(Request()))
+        while not inventory_entered.is_set():
+            await asyncio.sleep(0)
+        try:
+            assert not task.done(), "inventory blocked the event loop until it finished"
+            # This handler is the same simple async read needed by SSE/turn controls.
+            await asyncio.sleep(0)
+            assert not task.done()
+        finally:
+            allow_inventory.set()
+            response = await task
+            assert response.status_code == 200
+
+    asyncio.run(journey())
