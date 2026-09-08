@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 from ..core.analytics import log_turn
@@ -14,6 +15,37 @@ from .sidecars import log_attachment, log_thinking, parse_data_url, user_key
 
 
 _DIRECT_REQUEST_META = "mot_direct_request_id"
+
+
+class _DirectThinking:
+    """Separate inline reasoning without assuming model-token boundaries are tags."""
+
+    def __init__(self):
+        self.pending = ""
+        self.thinking = False
+
+    def feed(self, text: str, *, final: bool = False):
+        self.pending += text
+        parts = []
+        while self.pending:
+            tag = "</think>" if self.thinking else "<think>"
+            at = self.pending.find(tag)
+            if at >= 0:
+                if at:
+                    parts.append((self.pending[:at], self.thinking))
+                self.pending = self.pending[at + len(tag):]
+                self.thinking = not self.thinking
+                continue
+            # Hold only a suffix that could become a tag in the next delta. At EOF
+            # it is literal text and must survive in both the stream and history.
+            keep = 0 if final else next((n for n in range(len(tag) - 1, 0, -1)
+                                        if self.pending.endswith(tag[:n])), 0)
+            ready = self.pending[:-keep] if keep else self.pending
+            self.pending = self.pending[-keep:] if keep else ""
+            if ready:
+                parts.append((ready, self.thinking))
+            break
+        return parts
 
 
 def _inject_acknowledged(response, expected_count: int) -> bool:
@@ -221,8 +253,9 @@ async def direct_events(body: dict):
             yield f'data: {_json.dumps({"type": "proxy_error", "error": cerr})}\n\n'
             yield "data: [DONE]\n\n"
             return
-        full, think_open = [], False
+        full, splitter = [], _DirectThinking()
         think = []        # thinking sidecar (both reasoning_content + inline <think>)
+        runner_completed = False
         t0 = _t.monotonic(); stats = {}   # for best-effort usage analytics
         try:
             async with _RUNNER.stream(
@@ -247,15 +280,20 @@ async def direct_events(body: dict):
                     return
                 yield f'data: {_json.dumps({"type": "model_info", "model": model})}\n\n'
                 async for line in r.aiter_lines():
-                    if not line.startswith("data: "):
+                    if not line.startswith("data:"):
                         continue
-                    payload = line[6:]
+                    payload = line[5:].lstrip(" ")
                     if payload.strip() == "[DONE]":
+                        runner_completed = True
                         break
                     try:
                         obj = _json.loads(payload)
-                    except Exception:
-                        continue
+                        if not isinstance(obj, dict):
+                            raise ValueError("event is not an object")
+                    except (ValueError, TypeError) as exc:
+                        raise ValueError("the model runner emitted an unreadable event") from exc
+                    if obj.get("error"):
+                        raise ValueError("the model runner reported an error in its stream")
                     # final usage frame (stream_options.include_usage) has empty choices
                     if obj.get("usage") or obj.get("timings"):
                         stats["usage"] = obj.get("usage") or stats.get("usage") or {}
@@ -263,6 +301,8 @@ async def direct_events(body: dict):
                     _ch = obj.get("choices") or []
                     if not _ch:
                         continue
+                    if _ch[0].get("finish_reason"):
+                        runner_completed = True
                     d = _ch[0].get("delta") or {}
                     if "ttft" not in stats and (d.get("reasoning_content") or d.get("content")):
                         stats["ttft"] = _t.monotonic() - t0
@@ -271,35 +311,16 @@ async def direct_events(body: dict):
                     if rsn:
                         think.append(rsn)
                         yield f'data: {_json.dumps({"delta": rsn, "thinking": True})}\n\n'
-                        continue
                     chunk = d.get("content") or ""
-                    if not chunk:
-                        continue
-                    while chunk:
-                        if think_open:
-                            end = chunk.find("</think>")
-                            if end == -1:
-                                think.append(chunk)
-                                yield f'data: {_json.dumps({"delta": chunk, "thinking": True})}\n\n'
-                                chunk = ""
-                            else:
-                                if chunk[:end]:
-                                    think.append(chunk[:end])
-                                    yield f'data: {_json.dumps({"delta": chunk[:end], "thinking": True})}\n\n'
-                                chunk = chunk[end + 8:]
-                                think_open = False
-                        else:
-                            start = chunk.find("<think>")
-                            if start == -1:
-                                full.append(chunk)
-                                yield f'data: {_json.dumps({"delta": chunk})}\n\n'
-                                chunk = ""
-                            else:
-                                if chunk[:start]:
-                                    full.append(chunk[:start])
-                                    yield f'data: {_json.dumps({"delta": chunk[:start]})}\n\n'
-                                chunk = chunk[start + 7:]
-                                think_open = True
+                    for text, thinking in splitter.feed(chunk):
+                        (think if thinking else full).append(text)
+                        event = {"delta": text, **({"thinking": True} if thinking else {})}
+                        yield f'data: {_json.dumps(event)}\n\n'
+                if not runner_completed:
+                    yield ("data: " + _json.dumps({
+                        "type": "proxy_error",
+                        "error": "the model runner ended without a completion frame; the reply may be partial",
+                    }) + "\n\n")
         except Exception as e:
             # ⚠️ SERIALIZED, NOT INTERPOLATED (S33/F1, adherence audit rank 7). This
             # was an f-string JSON literal with raw str(e) inside it, so an exception
@@ -311,6 +332,14 @@ async def direct_events(body: dict):
                 "type": "proxy_error",
                 "error": f"the direct lane failed mid-stream: {str(e)[:200]}"}) + "\n\n")
         finally:
+            # aclose()/task cancellation must persist the partial reply without
+            # yielding into a closed consumer (which aborts generator cleanup).
+            closing = sys.exc_info()[0] is not None
+            for text, thinking in splitter.feed("", final=True):
+                (think if thinking else full).append(text)
+                if not closing:
+                    event = {"delta": text, **({"thinking": True} if thinking else {})}
+                    yield f'data: {_json.dumps(event)}\n\n'
             # Persist the exchange into the Odysseus session (best-effort).
             stats["elapsed"] = _t.monotonic() - t0     # per-reply stats stamp
             answer = "".join(full).strip()
@@ -398,7 +427,7 @@ async def direct_events(body: dict):
                                                data={"name": t})
                     except Exception:
                         pass
-                if not user_persisted or (answer and not assistant_persisted):
+                if not closing and (not user_persisted or (answer and not assistant_persisted)):
                     missing = "prompt and reply" if not user_persisted else "reply"
                     yield ("data: " + _json.dumps({
                         "type": "proxy_error",
@@ -415,7 +444,8 @@ async def direct_events(body: dict):
                              tm.get("predicted_per_second"), stats.get("ttft"))
             except Exception:
                 pass
-            yield "data: [DONE]\n\n"
+            if not closing:
+                yield "data: [DONE]\n\n"
 
     return gen()
 

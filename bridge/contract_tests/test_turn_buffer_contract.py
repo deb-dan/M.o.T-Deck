@@ -167,7 +167,7 @@ def test_unreadable_frames_fail_visibly_without_killing_the_buffer():
         await wait_terminal(store, record["id"])
         events = await replay(store, record["id"])
         assert events[0]["type"] == "proxy_error"
-        assert events[-1]["state"] == "completed"
+        assert events[-1]["state"] == "failed"
 
     asyncio.run(journey())
 
@@ -189,6 +189,60 @@ def test_named_upstream_error_is_the_terminal_reason_not_a_generic_eof():
         events = await replay(store, record["id"])
         assert events == [{"seq": 1, "type": "terminal", "state": "failed",
                            "error": "generation repeated tokens"}]
+
+    asyncio.run(journey())
+
+
+def test_proxy_error_cannot_become_completed_after_done():
+    async def journey():
+        store = TurnStore()
+
+        async def producer():
+            yield frame({"type": "proxy_error", "error": "runner refused the request"})
+            yield "data: [DONE]\n\n"
+
+        record, _ = await store.create(body())
+        await store.start(record["id"], producer)
+        final = await wait_terminal(store, record["id"])
+        events = await replay(store, record["id"])
+        assert events[0]["type"] == "proxy_error"
+        assert final["state"] == events[-1]["state"] == "failed"
+        assert final["error"] == "runner refused the request"
+
+    asyncio.run(journey())
+
+
+def test_unterminated_frame_is_bounded_before_json_parsing(monkeypatch):
+    async def journey():
+        store = TurnStore()
+
+        async def producer():
+            yield 'data: {"delta":"'
+            for _ in range(100):
+                yield "x" * 100
+
+        record, _ = await store.create(body())
+        await store.start(record["id"], producer)
+        final = await wait_terminal(store, record["id"])
+        assert final["state"] == "failed"
+        assert "incomplete event limit" in final["error"]
+
+    monkeypatch.setattr(turnmod, "MAX_EVENT_BYTES_PER_TURN", 256)
+    asyncio.run(journey())
+
+
+def test_done_does_not_consume_trailing_partial_data():
+    async def journey():
+        store = TurnStore()
+
+        async def producer():
+            yield 'data: [DONE]\n\ndata: {"delta":"after completion"}'
+
+        record, _ = await store.create(body())
+        await store.start(record["id"], producer)
+        await wait_terminal(store, record["id"])
+        events = await replay(store, record["id"])
+        assert events == [{"seq": 1, "type": "terminal", "state": "completed"}]
 
     asyncio.run(journey())
 

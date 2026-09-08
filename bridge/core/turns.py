@@ -300,6 +300,8 @@ class TurnStore:
                 reason = payload.get("error") or payload.get("text")
                 upstream_error = str(reason or "the upstream agent failed")[:2000]
             else:
+                if payload.get("type") == "proxy_error":
+                    upstream_error = str(payload.get("error") or "the producer failed")[:2000]
                 await self._append(turn_id, payload)
 
         try:
@@ -322,16 +324,19 @@ class TurnStore:
                         break
                 if saw_done:
                     break
+                # The parsed-event cap cannot protect an unterminated SSE frame.
+                if len(buffer.encode("utf-8")) > MAX_EVENT_BYTES_PER_TURN:
+                    raise TurnOverflow("the producer exceeded the incomplete event limit")
             buffer += decoder.decode(b"", final=True)
-            if buffer:
+            if buffer and not saw_done:
                 await consume_frame(buffer)
             if upstream_error:
                 await self._terminal(turn_id, "failed", upstream_error)
-            elif saw_done:
-                await self._terminal(turn_id, "completed")
             elif unreadable_event:
                 await self._terminal(turn_id, "failed",
                                      "the producer ended with an unreadable event")
+            elif saw_done:
+                await self._terminal(turn_id, "completed")
             else:
                 await self._terminal(turn_id, "failed",
                                      "the producer ended without a completion frame")
