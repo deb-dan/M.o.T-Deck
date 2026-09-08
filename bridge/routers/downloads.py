@@ -167,8 +167,17 @@ def _gguf_registry_entry(e: dict) -> dict:
 
 
 def _dl_json(e: dict) -> dict:
-    """JSON-safe view of a DOWNLOADS entry (drops the asyncio Task)."""
-    return {k: v for k, v in e.items() if k != "task"}
+    """JSON-safe view; task ownership and the control mutex stay private."""
+    return {k: v for k, v in e.items() if k not in ("task", "control_lock")}
+
+
+async def _dl_quiesce(e: dict) -> None:
+    """Close the old stream/file before resuming or removing its partial bytes."""
+    task = e.get("task")
+    if task is not None:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def _dl_cleanup(e: dict) -> None:
@@ -690,9 +699,11 @@ async def dl_pause(dl_id: str) -> JSONResponse:
     e = DOWNLOADS.get(dl_id)
     if not e:
         return JSONResponse({"ok": False}, status_code=404)
-    if e["state"] == "downloading":
-        e["state"] = "paused"        # the task returns on its next chunk
-        publish("download", id=dl_id, state="paused")
+    async with e.setdefault("control_lock", asyncio.Lock()):
+        if e["state"] == "downloading":
+            e["state"] = "paused"
+            await _dl_quiesce(e)
+            publish("download", id=dl_id, state="paused")
     return JSONResponse(_dl_json(e))
 
 
@@ -702,15 +713,17 @@ async def dl_resume(dl_id: str) -> JSONResponse:
     e = DOWNLOADS.get(dl_id)
     if not e:
         return JSONResponse({"ok": False}, status_code=404)
-    if e["state"] == "paused":
-        for f in e["files"]:
-            part = f["dest"] + ".part"
-            f["done"] = (_os.path.getsize(part) if _os.path.exists(part)
-                         else (_os.path.getsize(f["dest"]) if _os.path.exists(f["dest"]) else 0))
-        e["rate"] = 0.0
-        e["state"] = "downloading"
-        e["task"] = asyncio.create_task(_run_download(dl_id))
-        publish("download", id=dl_id, state="downloading")
+    async with e.setdefault("control_lock", asyncio.Lock()):
+        if e["state"] == "paused":
+            await _dl_quiesce(e)
+            for f in e["files"]:
+                part = f["dest"] + ".part"
+                f["done"] = (_os.path.getsize(part) if _os.path.exists(part)
+                             else (_os.path.getsize(f["dest"]) if _os.path.exists(f["dest"]) else 0))
+            e["rate"] = 0.0
+            e["state"] = "downloading"
+            e["task"] = asyncio.create_task(_run_download(dl_id))
+            publish("download", id=dl_id, state="downloading")
     return JSONResponse(_dl_json(e))
 
 
@@ -719,13 +732,11 @@ async def dl_cancel(dl_id: str) -> JSONResponse:
     e = DOWNLOADS.get(dl_id)
     if not e:
         return JSONResponse({"ok": False}, status_code=404)
-    was = e["state"]
-    e["state"] = "cancelled"
-    task = e.get("task")
-    # If nothing is actively streaming (paused/finished), clean up the partials here.
-    if was in ("paused", "done", "error") or task is None or task.done():
+    async with e.setdefault("control_lock", asyncio.Lock()):
+        e["state"] = "cancelled"
+        await _dl_quiesce(e)
         _dl_cleanup(e)
-    publish("download", id=dl_id, state="cancelled")
+        publish("download", id=dl_id, state="cancelled")
     return JSONResponse(_dl_json(e))
 
 
