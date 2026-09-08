@@ -1,8 +1,7 @@
 # Existing-feature reliability release — 2026-09-08
 
-v1.5.91 is installed and verified. v1.5.92 is the prepared follow-up for two newly
-reproduced session defects; the final installation receipt below will distinguish
-preparation from shipping. This report supersedes the unshipped and native-coverage
+v1.5.92 is installed and verified, following the v1.5.91 reliability release.
+The follow-up corrects two newly reproduced session defects. This report supersedes the unshipped and native-coverage
 statements in the earlier `REVIEW-2026-09-08-EXISTING-FEATURES.md`, whose initial
 source-review evidence is retained as history.
 
@@ -80,6 +79,38 @@ repository Python tests and all 53 JavaScript programs. The four skipped Aider
 contracts were separately executed against the installed supported Aider runtime,
 including valid and invalid edit-format parsing, and passed. The follow-up output
 bundle records that execution in `aider-runtime.log`.
+
+## Final v1.5.92 installation receipt
+
+The clean release commit is `f3f2f53`; both built and mounted apps identify as
+`local.motdeck.app` / `MOTDeck` / `1.5.92` and pass deep strict signature checks.
+All 12,545 owned seed files matched the manifest, with zero dirty source files.
+The seed SHA-256 is
+`dea8214c037c955dd04b1b56907213388bf74ff40fab7fcc9b6535a3d7b157ea`.
+The signed previous v1.5.91 app and its live code were preserved before replacement.
+
+Both the pre-release gate and the standard ship gate passed: **583 contract tests,
+four optional checkout skips, 789 repository Python tests and all 53 JavaScript
+programs**. The installed-runtime Aider checks passed separately as described above.
+`ship.sh` verified the previous bridge launch record, replaced only its owned
+bridge, and confirmed the new control API before opening the app. No component
+restart or dependency update was requested. The live manifest, protected secrets,
+model registry and navigation file were byte-identical before and after installation
+and the final native checks; all ten component pins/install/run states matched.
+
+The real native app showed VERSION 1.5.92 and ten components online. A fresh
+throwaway conversation displayed **now**, correcting the earlier **3h** observation.
+Its existing two-click Delete control removed that exact conversation. The previous
+release-check conversation was then removed through the supported bridge API after
+verifying no active chat/agent turn. All other baseline session IDs remained.
+Factory reset preview accepted the matching v1.5.92 seed, named the canonical root
+and preserved boundaries, and kept Reset and reopen disabled without typed consent;
+Escape closed it. The app was left open on Main with its original appearance.
+
+Both source reverse patches passed `git apply --check`. The retained v1.5.90 and
+v1.5.91 app signatures/identities passed the rollback helper's check-only mode. A
+rollback was not applied. The release disk images mounted by this task were
+unmounted after verification; pre-existing mounts were preserved.
 
 ## Reproduction and release procedure
 

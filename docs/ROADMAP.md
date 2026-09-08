@@ -7,7 +7,7 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current shipped release: **v1.5.91**; v1.5.92 is prepared for the final session-integrity fixes (see `VERSION`). Written 2026-09-08.
+Current shipped release: **v1.5.92** (see `VERSION`). Written 2026-09-08.
 
 <!-- current-status:start
 in-progress: U170
@@ -22,6 +22,14 @@ current-status:end -->
 ---
 
 ## Done
+
+**Existing-feature reliability (v1.5.91–v1.5.92).** Direct streaming preserves split
+reasoning and partial answers, download controls await the previous writer, storage
+previews and rollback receipts preserve ownership and partial results, model-setting
+saves remain ordered and bound to their selected model, refused conversation deletion
+preserves local media/reasoning, and Odysseus recency has explicit UTC. Full gates,
+installed native checks, state conservation and recoverable bundles are recorded in
+`docs/RELEASE-v1.5.92-RELIABILITY.md`. U170 stays open for exhaustive review coverage.
 
 Grouped by theme, with the version range where the shape landed. "Done" means shipped,
 gated by tests, and walked live on the real stack — not merely coded.
