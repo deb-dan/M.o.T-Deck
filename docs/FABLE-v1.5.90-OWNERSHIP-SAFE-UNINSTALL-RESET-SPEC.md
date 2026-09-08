@@ -1,8 +1,8 @@
 # MOT Deck v1.5.90 — ownership-safe uninstall, reset, and optional setup
 
-Status: implemented and release-accepted for v1.5.90. The non-destructive installed
-preview/cancel journeys and complete repository gate passed; the matching FAT package is
-the final distribution proof before this release commit is pushed.
+Status: shipped and release-accepted for v1.5.90. The complete repository gate, clean FAT
+package, installed-bundle replacement, and non-destructive installed preview/cancel
+journeys all passed. No destructive Apply path was used against personal data.
 
 ## User-visible problem
 
@@ -190,3 +190,20 @@ selector cannot silently restore a nested textarea box.
 - `motdeck.yaml`, `.env.local`, `models.json` and `nav.json` retained their exact pre-ship
   digests, all ten components retained install state, and the runner retained its live
   model.
+- The clean committed FAT build embeds `VERSION=1.5.90` and a `SEED_STAMP` bound to
+  `git_sha=78cb0c1` with `dirty_files=0`. `MOT Deck.app` and the copy mounted from
+  `MOT Deck.dmg` both identify as `local.motdeck.app` / `MOTDeck` / `1.5.90`, carry the
+  executable `firstrun_fat.sh` plus `motdeck-seed-fat.tar.gz`, and pass deep strict
+  signature verification. SHA-256: DMG
+  `e8f4a6a5f3481624e50488bb6896f1ac16f20d5c1f74970805e709ee7a355998`; embedded seed
+  `7e248827cb97664c981dc40efa72f9fa45a283b765c8aa282d26ab65cfaa1330`.
+- The installed v1.5.89 bundle was moved recoverably to Trash before the verified v1.5.90
+  bundle took its place; the canonical support root was not moved. After `ship.sh`, the
+  factory-reset capability changed from correctly unavailable (the old app lacked a
+  matching seed) to available. Its installed preview named only the canonical support
+  root, preserved every external/shared boundary, and kept `Reset and reopen` disabled
+  until the exact confirmation phrase. The preview was left through Back without applying
+  it.
+- The post-ship state retained the same eight intentionally running components, the same
+  intentionally stopped OpenCode and DeepSeek components, and the same live 27B runner
+  model. All twelve optional selections were present and truthfully marked installed.

@@ -46,6 +46,13 @@ walk caught and removed one whole-root byte scan that had blocked the bridge for
 remain responsive. U168/U169 preserve the two intentionally narrower follow-ups: shared
 third-party data erasure and manifest-proven source-tree cleanup.
 
+The final clean FAT artifact is bound to release commit `78cb0c1` with no dirty files.
+Both the built and mounted app identify as `local.motdeck.app` / `MOTDeck` / `1.5.90` and
+pass deep strict signature checks. Replacing the installed bundle preserved byte-identical
+live manifest, secret, model-registry and navigation files. The matching embedded seed
+enabled Factory reset only after the real v1.5.90 app was installed; its human preview was
+then walked and cancelled with the typed-confirmation Apply control still disabled.
+
 **The app shell (MOT Deck / MOT Main).** Ten live components on Mission Control —
 Hermes, Odysseus, SearXNG, VoiceStudio, Voicebox, ComfyUI, Unsloth, OpenCode, DeepSeek,
 and the runner — plus Goose CLI and Goose UI as a coexisting pair, LOffice (ONLYOFFICE), and the
