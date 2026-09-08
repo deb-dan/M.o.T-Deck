@@ -231,8 +231,9 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 U170 tracks the remaining exhaustive review and acceptance coverage after the v1.5.91
 chat, download, storage and model-settings reliability release. The v1.5.92 session
 corrections and installed evidence are in `docs/RELEASE-v1.5.92-RELIABILITY.md`; this work does not implement the
-pending feature queue below. The retained post-v1.5.92 review batch is approved for
-commit but remains unshipped and not release-accepted at this document revision; its
+pending feature queue below. The retained post-v1.5.92 review batch is committed as
+`2ebb3ae` and pushed to the approved repository, but remains unshipped and not
+release-accepted at this document revision; its
 RAM/ledger/fit experiments were reverted to the exact v1.5.92 implementation and are
 not continuation work. The approved panel-source ceiling exception is tracked separately
 as U171: 877,700 bytes previously, 885,000 bytes now, with the current page at 880,942

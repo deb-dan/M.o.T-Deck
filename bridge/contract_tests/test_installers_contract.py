@@ -144,8 +144,8 @@ def test_stamp_dies_before_the_bundle_does():
     # test_office_plugin_publication.py checks this at each actual rename, including
     # rollback. Do not require the old destructive delete-before-unzip mechanism.
     s = src(PLUG)
-    assert 'for item in INSTALLED ai v1 SOURCES.txt; do' in s
-    assert 'for item in ai v1 SOURCES.txt INSTALLED; do' in s
+    assert 'python3 "$PUBLISHER" publish "$DEST" "$STAGE"' in s
+    assert 'python3 "$PUBLISHER" recover "$DEST"' in s
 
 
 # ── the DeepSeek lane (S34): a THIRD install shape — an npm dependency tree ──

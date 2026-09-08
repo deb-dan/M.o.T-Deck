@@ -23,6 +23,7 @@ are NOT importable from the bridge venv, so nothing here imports it.
 Run: pytest bridge/contract_tests/
 """
 from pathlib import Path
+import ast
 import importlib.util
 
 import pytest
@@ -51,6 +52,17 @@ def _present() -> bool:
 
 def _read(p: Path) -> str:
     return p.read_text(errors="replace")
+
+
+def _mcp_sources():
+    """Include upstream's MCP package, whose modules are server.py/tools.py."""
+    backend = VB / "backend"
+    paths = set(backend.rglob("*mcp*.py"))
+    for directory in backend.rglob("*mcp*"):
+        if directory.is_dir():
+            paths.update(directory.rglob("*.py"))
+    assert paths, "Voicebox MCP implementation was not found"
+    return [_read(p) for p in sorted(paths) if p.is_file()]
 
 
 def test_voicebox_pinned_in_motdeck_yaml():
@@ -232,14 +244,30 @@ def test_mcp_is_streamable_http_at_the_mount_root():
     if not _present():
         pytest.skip("optional upstream source is absent: not _present()")
     src = _read(APP) if APP.exists() else ""
-    hay = src + "".join(
-        _read(p) for p in (VB / "backend").rglob("*mcp*.py") if p.is_file())
+    hay = src + "".join(_mcp_sources())
     assert "FastMCP" in hay or "fastmcp" in hay, (
         "voicebox no longer builds its MCP server with FastMCP — re-derive the "
         "endpoint + transport in bridge/app.py voice_mcp_spec()")
-    assert "streamable_http" in hay or "streamable-http" in hay, (
-        "the streamable-HTTP transport is gone — voice_mcp_spec sends transport=http "
-        "to Odysseus and a url-only entry to Hermes, both of which mean streamable HTTP")
+    # FastMCP's http_app(transport="http") is its Streamable HTTP API. Inspect
+    # the active app factory and the SAME mounted value, not a comment or an
+    # uncalled helper containing the old transport spelling.
+    factory = next(n for n in ast.parse(src).body
+                   if isinstance(n, ast.FunctionDef) and n.name == "create_app")
+    mounts = set()
+    for node in ast.walk(factory):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            call = node.value
+            if isinstance(call.func, ast.Attribute) and call.func.attr == "http_app":
+                kw = {k.arg: k.value.value for k in call.keywords
+                      if isinstance(k.value, ast.Constant)}
+                if kw.get("path") == "/" and kw.get("transport") in ("http", "streamable-http"):
+                    mounts.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+               and n.func.attr == "mount" and len(n.args) >= 2
+               and isinstance(n.args[0], ast.Constant) and n.args[0].value == "/mcp"
+               and isinstance(n.args[1], ast.Name) and n.args[1].id in mounts
+               for n in ast.walk(factory)), (
+        "create_app no longer mounts its root Streamable HTTP app at /mcp")
 
 
 def test_mcp_tool_names_for_the_panel():
@@ -248,11 +276,23 @@ def test_mcp_tool_names_for_the_panel():
     ⚠️ Unverifiable until the component is actually checked out (skips otherwise)."""
     if not _present():
         pytest.skip("optional upstream source is absent: not _present()")
-    hay = "".join(_read(p) for p in (VB / "backend").rglob("*mcp*.py") if p.is_file())
-    if not hay:
-        return
+    # Execute upstream's registration body with a recording decorator. Tool
+    # bodies do not run: this cannot speak, open a database or load a model.
+    registered = set()
+    class Registry:
+        def tool(self, *, name, **kwargs):
+            registered.add(name)
+            return lambda fn: fn
+    for source in _mcp_sources():
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.FunctionDef) and node.name == "register_tools":
+                module = ast.Module(body=[ast.ImportFrom(module="__future__",
+                    names=[ast.alias(name="annotations")], level=0), node], type_ignores=[])
+                namespace = {}
+                exec(compile(ast.fix_missing_locations(module), "voicebox-register-tools", "exec"), namespace)
+                namespace["register_tools"](Registry())
     for tool in ("speak", "transcribe", "list_captures", "list_profiles"):
-        assert tool in hay, (
+        assert "voicebox." + tool in registered, (
             f"MCP tool '{tool}' disappeared — update VOICE_MCP['voicebox']['tools'] "
             "in bridge/app.py")
 

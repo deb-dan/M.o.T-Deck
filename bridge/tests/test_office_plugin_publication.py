@@ -12,7 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize('failure', ['sdk', 'layout', 'guid', 'publish', 'none'])
+@pytest.mark.parametrize('failure', ['sdk', 'layout', 'guid', 'publish', 'crash', 'none'])
 def test_complete_candidate_required_before_installed_plugin_changes(tmp_path, failure):
     dest = tmp_path / 'installed'
     cache = tmp_path / 'cache'
@@ -46,32 +46,41 @@ def test_complete_candidate_required_before_installed_plugin_changes(tmp_path, f
         source = re.sub(key + r'="[a-f0-9]+"', key + '="' + hashlib.sha256(data).hexdigest() + '"', source)
     scripts = tmp_path / 'scripts'
     scripts.mkdir()
-    script = scripts / 'install.sh'
+    script = scripts / 'install_oo_ai_plugin.sh'
     script.write_text(source)
-    bin_dir = tmp_path / 'bin'
-    bin_dir.mkdir()
-    # Failure after one successful publication verifies restoration, not just validation.
-    mv = bin_dir / 'mv'
-    mv.write_text('''#!/bin/bash
-# Any change to served assets must happen while the installation receipt is absent.
-for item in ai v1 SOURCES.txt; do
-  if [[ "$1" == "$OOP_DEST/$item" || "$2" == "$OOP_DEST/$item" ]]; then
-    [[ ! -e "$OOP_DEST/INSTALLED" ]] || exit 99
-  fi
-done
-if [[ "$2" == "$OOP_DEST/INSTALLED" ]]; then
-  [[ -d "$OOP_DEST/ai" && -d "$OOP_DEST/v1" && -f "$OOP_DEST/SOURCES.txt" ]] || exit 98
-fi
-if [[ "$1" == */new/v1 && "${FAIL_PUBLISH:-}" == 1 ]]; then exit 1; fi
-exec /bin/mv "$@"
-''')
-    mv.chmod(0o755)
+    # Wrap the real publication helper, recording each move and injecting one
+    # ordinary failure. Candidate verification and recovery execute unchanged.
+    helper = scripts / 'oo_plugin_install.py'
+    helper.write_text("import importlib.util, os\nfrom pathlib import Path\n"
+        + "spec=importlib.util.spec_from_file_location('publisher', "
+        + repr(str(ROOT / 'scripts/oo_plugin_install.py')) + ")\n"
+        + "m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)\n"
+        + "original=m._move\n"
+        + "def move(source,destination):\n"
+        + "    dest=Path(os.environ['OOP_DEST'])\n"
+        + "    if source in [dest/x for x in m.ITEMS[:-1]] or destination in [dest/x for x in m.ITEMS[:-1]]:\n"
+        + "        assert not (dest/'INSTALLED').exists(), 'premature receipt'\n"
+        + "    if destination == dest/'INSTALLED':\n"
+        + "        assert all((dest/x).exists() for x in m.ITEMS[:-1]), 'incomplete publication'\n"
+        + "    if source.name=='v1' and source.parent.name=='new' and os.environ.get('FAIL_PUBLISH')=='1':\n"
+        + "        raise OSError('injected publication failure')\n"
+        + "    if source.name=='ai' and source.parent.name=='new' and os.environ.get('FAIL_PUBLISH')=='crash':\n"
+        + "        original(source,destination)\n"
+        + "        os.kill(os.getppid(),9);os.kill(os.getpid(),9)\n"
+        + "    return original(source,destination)\n"
+        + "m._move=move\nm.main()\n")
+    env = dict(os.environ, OOP_DEST=str(dest), OOP_ZIP_DIR=str(cache), OOP_OFFLINE='1',
+               FAIL_PUBLISH='1' if failure == 'publish' else ('crash' if failure == 'crash' else ''))
     result = subprocess.run(['/bin/bash', str(script), '--force'], cwd=tmp_path,
-        env=dict(os.environ, OOP_DEST=str(dest), OOP_ZIP_DIR=str(cache), OOP_OFFLINE='1',
-                 FAIL_PUBLISH='1' if failure == 'publish' else '', PATH=str(bin_dir) + ':' + os.environ['PATH']),
-        capture_output=True, text=True, timeout=20)
+        env=env, capture_output=True, text=True, timeout=20)
+    if failure == 'crash':
+        assert result.returncode == -9
+        assert list(dest.glob('.plugin-install.*'))
+        result = subprocess.run(['/bin/bash', str(script), '--force'], cwd=tmp_path,
+            env=dict(env, FAIL_PUBLISH=''), capture_output=True, text=True, timeout=20)
+        failure = 'none'
     assert (result.returncode == 0) == (failure == 'none'), result.stdout + result.stderr
-    after = {str(p.relative_to(dest)): p.read_bytes() for p in dest.rglob('*') if p.is_file()}
+    after = {str(p.relative_to(dest)): p.read_bytes() for p in dest.rglob('*') if p.is_file() and p.name != '.install.lock'}
     if failure != 'none':
         assert after == original, result.stdout + result.stderr
     else:

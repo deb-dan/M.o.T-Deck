@@ -118,6 +118,15 @@ fi
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 not found — it ships with macOS"; }
 need curl; need unzip; need shasum
 
+# Hold one kernel lock across downloads, validation and publication. The helper
+# execs this shell with an inherited descriptor, so SIGKILL cannot strand a lock
+# directory and a surviving installer child still excludes a replacement.
+PUBLISHER="$ROOT/scripts/oo_plugin_install.py"
+if [[ -z "${OOP_INSTALL_LOCK_FD:-}" ]]; then
+  exec python3 "$PUBLISHER" run "$DEST" "$ROOT/scripts/install_oo_ai_plugin.sh" "$@"
+fi
+python3 "$PUBLISHER" recover "$DEST"
+
 mkdir -p "$DEST" "$CACHE"
 
 PLUGIN_INDEX_REL="ai/index.html"
@@ -167,32 +176,18 @@ PZ="$CACHE/ai.plugin"
 fetch_verified "${RAW}/${PLUGIN_REL}" "$PZ" "$PLUGIN_SHA256" "${REPO}@${COMMIT:0:7} ${PLUGIN_REL}"
 
 # Prepare the entire plugin and SDK before touching the served installation.
-# A short-lived publication journal restores the previous files if a rename fails.
-LOCKDIR="$DEST/.install-lock"
-mkdir "$LOCKDIR" 2>/dev/null || die "another plugin install is active (${LOCKDIR})"
+# The durable publication journal also restores interrupted installs next time.
 STAGE=""
-PUBLISHING=0
-NEW_ITEMS=()
 cleanup_install() {
-  local result=$? item
+  local result=$?
   trap - EXIT
-  if [[ "$PUBLISHING" == 1 ]]; then
-    for item in "${NEW_ITEMS[@]}"; do rm -rf "$DEST/$item"; done
-    # Restore the stamp last, after every previous asset has been restored.
-    for item in ai v1 SOURCES.txt INSTALLED; do
-      if [[ -e "$STAGE/old/$item" || -L "$STAGE/old/$item" ]]; then
-        mv "$STAGE/old/$item" "$DEST/$item" || { warn "restore failed for $item; retained at $STAGE/old"; exit 1; }
-      fi
-    done
-  fi
-  [[ -z "$STAGE" ]] || rm -rf "$STAGE"
-  rmdir "$LOCKDIR" || true
+  [[ -z "$STAGE" ]] || python3 "$PUBLISHER" cleanup "$DEST" "$STAGE" || exit 1
   exit "$result"
 }
 trap cleanup_install EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-STAGE="$(mktemp -d "$DEST/.plugin-install.XXXXXX")"
+STAGE="$(python3 "$PUBLISHER" stage "$DEST")"
 CANDIDATE="$STAGE/new"
 AIDIR="$CANDIDATE/ai"
 mkdir -p "$AIDIR" "$STAGE/old"
@@ -312,17 +307,7 @@ files ${files}
 licence AGPL-3.0
 EOF
 # Invalidate the served receipt before replacing any files; publish its successor last.
-PUBLISHING=1
-for item in INSTALLED ai v1 SOURCES.txt; do
-  if [[ -e "$DEST/$item" || -L "$DEST/$item" ]]; then
-    mv "$DEST/$item" "$STAGE/old/$item"
-  fi
-done
-for item in ai v1 SOURCES.txt INSTALLED; do
-  mv "$CANDIDATE/$item" "$DEST/$item"
-  NEW_ITEMS+=("$item")
-done
-PUBLISHING=0
+python3 "$PUBLISHER" publish "$DEST" "$STAGE"
 
 say "done. The bridge picks this up with no restart (bridge/ooai.py reads the stamp"
 say "per request); ship.sh is still the way to push code changes."
