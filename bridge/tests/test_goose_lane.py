@@ -40,6 +40,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -321,12 +322,37 @@ def test_routes_live():
         return
     import warnings
     warnings.filterwarnings("ignore")
-    from bridge import app as A
-    from bridge.routers import goose as R
+    from bridge.core import appctx
+    previous_root = appctx.ROOT
+    A = None
+    # A test child must never own the repository's Goose receipt. An overlapping
+    # gate imports the bridge too, and its real startup sweep would reap that child.
+    # Set the context BEFORE importing routers, then propagate through the facade
+    # for modules that an earlier test has already imported. Keep PANEL on source.
+    with tempfile.TemporaryDirectory(prefix="motdeck-goose-journey-") as directory:
+        runtime = Path(directory)
+        (runtime / "motdeck.yaml").write_text(
+            "bridge:\n  port: 8700\nrunner:\n  port: 1\n"
+            "  endpoint: http://127.0.0.1:1/v1\ncomponents: {}\n")
+        try:
+            appctx.ROOT = runtime
+            from bridge import app as A
+            from bridge.routers import goose as R
+            A.ROOT = runtime
+            with TestClient(A.app) as client:
+                _routes_live(client, R, runtime)
+        finally:
+            G.kill_current()
+            if A is not None:
+                A.ROOT = previous_root
+            else:
+                appctx.ROOT = previous_root
+
+
+def _routes_live(client, R, runtime):
 
     ok(R._goose is not None, f"the router imported pty_goose ({R._GOOSE_ERR})")
     G.kill_current()
-    client = TestClient(A.app)
 
     # ── journey: open the tab with nothing configured ──
     r = client.get("/api/goose/status")
@@ -377,7 +403,7 @@ def test_routes_live():
         return (["/bin/cat"], {"PATH": "/bin:/usr/bin", "TERM": "xterm-256color"},
                 "/tmp", "")
     R.goose_spawn_spec = fake_spec
-    pidfile = Path(G.pidfile_path(ROOT))
+    pidfile = Path(G.pidfile_path(runtime))
     try:
         # ── journey: THE ORIGIN GATE. A cross-origin handshake is closed 4403 and must
         #    not spawn anything — proved by the spec never being called.
