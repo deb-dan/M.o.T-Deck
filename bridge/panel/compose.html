@@ -930,7 +930,7 @@ function titleOf(t) {
   if (!t) return '';
   if (t.title) return t.title;
   const p = String(t.prompt || '').split('\n').map(s => s.trim()).find(Boolean) || '';
-  const head = p.replace(/^[^A-Za-z0-9(«"']+/, '').split(/\s+/).filter(Boolean).slice(0, 6);
+  const head = p.replace(/^[^\p{L}\p{N}(«"']+/u, '').split(/\s+/).filter(Boolean).slice(0, 6);
   if (head.length) return head.join(' ') + (p.split(/\s+/).length > 6 ? '…' : '');
   return t.name || '';
 }
@@ -1165,22 +1165,39 @@ async function api(path, opts) {
   const r = await fetch(path, Object.assign({ headers:{'Content-Type':'application/json'} }, opts || {}));
   let j = null;
   try { j = await r.json(); } catch (e) { j = { ok:false, error:'the bridge returned no JSON (HTTP ' + r.status + ')' }; }
-  if (!r.ok && j && j.ok === undefined) j.ok = false;
+  if (!j || typeof j !== 'object' || Array.isArray(j))
+    j = { ok:false, error:'the bridge returned an invalid response (HTTP ' + r.status + ')' };
+  if (!r.ok) j.ok = false;
   return j;
 }
-async function load() {
-  try {
-    const st = await api('/api/music/status');
-    if (st && st.ok) { S.st = st; S.err = null; S.submitUnknown = false; }
-    else S.err = (st && st.error) || 'the music lane did not answer';
-    const lb = await api('/api/music/library');
-    if (lb && lb.ok) S.lib = lb.tracks || [];
-  } catch (e) {
-    /* The bridge itself is unreachable. Say so, and do NOT blank the page: what was
-       last rendered is still the truth about the last moment we could see. */
-    S.err = 'the bridge is not answering (' + e + ')';
-  }
-  render();
+let _loadPromise = null, _loadAgain = false;
+function load() {
+  if (_loadPromise) { _loadAgain = true; return _loadPromise; }
+  _loadPromise = (async () => {
+    do {
+      _loadAgain = false;
+      try {
+        const st = await api('/api/music/status');
+        if (!st.ok) throw new Error(st.error || 'the music lane did not answer');
+        const lb = await api('/api/music/library');
+        if (!lb.ok) throw new Error(lb.error || 'the library could not be read');
+        if (S.st && S.st.dir !== st.dir) {
+          S.wave = {}; S.sel = null; S.detail = null;
+          if (_audio) {
+            _audio.pause(); _audio.removeAttribute('src'); _audio.load();
+            S.pos = 0; S.playing = false;
+          }
+        }
+        S.st = st; S.lib = lb.tracks || [];
+        S.err = null; S.submitUnknown = false;
+      } catch (e) {
+        // Keep the last complete library snapshot and make the failed read visible.
+        S.err = 'could not refresh: ' + String(e.message || e);
+      }
+      render();
+    } while (_loadAgain);
+  })().finally(() => { _loadPromise = null; });
+  return _loadPromise;
 }
 /* THE ANALYSIS FETCH — once per track, then it lives in S.wave. A failure is a
    REMEMBERED failure: retrying a broken decode on every 20-second poll would spend a
@@ -1188,10 +1205,12 @@ async function load() {
 async function wantWave(t) {
   if (!t || !t.name) return;
   if (S.wave[t.name]) return;
+  const cache = S.wave;
   S.wave[t.name] = { pending:true };
   let r = null;
   try { r = await api('/api/music/analysis/' + encodeURIComponent(t.name)); }
   catch (e) { r = { ok:false, error:'the bridge did not answer' }; }
+  if (S.wave !== cache) return; // the library changed while this file was decoded
   S.wave[t.name] = (r && r.ok && r.analysis)
     ? { analysis:r.analysis }
     : { error:(r && r.error) || 'this track could not be analysed' };
@@ -1250,6 +1269,7 @@ function tipBind(el, html, plain) {
   el.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault(); e.stopPropagation();
+      if (el.dataset && el.dataset.act) { el.click(); return; }
       if (_tipFor === el) tipHide(); else tipShow(el, el._tipHtml);
     }
   });
@@ -1358,7 +1378,7 @@ function renderStage() {
   /* FIRST RUN — nothing on disk. The invitation lives in the stage, Fooocus-grade:
      one heading, the sized Get buttons, one line. The standing Engines section the
      Music view opens with does not exist here; it is the sheet. */
-  if (!installed().length && !installing()) {
+  if (!tracks().length && !installed().length && !installing()) {
     body.className = 'centred';
     body.innerHTML =
       '<div id="stage-invite">' +
@@ -1377,7 +1397,7 @@ function renderStage() {
 
   /* INSTALLING WITH NOTHING ELSE ON DISK — the stage says so, or the empty-library
      line below would read as "nothing is happening" while several GB are landing. */
-  if (!installed().length) {
+  if (!tracks().length && !installed().length) {
     const busy = engines().filter(x => x.installing).map(x => x.engine).join(', ');
     body.className = 'centred';
     body.innerHTML = '<p class="say"><b>Installing ' + esc(busy) + '.</b> Several GB — '
@@ -1592,6 +1612,8 @@ function renderQueueBlock() {
   const j = job(), live = running();
   const v = live ? jobVerdict(j) : null;
   $('qstate').textContent = live ? 'rendering' : installing() ? 'installing' : 'idle';
+  const queue = $('queuebody');
+  if (live && queue.querySelector && queue.querySelector('.arm')) return;
   $('queuebody').innerHTML =
     '<div class="kv"><span>State</span><b>' +
       esc(live ? 'rendering' : 'idle') + '</b></div>' +
@@ -1655,7 +1677,9 @@ function renderLibraryBlock() {
   const named = list.filter(t => t.title).length;
   const longest = list.reduce((a, t) => Math.max(a, Number(t.seconds) || 0), 0);
   const walls = list.map(t => Number(t.wall)).filter(v => v > 0).sort((a, b) => a - b);
-  const median = walls.length ? walls[Math.floor(walls.length / 2)] : null;
+  const median = walls.length
+    ? (walls[Math.floor((walls.length - 1) / 2)] + walls[Math.floor(walls.length / 2)]) / 2
+    : null;
   $('libbody').innerHTML =
     '<div class="kv"><span>Tracks</span><b class="num">' + list.length + '</b></div>' +
     '<div class="kv"><span>Named</span><b class="num">' + named + '</b></div>' +
@@ -1713,6 +1737,7 @@ function renderComposer() {
   const inst = installed();
   const fmts = (((S.st || {}).formats) || {})[S.form.engine] || [];
   const defFmt = (((S.st || {}).format_default) || {})[S.form.engine] || '';
+  if (fmts.length && S.form.format && !fmts.includes(S.form.format)) S.form.format = '';
   /* ⚠️ THE DOT MEANS "SOMETHING UNDER HERE DIFFERS FROM THE DEFAULT", so it is measured
      against THE ENGINE'S OWN DEFAULTS — not against "the field is non-empty". Walked
      live: after a run the write-back puts the steps that were actually used into the
@@ -1751,7 +1776,10 @@ function renderComposer() {
   const lv = lengthVerdict(secs);
   const mn = (S.st || {}).seconds_min || 10, mx = (S.st || {}).seconds_max || 300;
   const last = tracks()[0] || null;
-  $('sbody').innerHTML =
+  const settings = $('sbody'), active = document.activeElement;
+  const editingSettings = active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || '')
+    && settings.contains && settings.contains(active);
+  if (!editingSettings) settings.innerHTML =
     '<div class="sgroup"><span class="caps">Engine</span>' +
       (inst.length
         ? '<div class="seg" role="group">' + inst.map(x =>
@@ -2154,7 +2182,8 @@ function applyLayout() {
   CONTAINERS.forEach(id => {
     const c = $(id);
     if (!c || !c.appendChild) return;
-    (L[id] || []).forEach(key => {
+    (Array.isArray(L[id]) ? L[id] : []).forEach(key => {
+      if (!DEFAULT_BLOCKS.includes(key)) return;
       const el = document.querySelector && document.querySelector('[data-block="' + key + '"]');
       if (el) c.appendChild(el);        // moving is idempotent; unknown keys are skipped
     });
@@ -2384,6 +2413,7 @@ function blurCommitted() {
 }
 
 async function startRender(confirm) {
+  if (S.busy || running()) return;
   readForm();
   const e = current();
   if (!e) { toast('There is no engine on disk yet.', true); return; }
@@ -2454,7 +2484,7 @@ document.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-act]');
   if (!b) return;
   const act = b.dataset.act;
-
+  try {
   if (act === 'engines')      { readForm(); S.sheet = 'engines'; render(); }
   else if (act === 'presets') { readForm(); S.sheet = 'presets'; render(); }
   else if (act === 'close-sheet') { S.sheet = null; S.detail = null; render(); }
@@ -2632,6 +2662,11 @@ document.addEventListener('click', async (e) => {
   else if (act === 'dismiss-warn') { S.warn = ''; render(); }
   else if (act === 'go')           { await startRender(false); }
   else if (act === 'go-anyway')    { await startRender(true); }
+  } catch (error) {
+    toast(String(error.message || error), true);
+  } finally {
+    if (act !== 'go' && act !== 'go-anyway') b.disabled = false;
+  }
 });
 
 applyLayout();

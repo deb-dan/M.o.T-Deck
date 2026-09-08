@@ -125,7 +125,8 @@ def oo_asset(rel: str, request: Request) -> Response:
         # of its guesses was "outside the bundle" is free reconnaissance.
         return JSONResponse({"ok": False, "error": reason}, status_code=404,
                             headers=_oo_headers())
-    headers = _oo_headers({"Cache-Control": _oo.cache_control_for(rel)})
+    headers = _oo_headers({"Cache-Control": _oo.cache_control_for(rel),
+                           "Vary": "Accept-Encoding"})
     media = _oo.media_type_for(target)
     # A Range request must never be answered with the .br sibling: FileResponse would
     # slice the COMPRESSED bytes and still claim Content-Encoding: br, which is a
@@ -133,10 +134,12 @@ def oo_asset(rel: str, request: Request) -> Response:
     br = ("" if request.headers.get("range")
           else _oo.brotli_sibling(target, request.headers.get("accept-encoding", "")))
     if br:
+        # Resolve the sibling through the same bundle boundary as the plain asset.
+        br, _ = _oo.bundle_target(ROOT, rel.lstrip('/') + '.br')
+    if br:
         # The `.br` sibling shipped inside the zip. Content-Type stays that of the
         # UNCOMPRESSED file — brotli is a transfer encoding, not a format.
         headers["Content-Encoding"] = "br"
-        headers["Vary"] = "Accept-Encoding"
         return FileResponse(br, media_type=media, headers=headers)
     return FileResponse(target, media_type=media, headers=headers)
 

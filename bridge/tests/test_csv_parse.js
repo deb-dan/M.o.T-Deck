@@ -1,59 +1,10 @@
-// ARTIFACT COVERAGE V2 unit test — pure CSV machinery used by renderArtCsv()
-// (bridge/panel/index.html): parseCsv / csvDelim / csvColNumeric / csvSortRows.
-// Mirrors the panel implementations (established test pattern). Offline, no deps.
-// Run: node bridge/tests/test_csv_parse.js
-
-// --- mirror of parseCsv() ---
-function parseCsv(text, delim){
-  delim = delim || ',';
-  const s = String(text == null ? '' : text);
-  const rows = []; let row = [], field = '', inQ = false;
-  for (let i = 0; i < s.length; i++){
-    const ch = s[i];
-    if (inQ){
-      if (ch === '"'){ if (s[i+1] === '"'){ field += '"'; i++; } else inQ = false; }
-      else field += ch;
-    } else if (ch === '"' && field === ''){ inQ = true; }
-    else if (ch === delim){ row.push(field); field = ''; }
-    else if (ch === '\n'){ row.push(field); rows.push(row); row = []; field = ''; }
-    else if (ch === '\r'){ if (s[i+1] !== '\n'){ row.push(field); rows.push(row); row = []; field = ''; } }
-    else field += ch;
-  }
-  if (field !== '' || row.length){ row.push(field); rows.push(row); }
-  return rows;
-}
-// --- mirror of csvDelim() ---
-function csvDelim(text){
-  const first = String(text == null ? '' : text).split(/\r?\n/, 1)[0] || '';
-  const tabs = (first.match(/\t/g) || []).length, commas = (first.match(/,/g) || []).length;
-  return (tabs > 0 && tabs >= commas) ? '\t' : ',';
-}
-// --- mirror of csvColNumeric() ---
-function csvColNumeric(rows, ci){
-  let any = false;
-  for (const r of rows){
-    const v = (r[ci] == null ? '' : String(r[ci])).trim();
-    if (v === '') continue;
-    if (!isFinite(Number(v))) return false;
-    any = true;
-  }
-  return any;
-}
-// --- mirror of csvSortRows() ---
-function csvSortRows(rows, ci, dir, numeric){
-  const s = rows.slice();
-  s.sort(function(a, b){
-    const av = (a[ci] == null ? '' : String(a[ci])), bv = (b[ci] == null ? '' : String(b[ci]));
-    let c;
-    if (numeric){
-      const an = av.trim() === '' ? -Infinity : Number(av);
-      const bn = bv.trim() === '' ? -Infinity : Number(bv);
-      c = an < bn ? -1 : an > bn ? 1 : 0;
-    } else c = av.localeCompare(bv);
-    return dir === 'desc' ? -c : c;
-  });
-  return s;
-}
+// Execute the shipped helpers; the expectations below are independent fixtures.
+const fs = require('node:fs'), path = require('node:path');
+const {extractFunction} = require('./_panel_source');
+const source = fs.readFileSync(path.join(__dirname, '../panel/index.html'), 'utf8');
+const names = ['parseCsv', 'csvDelim', 'csvColNumeric', 'csvSortRows'];
+const {parseCsv,csvDelim,csvColNumeric,csvSortRows} = new Function(names.map(n => extractFunction(source, n)).join('\n')
+  + '; return {' + names.join(',') + '};')();
 
 let pass = 0, fail = 0;
 function eq(name, got, want){
@@ -80,6 +31,11 @@ eq('delim comma', csvDelim('a,b\n1,2'), ',');
 eq('delim tab', csvDelim('a\tb\n1\t2'), '\t');
 eq('delim tab-dominated', csvDelim('a\tb,c\td\n'), '\t');
 eq('delim comma-dominated over tab', csvDelim('a,b,c\td\n'), ',');
+
+eq('UTF-8 BOM before quoted field is not cell data', parseCsv('\uFEFF"name, label",amount\nX,1'), [['name, label','amount'],['X','1']]);
+eq('tabs inside a quoted CSV field are not separators', csvDelim('"a\tb\tc",d\n1,2'), ',');
+eq('commas inside a quoted TSV field are not separators', csvDelim('"a,b,c"\td\n1\t2'), '\t');
+eq('quoted multiline first record uses its actual separators', csvDelim('"a\nb,c"\td\n1\t2'), '\t');
 
 // ---- numeric detection ----
 const data = [['Bolt','340'],['Acme','1200'],['Quote','905'],['Delta','77'],['Empty','']];

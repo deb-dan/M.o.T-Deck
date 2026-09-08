@@ -23,6 +23,9 @@ run scripts/install_llamacpp.sh have nothing to check.
 Run: pytest bridge/contract_tests/
 """
 import subprocess
+from functools import lru_cache
+
+import pytest
 from pathlib import Path
 
 import yaml
@@ -35,6 +38,7 @@ def _present() -> bool:
     return BIN.is_file()
 
 
+@lru_cache(maxsize=1)
 def _help():
     """--help text, or None when it cannot be obtained — the binary is absent, not
     executable, or (in the Linux build sandbox) is a Mach-O we cannot exec even
@@ -88,7 +92,7 @@ def test_llama_tts_ships_with_the_pinned_build():
 def test_mmproj_flag_present():
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert "--mmproj" in h, (
         "llama-tts no longer advertises --mmproj — bridge/voice.py passes the "
         "projector as `-mm <file>`; re-run Phase-0 recon before bumping the pin")
@@ -97,7 +101,7 @@ def test_mmproj_flag_present():
 def test_output_flag_present():
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert ("--output" in h) or ("-o," in h) or ("-o " in h), (
         "llama-tts no longer advertises an output-file flag — bridge/voice.py writes "
         "the wav via `-o <path>` and checks that exact path for non-emptiness")
@@ -106,7 +110,7 @@ def test_output_flag_present():
 def test_tts_lang_flag_present():
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert "--tts-lang" in h, (
         "llama-tts dropped --tts-lang — bridge/voice.py adds it for registry entries "
         "carrying a `lang` field")
@@ -117,7 +121,7 @@ def test_vocoder_flag_is_absent():
     changed shape again and tts_argv's `-m/-mm` pair is no longer the right call."""
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert "--vocoder-model" not in h, (
         "llama-tts advertises --vocoder-model again — the OuteTTS+vocoder shape is "
         "back and bridge/voice.py's `-m backbone -mm mmproj` argv needs re-recon")
@@ -127,7 +131,7 @@ def test_no_voice_flag():
     """Pins the honest limit surfaced to Debi: voice PICKING is MLX-only."""
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert "--voice " not in h and "--voice\n" not in h, (
         "llama-tts now has a --voice flag — the panel's 'voice selection is MLX-only' "
         "limitation can be lifted (and tts_argv should pass it)")

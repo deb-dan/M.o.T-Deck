@@ -1974,6 +1974,8 @@ def _run(argv, cwd=None, env_extra=None, timeout=MUSIC_TIMEOUT_S, log_path=None)
     spawns Metal work and acestep's binaries fork; terminating only the direct child
     would leave the GPU busy while the panel said "cancelled".
     """
+    if job_cancel_requested():
+        raise MusicCancelled("cancelled")
     env = dict(os.environ)
     for k, v in (env_extra or {}).items():
         env[k] = (v + os.pathsep + env[k]) if (k == "PYTHONPATH" and env.get(k)) else v
@@ -1997,6 +1999,8 @@ def _run(argv, cwd=None, env_extra=None, timeout=MUSIC_TIMEOUT_S, log_path=None)
     _register_proc(proc)
     piped = ""
     try:
+        if job_cancel_requested():
+            kill_process_group(proc)
         try:
             # communicate() is what WAITS, in both branches — with log_path the child
             # writes to the file and there is nothing to read, but the timeout still
@@ -2096,37 +2100,74 @@ def _transition(job: dict, state: str, **kw) -> dict:
         return dict(_JOB)
 
 
+def _publish_track(staged: str, directory: str, name: str) -> str:
+    """Expose complete audio atomically on the library's own filesystem."""
+    fd, temporary = tempfile.mkstemp(prefix=".motdeck-track-", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as output, open(staged, "rb") as source:
+            shutil.copyfileobj(source, output)
+            output.flush()
+            os.fsync(output.fileno())
+        stem, suffix = os.path.splitext(name)
+        with _JOB_LOCK:
+            if _JOB and _JOB.get("cancel"):
+                raise MusicCancelled("cancelled")
+            for n in range(10000):
+                base = stem if n == 0 else f"{stem} ({n})"
+                dest = os.path.join(directory, base + suffix)
+                # Converted siblings share metadata; a new song must own its stem.
+                if any(os.path.lexists(os.path.join(directory, base + ext))
+                       for ext in (*LIBRARY_EXTS, ".json")):
+                    continue
+                try:
+                    os.link(temporary, dest)
+                    return dest
+                except FileExistsError:
+                    continue
+        raise MusicError("could not find an unused track name")
+    finally:
+        os.unlink(temporary)
+
+
 def run_job(root, params, job, snapshot="", render=None, log=print,
             on_state=None):
     """The job body. Public so tests can drive the state machine without a thread."""
     started = time.time()
     state_job = _transition(job, "running")
     _job_event(on_state, "running", state_job)
-    tmp_root = os.path.join(str(root), "data", "tmp")
+    workdir = None
     try:
-        os.makedirs(tmp_root, exist_ok=True)
-    except OSError:
-        tmp_root = None
-    workdir = tempfile.mkdtemp(prefix="motdeck-music-", dir=tmp_root)
-    name = track_name(params["engine"], fmt=params.get("format", ""))
-    out_path = os.path.join(music_dir(root), name)
-    # The engines' own output goes to a per-job file so the panel can watch it move.
-    log_path = os.path.join(workdir, "engine.log")
-    _set(log=log_path)
-    try:
+        if job_cancel_requested():
+            raise MusicCancelled("cancelled")
+        tmp_root = os.path.join(str(root), "data", "tmp")
+        try:
+            os.makedirs(tmp_root, exist_ok=True)
+        except OSError:
+            tmp_root = None
+        workdir = tempfile.mkdtemp(prefix="motdeck-music-", dir=tmp_root)
+        name = track_name(params["engine"], fmt=params.get("format", ""))
+        out_path = os.path.join(workdir, name)
+        log_path = os.path.join(workdir, "engine.log")
+        _set(log=log_path)
         if render is not None:
             render(root, params, workdir, out_path)
         elif params["engine"] == "minimax":
             render_minimax(root, params, workdir, out_path, snapshot, log_path)
         else:
             render_acestep(root, params, workdir, out_path, log_path)
+        if job_cancel_requested():
+            raise MusicCancelled("cancelled")
+        if not render_ok(out_path):
+            raise MusicError("the engine finished but produced no audio")
+        out_path = _publish_track(out_path, music_dir(root), name)
+        name = os.path.basename(out_path)
         wall = round(time.time() - started, 1)
         meta = {"engine": params["engine"], "prompt": params["prompt"],
                 "lyrics": params.get("lyrics", ""), "seconds": params["seconds"],
                 "steps": params["steps"], "seed": params["seed"], "wall": wall,
                 "format": params.get("format", ""), "created": time.time()}
         try:
-            with open(sidecar_path(out_path), "w", encoding="utf-8") as fh:
+            with open(sidecar_path(out_path), "x", encoding="utf-8") as fh:
                 json.dump(meta, fh, indent=2)
         except OSError:
             pass                       # the audio is what matters
@@ -2140,8 +2181,6 @@ def run_job(root, params, job, snapshot="", render=None, log=print,
         # a track in the library and, worse, its sidecar would enter the ETA history as
         # a measurement of a render that never finished.
         wall = round(time.time() - started, 1)
-        _rm(out_path)
-        _rm(sidecar_path(out_path))
         state_job = _transition(job, "cancelled", wall=wall, error=None, out=None)
         _job_event(on_state, "cancelled", state_job)
         log(f"[music] render {params['engine']} cancelled after {wall}s "
@@ -2160,7 +2199,8 @@ def run_job(root, params, job, snapshot="", render=None, log=print,
         log(f"[music] render {params['engine']} FAILED (unexpected) after {wall}s: {e}",
             flush=True)
     finally:
-        shutil.rmtree(workdir, ignore_errors=True)
+        if workdir is not None:
+            shutil.rmtree(workdir, ignore_errors=True)
     return current_job()
 
 
@@ -2174,5 +2214,11 @@ def start_job(root, params, snapshot="", render=None, log=print, on_state=None):
                          kwargs={"snapshot": snapshot, "render": render, "log": log,
                                  "on_state": on_state},
                          daemon=True)
-    t.start()
+    try:
+        t.start()
+    except RuntimeError as exc:
+        message = f"could not start the render worker: {exc}"
+        state_job = _transition(job, "failed", error=message)
+        _job_event(on_state, "failed", state_job)
+        return None, message
     return job, None

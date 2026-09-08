@@ -427,12 +427,11 @@ check("completed download replaces a same-id local audio row with one download r
       reverse == [downloaded])
 shutil.rmtree(registry_root, ignore_errors=True)
 
-# This change is audio-only: chat-local collisions and HF-cache audio precedence retain
-# their existing rules (the HF collision is also exercised above against `collide`).
+# Chat rows also require distinct ids; HF-cache audio retains its precedence rule.
 chat_collision = sr.merge([{"id": "same-chat", "source": "download", "format": "gguf"}],
                           [], [], [{"id": "same-chat", "source": "local", "format": "gguf"}])
-check("audio identity handling leaves chat local merge behavior unchanged",
-      [m["id"] for m in chat_collision] == ["same-chat", "same-chat"])
+check("distinct chat rows cannot share an ambiguous registry id",
+      [m["id"] for m in chat_collision] == ["same-chat", "same-chat-local"])
 
 # ══ 6. THE INVARIANT — audio never reaches the chat `installed` list ════════════
 # Against the REAL /api/models handler with a temp ROOT (not a source read).

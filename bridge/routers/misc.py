@@ -99,11 +99,17 @@ async def artifact_save(req: Request) -> JSONResponse:
     """
     import os
     data = await req.json()
+    if not isinstance(data, dict):
+        return JSONResponse({"ok": False, "log": "expected an artifact object"}, status_code=400)
     content = data.get("content")
     if not isinstance(content, str):
         return JSONResponse({"ok": False, "log": "content must be a string"},
                             status_code=400)
-    if len(content.encode("utf-8", errors="ignore")) > _ARTIFACT_SAVE_MAX:
+    try:
+        encoded = content.encode("utf-8")
+    except UnicodeEncodeError:
+        return JSONResponse({"ok": False, "log": "content must be valid Unicode"}, status_code=400)
+    if len(encoded) > _ARTIFACT_SAVE_MAX:
         print("[artifact] reject save: content over the 5MB cap", flush=True)
         return JSONResponse({"ok": False, "log": "content exceeds the 5MB cap"},
                             status_code=413)
@@ -113,15 +119,27 @@ async def artifact_save(req: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "log": "invalid or non-whitelisted filename"},
                             status_code=400)
     save_dir = os.path.join(os.path.expanduser("~"), "Downloads", "motdeck-artifacts")
-    os.makedirs(save_dir, exist_ok=True)
     stem, ext = name.rsplit(".", 1)
-    path = os.path.join(save_dir, name)
-    n = 1
-    while os.path.exists(path) and n < 100:     # never clobber (⚠ PENDING FABLE QA: suffix policy)
-        path = os.path.join(save_dir, f"{stem} ({n}).{ext}")
-        n += 1
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
+    try:
+        os.makedirs(save_dir, exist_ok=True)
+        for n in range(100):
+            path = os.path.join(save_dir, name if n == 0 else f"{stem} ({n}).{ext}")
+            try:
+                # Exclusive creation also treats dangling links and concurrent
+                # exports as collisions, without ever opening an existing file.
+                f = open(path, "xb")
+            except FileExistsError:
+                continue
+            with f:
+                f.write(encoded)
+            break
+        else:
+            return JSONResponse({"ok": False, "log": "all export names are in use; choose another filename"},
+                                status_code=409)
+    except OSError as exc:
+        print(f"[artifact] save failed: {exc}", flush=True)
+        return JSONResponse({"ok": False, "log": "could not write the artifact to Downloads"},
+                            status_code=500)
     print(f"[artifact] saved {len(content)} chars → {path}", flush=True)
     return JSONResponse({"ok": True, "path": path})
 

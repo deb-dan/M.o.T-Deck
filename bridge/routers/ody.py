@@ -681,8 +681,10 @@ def _ody_live_vision_model() -> tuple:
         return ("", "")
 
 
-async def _ody_settings() -> dict:
-    """Odysseus's settings bag, or {} when it cannot be read. Never raises.
+async def _ody_settings() -> dict | None:
+    """Odysseus's settings bag, or None when it cannot be read. Never raises.
+
+    Unknown settings must never authorize an automatic write over a user's choice.
 
     ⚠️ EVERY READ THROUGH HERE REFRESHES THE SHIM'S SNAPSHOT (S33/F3). The vision
     shim cannot ask Odysseus anything while Odysseus's loop is blocked on the call
@@ -702,7 +704,7 @@ async def _ody_settings() -> dict:
             return s
     except Exception:                                            # noqa: BLE001
         pass
-    return {}
+    return None
 
 
 def _shim_note_settings(s) -> None:
@@ -744,6 +746,9 @@ async def ody_vision_autowire(settings=None) -> dict:
         live = _live_model_id(int(port)) if port else None
         cand = ody_vision_evidence(_registry_models(), live)
         s = settings if isinstance(settings, dict) else await _ody_settings()
+        if s is None:
+            out["reason"] = "Odysseus settings could not be read — vision setup left unchanged"
+            return out
         if cand:
             # The evidence gate is unchanged and still comes FIRST: no vision-capable
             # model loaded ⇒ we promise nothing and write nothing, shim or no shim.
@@ -855,6 +860,9 @@ async def ody_vision_prepare(fid: str, raw: bytes, mime: str, name: str) -> dict
     Odysseus's own honest marker is a worse outcome than this, not a fatal one."""
     out = {"source": "none", "model": "", "note": "", "wired": False}
     settings = await _ody_settings()
+    if settings is None:
+        out["note"] = "Odysseus vision settings could not be verified — it will handle the attachment itself"
+        return out
     # ⚠️ ADVERSARIAL FINDING (self-pass, v1.5.32 — the LIE-TO-USER class): with
     # `vision_enabled` false, chat_handler.py:203-215 never enters the attachment
     # branch AT ALL, so our stored description is read by nobody and the image

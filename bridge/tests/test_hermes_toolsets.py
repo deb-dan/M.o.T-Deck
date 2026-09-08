@@ -324,7 +324,8 @@ check("group ALSO renders when Odysseus is unreachable (it writes Hermes, not "
 check("snapshot is loaded by initCaps", "await loadHermesTools();" in PANEL)
 check("both preset chips exist",
       "hermesToolsPreset('minimal'" in PANEL and "hermesToolsPreset('all'" in PANEL)
-check("per-toolset switch is wired", "toggleHermesToolset('" in PANEL)
+check("per-toolset switch is wired with escaped arguments",
+      'onchange="toggleHermesToolset(${apiArg(t.name)}, this.checked, this)"' in PANEL)
 check("switches are DISABLED when they cannot work (Hermes down / focus mode)",
       "hermesToolsetLocked(" in PANEL and "${lock ? 'disabled' : ''}" in PANEL)
 check("the note tells the user when it applies",

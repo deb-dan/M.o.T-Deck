@@ -540,7 +540,7 @@ class PtySession:
             old, self._sub = self._sub, cb
             replay, eof = bytes(self._buf), self.eof
             timer, self._timer = self._timer, None
-        self.detached_at = None
+            self.detached_at = None
         if timer is not None:
             timer.cancel()
         if old is not None and old is not cb:
@@ -560,15 +560,17 @@ class PtySession:
             if self._sub is None or self._sub is not cb:
                 return False
             self._sub = None
-        if on_reap is not None:
-            self.on_reap = on_reap
-        self.grace_s = clamp_grace(self.grace_s if grace is None else grace)
-        self.detached_at = time.time()
-        if not self.alive():
-            return True                 # nothing to reap; the child is already gone
-        t = threading.Timer(self.grace_s, self._reap)
-        t.daemon = True                 # never hold the bridge open on a shutdown
-        with self._blk:
+            if on_reap is not None:
+                self.on_reap = on_reap
+            self.grace_s = clamp_grace(self.grace_s if grace is None else grace)
+            self.detached_at = time.time()
+            if not self.alive():
+                return True             # nothing to reap; the child is already gone
+            # Publish the timer in the same transition as releasing the subscriber.
+            # A reconnect can cancel it even before start(), and a callback already
+            # waiting for the lock must prove it still owns this grace window.
+            t = threading.Timer(self.grace_s, lambda: self._reap(t))
+            t.daemon = True             # never hold the bridge open on a shutdown
             self._timer = t
         t.start()
         return True
@@ -582,11 +584,12 @@ class PtySession:
             return 0.0
         return max(0.0, self.grace_s - (time.time() - at))
 
-    def _reap(self) -> None:
+    def _reap(self, timer) -> None:
         """The grace window expired. PROCESS-KILL RULE: this closes OUR OWN child
         handle — the one this object spawned — never a pid found by name or by port."""
         with self._blk:
-            if self._sub is not None or self._closed or self._reaping:
+            if (self._timer is not timer or self._sub is not None
+                    or self._closed or self._reaping):
                 return
             self._reaping = True
         self.close()
@@ -600,12 +603,12 @@ class PtySession:
     def close(self) -> str:
         """Kill the process GROUP, then drop the fd. Idempotent."""
         with self._blk:
+            if self._closed:
+                return "gone"
+            self._closed = True
             timer, self._timer = self._timer, None
         if timer is not None:
             timer.cancel()
-        if self._closed:
-            return "gone"
-        self._closed = True
         how = kill_process_group(self.proc)
         if self.master >= 0:
             try:

@@ -281,6 +281,8 @@
     el = document.createElement('link');
     el.rel = 'stylesheet'; el.id = LINK_ID; el.href = CSS_HREF;
     el.onload = function () {
+      if (document.getElementById(LINK_ID) !== el) return;
+      stamp();
       window.bx('design', want + ' loaded · ' + (why || ''));
       designKick('first-load');
     };
@@ -288,6 +290,8 @@
     // and an HONEST DOM: the attribute comes back off, so nothing claims a design that
     // is not there, and the boot trace says why.
     el.onerror = function () {
+      if (document.getElementById(LINK_ID) !== el) return;
+      el.remove(); // a later focus/design change can retry a failed stylesheet
       d.removeAttribute('data-design'); d.removeAttribute('data-dvariant');
       window.bx('design', 'asset failed; staying on Editorial');
     };
@@ -1575,6 +1579,7 @@ const el = id => document.getElementById(id);
 const BUILD = (document.querySelector('meta[name="motdeck-build"]') || {}).content || '';
 
 let files = [], current = null, dirty = false, busy = false, armed = null;
+let documentGen = 0, snapshotRequest = 0;
 // WHEN the armed delete was armed. It is a timestamp and NOT a timer — see armDelete().
 let armedAt = 0;
 
@@ -1629,8 +1634,10 @@ function busyOn(what, ms) {
   if (busyTimer) { clearTimeout(busyTimer); busyTimer = 0; }
   busyTimer = setTimeout(() => busyWatchdog(gen), Math.max(1000, Number(ms) || BUSY_MAX_MS));
   bx('busy-on', busyWhat);
+  return gen;
 }
-function busyOff() {
+function busyOff(owner) {
+  if (owner !== undefined && owner !== busyGen) return;
   if (busyTimer) { clearTimeout(busyTimer); busyTimer = 0; }
   if (busy) bx('busy-off', busyWhat + ' ' + (Date.now() - busyAt) + 'ms');
   busy = false; busyWhat = ''; busyAt = 0;
@@ -2399,10 +2406,16 @@ function cellStyle(rc) {
 const HIST_MAX = 50;                        // entries; the oldest is dropped
 const HIST_MAX_BYTES = 4 * 1024 * 1024;     // one entry; was the AI panel's own ceiling
 let histBack = [], histFwd = [];
+let histSaved = null;
 
 // A clone of the document AS IT IS NOW, labelled with the gesture that is about to
 // change it. `null` when it could not be cloned — the caller must treat that as "no
 // history is possible", never as "nothing happened".
+function histSignature(value) {
+  // File timestamps and viewport dimensions are not editable workbook content.
+  return JSON.stringify(value, (key, item) =>
+    key === 'file_mtime' || key === 'rowCount' || key === 'columnCount' ? undefined : item);
+}
 function histEntry(label) {
   const t = (() => { try { return JSON.stringify(snap); } catch (e) { return null; } })();
   if (!t || t.length > HIST_MAX_BYTES) return null;
@@ -2439,7 +2452,7 @@ function histClear(why) {
   histPaint();
 }
 function histCan(dir) {
-  if (!current || busy || mode !== 'grid') return false;
+  if (!current || busy || mode !== 'grid' || !t1ok()) return false;
   return (dir === 'redo' ? histFwd : histBack).length > 0;
 }
 function histTop(dir) {
@@ -2453,7 +2466,8 @@ function histRestore(e) {
   snap = e.snap;
   const ids = sheetIds(snap);
   activeSid = (e.sid && snap.sheets && snap.sheets[e.sid]) ? e.sid : (ids[0] || null);
-  dirty = e.dirty;
+  dirty = histSaved === null ? e.dirty : histSignature(snap) !== histSaved;
+  lastRC = null; aiSel = null;
   viewRows = 0; viewCols = 0;
   findClear();
   renderGrid();
@@ -2732,9 +2746,12 @@ function findScan(sh, q) {
   const hits = [];
   const needle = String(q == null ? '' : q).trim().toLowerCase();
   if (!sh || !needle) return hits;
-  const used = usedExtent(sh);
-  for (let r = 0; r < used.rows && hits.length < FIND_MAX; r++) {
-    for (let c = 0; c < used.cols; c++) {
+  const cells = sh.cellData || {};
+  const indices = obj => Object.keys(obj).map(Number)
+    .filter(n => Number.isInteger(n) && n >= 0).sort((a, b) => a - b);
+  for (const r of indices(cells)) {
+    if (hits.length >= FIND_MAX) break;
+    for (const c of indices(cells[r] || {})) {
       if (displayText(cellAt(sh, r, c)).toLowerCase().indexOf(needle) >= 0) {
         hits.push({ r: r, c: c });
         if (hits.length >= FIND_MAX) break;
@@ -2760,6 +2777,12 @@ function findGo(d) {
   if (!findHits.length) return;
   findAt = (findAt + d + findHits.length) % findHits.length;
   const h = findHits[findAt];
+  const requiredCols = Math.max(viewCols, Math.min(h.c + 1, TIER1_MAX_COLS));
+  if (h.c >= TIER1_MAX_COLS || (h.r + 1) * requiredCols > Math.max(TIER1_MAX_CELLS, viewRows * viewCols)) {
+    el('find-n').textContent = (findAt + 1) + ' of ' + findHits.length + ' · ' + colName(h.c) + (h.r + 1);
+    say('Found ' + colName(h.c) + (h.r + 1) + ' outside the drawn grid. Open the full editor to jump there without drawing the intervening cells.', 'dim');
+    return;
+  }
   // grow the render window until the match is inside it — a find that scrolls to
   // nothing because the row is not drawn yet is worse than no find at all
   let grew = false;
@@ -2805,16 +2828,24 @@ function findReplaceText(text, q, rep) {
   const needle = String(q == null ? '' : q);
   if (!needle) return { text: src, n: 0 };
   const rp = String(rep == null ? '' : rep);
-  const low = src.toLowerCase(), nl = needle.toLowerCase();
-  let out = '', i = 0, n = 0;
+  const nl = needle.toLowerCase(), starts = [], ends = [];
+  let low = '', pos = 0;
+  for (const ch of src) {
+    const folded = ch.toLowerCase();
+    for (let k = 0; k < folded.length; k++) { starts.push(pos); ends.push(pos + ch.length); }
+    low += folded; pos += ch.length;
+  }
+  let out = '', i = 0, n = 0, consumed = 0;
   for (;;) {
     const at = low.indexOf(nl, i);
     if (at < 0) break;
-    out += src.slice(i, at) + rp;
-    i = at + nl.length;                 // always advances: nl is non-empty
+    out += src.slice(consumed, starts[at]) + rp;
+    consumed = ends[at + nl.length - 1];
+    i = at + nl.length;
+    while (i < low.length && starts[i] < consumed) i++;                 // always advances: nl is non-empty
     n++;
   }
-  out += src.slice(i);
+  out += src.slice(consumed);
   return { text: out, n: n };
 }
 
@@ -2943,8 +2974,24 @@ function findReplaceAll() {
    "insert a row" has, and it shows up as a duplicated row rather than as an error.)
 
    ⚠️ THE SECOND OF THE TWO NEW WRITERS. It goes through putCell like everything else. */
-function gridRemap(sh, rows, cols, src) {
+function gridRemap(sh, rows, cols, src, forward) {
   if (!sh || !(rows > 0) || !(cols > 0) || typeof src !== 'function') return 0;
+  // Structural shifts can walk only the stored cells, including cells beyond the
+  // viewport. Capture every source before clearing so overlapping moves stay safe.
+  if (typeof forward === 'function') {
+    const held = [];
+    for (const rk of Object.keys(sh.cellData || {})) {
+      for (const ck of Object.keys(sh.cellData[rk] || {})) {
+        const r = Number(rk), c = Number(ck);
+        if (!Number.isInteger(r) || !Number.isInteger(c) || r < 0 || c < 0) continue;
+        held.push({r: r, c: c, cell: cellAt(sh, r, c), to: forward(r, c)});
+      }
+    }
+    held.forEach(v => putCell(sh, v.r, v.c, null));
+    let n = 0;
+    held.forEach(v => { if (v.to) { putCell(sh, v.to.r, v.to.c, v.cell); if (v.cell) n++; } });
+    return n;
+  }
   const held = [];
   for (let r = 0; r < rows; r++) {
     const row = [];
@@ -3042,6 +3089,19 @@ function sortOrder(sh, col, desc, rows) {
 }
 // The gesture. Refuses on merges, warns on formulas, one undo entry, and it says which
 // column it sorted by — because the column is the one thing the user did not click.
+function sortRemap(sh, order, rows, cols) {
+  const destination = new Map(order.map((source, target) => [source, target]));
+  gridRemap(sh, rows, cols, (r, c) => ({r: order[r], c: c}),
+    (r, c) => ({r: destination.has(r) ? destination.get(r) : r, c: c}));
+  if (sh.rowData && typeof sh.rowData === 'object') {
+    const next = {};
+    Object.keys(sh.rowData).forEach(key => {
+      const r = Number(key);
+      next[destination.has(r) ? destination.get(r) : key] = sh.rowData[key];
+    });
+    sh.rowData = next;
+  }
+}
 function sortGo(desc) {
   const sh = activeSheet(), rc = lastCellNow();
   if (!sh || !t1ok()) return;
@@ -3071,7 +3131,7 @@ function sortGo(desc) {
     return;
   }
   histPush('sorting by column ' + colName(rc.c) + (desc ? ' Z→A' : ' A→Z'));
-  gridRemap(sh, used.rows, used.cols, (r, c) => ({ r: order[r], c: c }));
+  sortRemap(sh, order, used.rows, used.cols);
   const fx = sheetFormulas(sh);
   dirty = true;
   viewRows = 0; viewCols = 0;
@@ -3129,7 +3189,9 @@ function rcMerges(list, axis, at, n, del) {
         const cut = Math.min(e, lastGone) - Math.max(s, at) + 1;
         copy[S] = Math.min(s, at);
         copy[E] = e - cut;
-        if (Number(copy[E]) <= Number(copy[S])) return;   // nothing left to merge
+        if (Number(copy[E]) < Number(copy[S])) return;
+        if (Number(copy.endRow) === Number(copy.startRow)
+            && Number(copy.endColumn) === Number(copy.startColumn)) return;
       }
     }
     out.push(copy);
@@ -3145,7 +3207,8 @@ function rcApply(sh, kind, axis, at, n) {
   const used = usedExtent(sh);
   const rows = axis === 'row' ? (del ? used.rows : used.rows + count) : used.rows;
   const cols = axis === 'col' ? (del ? used.cols : used.cols + count) : used.cols;
-  const capCols = Math.min(cols, TIER1_MAX_COLS);
+  // The viewport cap must never clip the stored workbook.
+  const capCols = cols;
   // The source for each destination. Everything before the line stays where it is;
   // everything at or after it moves by ±count. A read outside the sheet is `null`
   // through cellAt, which is exactly the "leave it empty" the inserted band wants and
@@ -3158,16 +3221,28 @@ function rcApply(sh, kind, axis, at, n) {
   const src = axis === 'row'
     ? (r, c) => { const s = shift(r); return s < 0 ? null : { r: s, c: c }; }
     : (r, c) => { const s = shift(c); return s < 0 ? null : { r: r, c: s }; };
-  const wrote = gridRemap(sh, Math.max(rows, 1), Math.max(capCols, 1), src);
+  const move = i => i < at ? i : (del ? (i < at + count ? -1 : i - count) : i + count);
+  const forward = (r, c) => {
+    const dest = move(axis === 'row' ? r : c);
+    return dest < 0 ? null : (axis === 'row' ? {r: dest, c: c} : {r: r, c: dest});
+  };
+  const wrote = gridRemap(sh, Math.max(rows, 1), Math.max(capCols, 1), src, forward);
+  const dims = axis === 'row' ? 'rowData' : 'columnData';
+  if (sh[dims] && typeof sh[dims] === 'object') {
+    const next = {};
+    Object.keys(sh[dims]).forEach(key => {
+      const dest = move(Number(key));
+      if (Number.isInteger(dest) && dest >= 0) next[dest] = sh[dims][key];
+    });
+    sh[dims] = next;
+  }
   sh.mergeData = rcMerges(sh.mergeData, axis, at, count, del);
   if (axis === 'row') {
     const rc = Number(sh.rowCount) || 0;
     sh.rowCount = Math.max(1, del ? Math.max(rc - count, used.rows - count) : rc + count);
   } else {
     const cc = Number(sh.columnCount) || 0;
-    sh.columnCount = Math.min(TIER1_MAX_COLS,
-                              Math.max(1, del ? Math.max(cc - count, used.cols - count)
-                                              : cc + count));
+    sh.columnCount = Math.max(1, del ? Math.max(cc - count, used.cols - count) : cc + count);
   }
   return { kind: kind, axis: axis, at: at, n: count, cells: wrote,
            clipped: capCols < cols,
@@ -3195,9 +3270,11 @@ function rcGo(kind, axis) {
   // message is worth more than a warning dialog nobody reads.
   let lost = 0;
   if (kind === 'delete') {
-    for (let r = 0; r < used.rows; r++) {
-      for (let c = 0; c < used.cols; c++) {
-        if (axis === 'row' ? r !== at : c !== at) continue;
+    const cells = sh.cellData || {};
+    for (const r of Object.keys(cells)) {
+      if (axis === 'row' && Number(r) !== at) continue;
+      for (const c of Object.keys(cells[r] || {})) {
+        if (axis === 'col' && Number(c) !== at) continue;
         if (displayText(cellAt(sh, r, c)) !== '') lost++;
       }
     }
@@ -3473,25 +3550,27 @@ async function helpAbout() {
 // left LOffice altogether. Home now means LOffice's OWN start screen: the document is
 // closed and #empty — which IS the start screen — comes forward. Leaving the app is a
 // separate row, at the bottom, labelled "Back to MOT Deck ↗".
-let startArmed = false;
+let startArmed = null;
 function goStart() {
   bx('home-start', current || 'no workbook');
   if (!current) { renderHome(); return; }
-  if (dirty && !startArmed) {
-    startArmed = true;
+  const generation = documentGen;
+  if (dirty && (!startArmed || startArmed.generation !== generation
+      || Date.now() - startArmed.at < DISCARD_MIN_MS)) {
+    const arm = startArmed = {generation, at: Date.now()};
     say('“' + current + '” has unsaved changes. Save it first, or choose LOffice home '
         + 'again to discard them.', null,
         { label: 'Save & go home', run: async () => {
-            await save();
-            if (dirty) return;                 // the save failed; its reason is on screen
-            startArmed = false;
+            if (generation !== documentGen) return;
+            if (await save() !== true || generation !== documentGen || dirty) return;
+            startArmed = null;
             mi_close();
           } });
-    setTimeout(() => { startArmed = false; }, 6000);
+    setTimeout(() => { if (startArmed === arm) startArmed = null; }, 6000);
     return;
   }
-  startArmed = false;
-  mi_close();                                  // closes the document → the start screen
+  startArmed = null;
+  mi_close();
 }
 
 // ══ THE START SCREEN ══════════════════════════════════════════════════════════
@@ -3545,6 +3624,7 @@ function renderHome() {
       row.appendChild(n); row.appendChild(m); row.appendChild(dl); row.appendChild(del);
       row.onclick = () => openDoc(f.name);
       row.onkeydown = ev => {
+        if (ev.target !== row || ev.isComposing) return;
         if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openDoc(f.name); return; }
         if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
         ev.preventDefault();
@@ -3712,9 +3792,10 @@ async function newFromTemplate(kind) {
   bx('template', kind);
   el('new-name').value = t.name;
   const made = await create(true);      // create() names it, opens it, and reports
-  if (!made) return;                    // …or has already said why not
+  if (!made || current !== made) return;                    // …or has already said why not
   // The ops, in the ONE grammar both write paths speak, so the editor route and the
   // tier-1 route put the same thing in the same cells.
+  const generation = documentGen;
   const ops = [];
   t.rows.forEach((row, r) => {
     const vals = row.map(x => (x === '' ? null : x));
@@ -3724,6 +3805,7 @@ async function newFromTemplate(kind) {
              set: { bl: 1 } });
   if (ooInstalled) {
     const up = await ooWaitReady(OO_WAIT_MS);
+    if (generation !== documentGen || current !== made) return;
     if (!up) {
       say('“' + current + '” was created but the full editor has not finished opening it, '
           + 'so the template rows were not written. The file is empty — delete it, or try '
@@ -4034,6 +4116,8 @@ function coPattern(head, dp, tail) {
   return head + (dp ? '.' + new Array(dp + 1).join('0') : '') + (tail || '');
 }
 function coNum(digits) {
+  const significant = String(digits).replace(/[^0-9]/g, '').replace(/^0+|0+$/g, '');
+  if (significant.length > 15) return null;
   const n = Number(String(digits).split(',').join(''));
   return isFinite(n) ? n : null;
 }
@@ -4068,8 +4152,8 @@ function coerceNumeric(text) {
     return { v: m[1] ? -f : f, n: coPattern('#,##0', coDp(m[2])), shape: 'thousands' };
   }
   if (CO_PLAIN.test(s) && !/^-?0\d/.test(s)) {
-    const n = Number(s);
-    if (isFinite(n)) return { v: n, n: null, shape: 'plain' };
+    const n = coNum(s);
+    if (n !== null) return { v: n, n: null, shape: 'plain' };
   }
   return null;
 }
@@ -4164,8 +4248,8 @@ function styleCss(td, cell) {
     if (s.bl) td.style.fontWeight = '600';
     if (s.it) td.style.fontStyle = 'italic';
     const dec = [];
-    if (s.ul && (s.ul === true || s.ul.s)) dec.push('underline');
-    if (s.st && (s.st === true || s.st.s)) dec.push('line-through');
+    if (s.ul && (s.ul === true || s.ul === 1 || s.ul.s)) dec.push('underline');
+    if (s.st && (s.st === true || s.st === 1 || s.st.s)) dec.push('line-through');
     if (dec.length) td.style.textDecoration = dec.join(' ');
     if (typeof s.ff === 'string' && s.ff) td.style.fontFamily = s.ff;
     if (typeof s.fs === 'number' && s.fs > 0) td.style.fontSize = s.fs + 'px';
@@ -4235,9 +4319,12 @@ function renderGrid() {
     const r0 = Number(m.startRow), c0 = Number(m.startColumn);
     const r1 = Number(m.endRow), c1 = Number(m.endColumn);
     if (!isFinite(r0) || !isFinite(c0) || !isFinite(r1) || !isFinite(c1)) return;
-    span[r0 + ':' + c0] = { rs: r1 - r0 + 1, cs: c1 - c0 + 1 };
-    for (let r = r0; r <= r1; r++) {
-      for (let c = c0; c <= c1; c++) {
+    if (![r0, c0, r1, c1].every(Number.isInteger) || r0 < 0 || c0 < 0
+        || r1 < r0 || c1 < c0 || r0 >= rows || c0 >= cols) return;
+    const lastRow = Math.min(r1, rows - 1), lastCol = Math.min(c1, cols - 1);
+    span[r0 + ':' + c0] = { rs: lastRow - r0 + 1, cs: lastCol - c0 + 1 };
+    for (let r = r0; r <= lastRow; r++) {
+      for (let c = c0; c <= lastCol; c++) {
         if (r !== r0 || c !== c0) cover[r + ':' + c] = 1;
       }
     }
@@ -4292,6 +4379,7 @@ function renderGrid() {
       td.setAttribute('spellcheck', 'false');
       td.dataset.r = String(r);
       td.dataset.c = String(c);
+      td._sheet = sh;
       paintCell(td, cellAt(sh, r, c));
       tr.appendChild(td);
       drawn++;
@@ -4349,7 +4437,9 @@ function renderGridBar(sh, plan) {
 
 function selectSheet(sid) {
   if (!snap || !snap.sheets || !snap.sheets[sid]) return;
+  commitFocused();
   activeSid = sid;
+  lastRC = null; aiSel = null; findClear();
   viewRows = 0; viewCols = 0;
   renderGrid();
 }
@@ -4386,7 +4476,7 @@ function commit(td) {
   if (!td || td.dataset.editing !== '1') return;
   td.dataset.editing = '';
   const sh = activeSheet();
-  if (!sh) return;
+  if (!sh || (td._sheet && td._sheet !== sh)) return;
   const r = parseInt(td.dataset.r, 10), c = parseInt(td.dataset.c, 10);
   const prev = cellAt(sh, r, c);
   const was = editText(prev);
@@ -4451,6 +4541,7 @@ el('gt').addEventListener('focusin', ev => {
 // next cell" from "the user is editing this text", and hijacking them would make the
 // text uneditable. This is a fallback grid, and predictable beats clever.
 el('gt').addEventListener('keydown', ev => {
+  if (ev.isComposing || ev.keyCode === 229) return;
   const td = tdOf(ev);
   if (!td) return;
   const r = parseInt(td.dataset.r, 10), c = parseInt(td.dataset.c, 10);
@@ -4789,7 +4880,7 @@ let ooColdMs = 0, ooSwapMs = 0;
 // Everything that shows or hides a surface reads THIS. Not `ooReady` directly, not
 // `mode`, not `ooInstalled` — one function, so "is the editor the editor right now?"
 // has exactly one answer and a new caller cannot invent a seventh version of it.
-function editorActive() { return !!(ooInstalled && ooReady && !!current); }
+function editorActive() { return !!(ooInstalled && ooReady && current && ooDoc === current); }
 // …and the ONE place it reaches the DOM.
 function ooPaintClass() {
   document.body.classList.toggle('ooedit', editorActive());
@@ -4816,6 +4907,7 @@ window.LOfficeHost = {
 // dirty flag, the heartbeat and the strip all come from.
 function ooEvent(ev) {
   const kind = String(ev.kind || '');
+  if (ev.doc && ev.doc !== current) return;
   if (kind === 'boot') {
     if (ev.step) rich('Full editor loading — ' + ev.step);
     return;
@@ -4854,13 +4946,14 @@ function ooEvent(ev) {
     // Same argument as 'ready': OUR write moved the mtime, and the mtime it moved TO
     // is what this page is now showing. Reporting it here rather than clearing it is
     // what stops our own save being read as somebody else's edit.
-    dirty = false;
+    dirty = !!ev.dirty;
     extSeen = Number(ev.mtime) || 0;
     paint();
     bx('oo-saved', ooDoc + ' bytes=' + (ev.bytes || '?')
        + (ev.backup ? ' bak=' + ev.backup : ''));
     say('Saved ' + (ooDoc || '') + ' — ' + Math.round((ev.bytes || 0) / 1024) + ' KB'
-        + bakNote(ev.backup), 'ok');
+        + bakNote(ev.backup)
+        + (dirty ? ' — newer edits are still unsaved.' : ''), 'ok');
     // The AI panel's context is the tier-1 snapshot, which the editor's own edits do
     // not touch. A save is the one moment the two are known to agree, so this is when
     // the snapshot is refreshed — see ooRefreshSnapshot for why it is not more often.
@@ -4889,10 +4982,12 @@ async function ooProbe() {
   if (ooInstalled !== null) return ooInstalled;
   try {
     const r = await fetch('/api/oo/status', { cache: 'no-store' });
-    ooStatus = await r.json();
+    const result = await r.json();
+    if (!r.ok || !result || typeof result.installed !== 'boolean') throw new Error('unreadable editor status');
+    ooStatus = result;
   } catch (e) { ooStatus = null; }
   if (!ooStatus) {
-    ooInstalled = false;
+    ooInstalled = null;
     bx('oo-status', 'unreachable');
     return false;
   }
@@ -4910,7 +5005,9 @@ async function ooProbe() {
 // beacons name which path ran and how long it took, so the claim is checkable.
 async function ooStart(name, why) {
   if (!name) return false;
+  const generation = documentGen;
   if (!(await ooProbe())) return false;
+  if (generation !== documentGen || current !== name) return false;
   if (ooFailed) return false;                 // it already failed fatally this session
   if (ooDoc === name && ooReady) return true; // already showing it
   ooBooting = true; ooT0 = Date.now();
@@ -4933,6 +5030,7 @@ async function ooStart(name, why) {
   // leaves this promise pending in a realm that is being replaced, and `ooBooting`
   // would stay true for ever — the editor stuck on "Full editor loading…".
   const r = await ooCall('open', () => ooChild.open(name));
+  if (generation !== documentGen || current !== name) return false;
   if (!r || !r.ok) {
     ooBooting = false;
     ooPaintClass(); paint();
@@ -4955,11 +5053,13 @@ async function ooSave(force) {
   // promise from the IFRAME's realm; re-point or reload that frame while it is pending
   // (ooStart's swap, an editor fatal) and it neither resolves nor rejects, ever. A
   // bare `await` there is how the page locks itself out of Delete.
-  busyOn('saving “' + (current || 'the workbook') + '”', BUSY_MAX_EDITOR_MS);
+  const generation = documentGen, name = current, child = ooChild;
+  const owner = busyOn('saving “' + (current || 'the workbook') + '”', BUSY_MAX_EDITOR_MS);
   paint();
   let r = null;
-  try { r = await ooCall('save', () => ooChild.save(!!force)); }
-  finally { busyOff(); paint(); }
+  try { r = await ooCall('save', () => child.save(!!force)); }
+  finally { busyOff(owner); paint(); }
+  if (generation !== documentGen || current !== name || ooChild !== child) return false;
   if (!r || !r.ok) {
     /* ⚠️ A TIMEOUT IS NOT A FAILURE, AND SAYING IT IS WOULD BE A LIE-TO-USER — the worst
        class. Found in the adversarial pass on the stuck-latch fix: giving up waiting
@@ -4977,13 +5077,17 @@ async function ooSave(force) {
           + 'you do).');
     // A 409 is answered INSIDE the editor frame (its own note strip already offers
     // "Overwrite it"), so this must not put a second, competing question on screen.
+    } else if (r && r.uncertain) {
+      say('The save outcome is unknown: ' + (r.error || 'the bridge did not confirm it')
+          + '. Keep the editor open and check the file before retrying.');
     } else if (r && r.status !== 409) {
       say('Not saved: ' + ((r && r.error) || 'the editor did not say why')
           + ' — the workbook on disk was not changed.');
     }
     return false;
   }
-  return true;                                   // the 'saved' event says the rest
+  // Save & open must keep this document visible when newer typing was not saved.
+  return !r.dirty && !r.stale;                    // the 'saved' event says the rest
 }
 
 // ══ DOWNLOAD AS PDF ══════════════════════════════════════════════════════════
@@ -5010,14 +5114,16 @@ async function ooDownloadPdf() {
         + 'again; Download still gives you the .xlsx itself.');
     return false;
   }
-  busyOn('making the PDF of “' + (current || 'the document') + '”', BUSY_MAX_EDITOR_MS);
+  const generation = documentGen, child = ooChild;
+  const owner = busyOn('making the PDF of “' + (current || 'the document') + '”', BUSY_MAX_EDITOR_MS);
   paint();
   say('Making a PDF of “' + current + '” as it would print…', 'dim');
   let r = null;
   // Same race, same reason as ooSave — and this one is the LONGER of the two: x2t
   // renders the print layout through wasm with the bundle's 91 fonts mounted.
-  try { r = await ooCall('downloadPdf', () => ooChild.downloadPdf()); }
-  finally { busyOff(); paint(); }
+  try { r = await ooCall('downloadPdf', () => child.downloadPdf()); }
+  finally { busyOff(owner); paint(); }
+  if (generation !== documentGen || child !== ooChild) return false;
   if (!r || !r.ok) {
     // Same rule as ooSave: "nothing was downloaded" is a CLAIM, and after a timeout it
     // is a claim nobody can make — the x2t render may finish and drop the file in
@@ -5046,10 +5152,12 @@ async function ooDownloadPdf() {
 // the rail, the AI conversation and the panel widths to re-read one file.
 async function ooReload(why) {
   if (!ooChild || typeof ooChild.reload !== 'function') return false;
+  const generation = documentGen, child = ooChild;
   bx('oo-reload', (ooDoc || '?') + ' why=' + (why || '?'));
   ooBooting = true; rich('Reloading the file in the editor…');
   ooPaintClass();
-  const r = await ooCall('reload', () => ooChild.reload());
+  const r = await ooCall('reload', () => child.reload());
+  if (generation !== documentGen || ooChild !== child) return false;
   if (!r || !r.ok) {
     ooBooting = false; rich(''); ooPaintClass(); paint();
     return false;
@@ -5071,14 +5179,16 @@ async function ooRefreshSnapshot() {
   // a correct refusal, but this function's callers treat `false` as "nothing changed"
   // and would otherwise beacon a failure on every external-change reload of a document.
   if (blobDoc || kindOf(current) !== 'sheet') return false;
-  const name = current;
+  const name = current, generation = documentGen, request = ++snapshotRequest;
   try {
     const r = await fetch('/api/office/open/' + encodeURIComponent(name),
                           { cache: 'no-store' });
     const j = await r.json();
-    if (!j.ok || name !== current) return false;
+    if (!r.ok || !j.ok || !j.snapshot || name !== current || generation !== documentGen
+        || request !== snapshotRequest) return false;
     snap = j.snapshot;
-    activeSid = sheetIds(snap)[0] || null;
+    activeSid = snap.sheets && snap.sheets[activeSid] ? activeSid : (sheetIds(snap)[0] || null);
+    histSaved = histSignature(snap);
     aiPaint(true);
     bx('oo-snap', name + ' sheets=' + sheetIds(snap).length);
     return true;
@@ -5219,6 +5329,7 @@ function ooRects(cells) {
    exponent ("1e5") and hex ("0x10"). Everything else is left alone. */
 function ooTextForce(s) {
   const t = String(s == null ? '' : s);
+  if (/^=|^(?:true|false)$/i.test(t)) return true;
   if (!/\d/.test(t)) return false;
   if (/^-?(?:\d+\.?\d*|\.\d+)[eE][-+]?\d+$/.test(t)) return true;   // 1e5
   if (/^0[xX][0-9a-fA-F]+$/.test(t)) return true;                   // 0x10
@@ -5288,46 +5399,22 @@ function ooEditorOps(ops, sh) {
       ooRects(asText).forEach(at => {
         out.push({ k: 'style', at: at, set: { n: { pattern: '@' } } });
       });
-      /* ⚠️⚠️ THE RANGE IS THE WHOLE RECTANGLE, NOT THE ANCHOR — AND THAT IS A LIE-TO-USER
-         FOUND IN THE 2026-08-28d ADVERSARIAL SELF-PASS, LIVE, IN A REAL EDITOR.
-
-         This used to emit `at: colName(o.c) + (o.r + 1)` — a 1×1 range — and hand it the
-         whole grid. MEASURED in the vendored bundle (v9.2.0.119+3 — and still true at +5: sdkjs/cell/sdk-all-min.js is a BYTE-IDENTICAL file between the two tags, verified 2026-08-28), side by side in one
-         call:
-             SetValue over 'D1'    with [[a,b],[c,d],[e,f]] → D1=a and NOTHING ELSE
-             SetValue over 'G1:H3' with the same array       → all six cells
-         ApiRange.SetValue writes an array ACROSS ITS OWN RANGE, so an anchor-only range
-         silently drops every value but the first — while `done.cells` counted every one of
-         them and the card stamped "6 written". Every multi-cell Quick-lane apply through
-         the editor has been doing that since the one-editor ruling landed, and ⌘S made it
-         permanent. It is the incident's exact shape: a true-looking number over a write
-         that did not happen.
-
-         THE GRID IS PADDED TO A RECTANGLE FIRST, deliberately: the op grammar allows
-         ragged rows (a short row means "nothing further along this one"), and handing a
-         ragged array to a rectangular range is a second thing to get wrong. `null` is what
-         the tier-1 writer means by "leave it", and it is what SetValue gets. */
-      /* ⚠️ AND `null` BECOMES THE EMPTY STRING ON THE WAY TO THE EDITOR. MEASURED in the
-         same live run, once the rectangle above made these cells reachable at all:
-             SetValue over 'F1:H1' with [[null, '', 'keep']]  →  F1 = "#N/A"
-         The op grammar's `null` MEANS "empty this cell" (office_ops.act_cell returns None
-         for both null and ''), and the editor's way of saying that is ''. Handing it null
-         wrote the #N/A ERROR VALUE into the cell instead — which is worse than the silence
-         it replaced, because an error value looks like a broken formula. It was
-         unreachable before the rectangle fix (only the anchor was ever written), so this
-         is the same defect surfacing, not a new one. */
-      const wide = values.reduce((m, row) => Math.max(m, (row || []).length), 0);
-      const blank = v => (v === null || v === undefined ? '' : v);
-      const rect = values.map(row => {
-        const r2 = (row || []).map(blank);
-        while (r2.length < wide) r2.push('');
-        return r2;
-      });
-      const span = colName(o.c) + (o.r + 1)
-        + (rect.length > 1 || wide > 1
-           ? ':' + colName(o.c + wide - 1) + (o.r + rect.length)
-           : '');
-      out.push({ k: 'set', at: span, values: rect });
+      // SetValue needs a complete rectangular range. Group adjacent rows of the
+      // same width: missing cells in a ragged proposal are outside the change,
+      // whereas an explicit null clears its cell. Padding would erase existing data.
+      for (let first = 0; first < values.length;) {
+        const wide = values[first].length;
+        let end = first + 1;
+        while (end < values.length && values[end].length === wide) end++;
+        if (wide) {
+          const rect = values.slice(first, end).map(row => row.map(v => v == null ? '' : v));
+          const span = colName(o.c) + (o.r + first + 1)
+            + (rect.length > 1 || wide > 1
+               ? ':' + colName(o.c + wide - 1) + (o.r + end) : '');
+          out.push({ k: 'set', at: span, values: rect });
+        }
+        first = end;
+      }
       Object.keys(byPattern).forEach(pat => {
         ooRects(byPattern[pat]).forEach(at => {
           out.push({ k: 'style', at: at, set: { n: { pattern: pat } } });
@@ -5366,7 +5453,7 @@ function ooApplyApi(plan) {
   // The sheet the plan is about, for the type inference inside ooEditorOps — which is
   // pure and therefore has to be HANDED it.
   const list = ooEditorOps(plan.ops, (snap && snap.sheets)
-    ? snap.sheets[actTargetSid(plan && plan.sheet)] : null);
+    ? snap.sheets[plan && plan.sheet ? actTargetSid(plan.sheet) : aiSheetId(snap)] : null);
   if (!list.length) {
     return { ok: false, error: 'nothing in that change has an equivalent in the '
                              + 'full editor' };
@@ -5386,47 +5473,50 @@ function ooApplyApi(plan) {
 // round-trips the workbook through LOffice's own .xlsx mapper, which does not carry
 // charts or images (Help → What round-trips), and the editor's ⌘Z does not cover it.
 async function ooApplyBridge(plan) {
-  const name = current;
+  const name = current, generation = documentGen;
   if (!name) return { ok: false, error: 'no workbook is open' };
-  if (dirty) {
-    const saved = await ooSave(false);
-    if (!saved) {
-      return { ok: false, error: 'the editor’s own unsaved changes could not be saved '
-                               + 'first, so nothing was changed' };
-    }
+  if (dirty && !await ooSave(false)) {
+    return { ok: false, error: 'the editor’s unsaved changes could not be saved first, so nothing was changed' };
   }
-  let sid = null;
+  if (current !== name || generation !== documentGen) return { ok: false, error: 'the open workbook changed' };
+  const owner = busyOn('applying the change to “' + name + '”');
+  const previous = snap, previousSid = activeSid;
+  let wrote = false, done = null;
   try {
-    const r = await fetch('/api/office/open/' + encodeURIComponent(name),
-                          { cache: 'no-store' });
-    const j = await r.json();
-    if (!j.ok) return { ok: false, error: j.error || 'could not read that workbook' };
-    snap = j.snapshot;
+    const response = await fetch('/api/office/open/' + encodeURIComponent(name), {cache: 'no-store'});
+    const opened = await response.json();
+    if (owner !== busyGen || current !== name || generation !== documentGen) return {ok: false, error: 'the open workbook changed'};
+    if (!response.ok || !opened.ok || !opened.snapshot) throw new Error(opened.error || 'could not read the workbook');
+    if (dirty) throw new Error('new edits arrived in the editor; save them before applying this change');
+    snap = opened.snapshot;
     activeSid = sheetIds(snap)[0] || null;
-    sid = actTargetSid(plan.sheet);
-  } catch (e) {
-    return { ok: false, error: 'could not read that workbook: ' + ((e && e.message) || e) };
-  }
-  const done = actRunOps(sid, plan.ops);
-  if (!done) return { ok: false, error: 'nothing could be written to that sheet' };
-  try {
-    const r = await fetch('/api/office/save', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name, snapshot: snap }),
+    const sid = actTargetSid(plan.sheet);
+    done = actRunOps(sid, plan.ops);
+    if (!done) throw new Error('nothing could be written to that sheet');
+    const saved = await fetch('/api/office/save', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, snapshot: snap, expect_mtime: opened.mtime || snap.file_mtime}),
     });
-    const j = await r.json();
-    if (!j.ok) return { ok: false, error: j.error || 'the bridge refused the save' };
+    const receipt = await saved.json();
+    if (!saved.ok || !receipt.ok) throw new Error(receipt.error || 'the bridge refused the save');
+    wrote = true;
+    let reloaded = false;
+    if (owner === busyGen && current === name && generation === documentGen && !dirty) {
+      reloaded = await ooReload('ai-apply');
+    }
     done.notes = (done.notes || []).concat([
-      'this change went through the FILE rather than through the editor (the editor '
-      + 'has no API for it), so it was saved straight away — the previous file is kept '
-      + 'as ' + (j.backup || 'a daily .bak') + ' — and the editor reloaded it. The '
-      + 'editor’s own ⌘Z does not undo this one, and the round-trip does not carry '
-      + 'charts or images (Help → What round-trips).']);
+      'This change was saved straight away through the file. The editor’s ⌘Z does not undo it; '
+      + 'the round-trip does not carry charts or images.'
+      + (receipt.backup ? ' Previous file: ' + receipt.backup + '.' : ''),
+    ]);
+    if (!reloaded) done.notes.push('The file was saved, but the editor was not reloaded. Any newer editor edits remain in place.');
+    return {ok: true, done: done, viaBridge: true, reloaded: reloaded};
   } catch (e) {
-    return { ok: false, error: 'the save failed: ' + ((e && e.message) || e) };
+    return {ok: false, error: 'The file change could not be confirmed: ' + ((e && e.message) || e)};
+  } finally {
+    if (!wrote && current === name && generation === documentGen) { snap = previous; activeSid = previousSid; }
+    busyOff(owner); paint();
   }
-  await ooReload('ai-apply');
-  return { ok: true, done: done, viaBridge: true };
 }
 
 // ══ THE STRIP'S "FULL EDITOR" BUTTON ═════════════════════════════════════════
@@ -5444,6 +5534,7 @@ async function upgrade() {
     say('Open a workbook first — the editor opens the file you are looking at.');
     return;
   }
+  ooInstalled = null; // An explicit retry must notice a newly installed editor.
   const ok = await ooProbe();
   if (!ok) {
     const st = ooStatus || {};
@@ -5552,11 +5643,14 @@ function renderFiles() {
   renderHome();
 }
 
+let filesRequest = 0;
 async function loadFiles() {
+  const request = ++filesRequest;
   try {
     const r = await fetch('/api/office/files', { cache: 'no-store' });
     const j = await r.json();
-    if (!j.ok) { bx('files-fail', j.error || 'not ok'); say(j.error || 'could not list spreadsheets');
+    if (request !== filesRequest) return false;
+    if (!r.ok || !j || !j.ok || !Array.isArray(j.files)) { bx('files-fail', (j && j.error) || 'not ok'); say((j && j.error) || 'could not list spreadsheets');
                  filesOk = false; return false; }
     files = j.files || [];
     filesOk = true; roundtripOk = j.roundtrip !== false;
@@ -5578,13 +5672,15 @@ async function loadFiles() {
     }
     renderFiles();
     return true;
-  } catch (e) { bx('files-fail', 'fetch threw: ' + e); say('the bridge did not answer: ' + e);
+  } catch (e) { if (request !== filesRequest) return false;
+                bx('files-fail', 'fetch threw: ' + e); say('the bridge did not answer: ' + e);
                 filesOk = false; return false; }
 }
 
 // One workbook is open at a time, in one tier at a time. This is the ONLY place that
 // decides which tier draws it, so the two can never both think they own the document.
 function showWorkbook(data, name) {
+  documentGen++;
   // Leaving a document for a spreadsheet: the blob state and its interstitial go with it.
   blobDoc = false;
   document.body.classList.remove('blobdoc');
@@ -5592,12 +5688,14 @@ function showWorkbook(data, name) {
   activeSid = sheetIds(snap)[0] || null;
   viewRows = 0; viewCols = 0;
   current = name; dirty = false;
+  histSaved = histSignature(snap);
+  lastRC = null; aiSel = null; findClear();
   // ⚠️ THE MTIME BASELINE BELONGS TO THE DOCUMENT TOO, and it is CLEARED rather than
   // guessed: `files` may hold a row read seconds ago, and a stale-old mtime would make
   // extCheck accuse the agent of editing a file the user merely opened. Zero means
   // "establish it from disk on the next check", which extPlan calls `baseline` and
   // which openDoc triggers immediately below rather than a beat later.
-  extSeen = 0;
+  extSeen = Number(data && data.file_mtime) || 0;
   // ⚠️ THE HISTORY BELONGS TO THE DOCUMENT AND DIES WITH IT. Keeping the stack across
   // an open would let ⌘Z restore a clone of ANOTHER workbook into this one — the exact
   // class of silent corruption this page refuses to make possible.
@@ -5650,21 +5748,25 @@ async function openDoc(name) {
   // place of a document. So the blob path is its own branch, three lines long, and it
   // hands the file straight to the editor that owns it.
   if (kindOf(name) !== 'sheet') { openBlob(name); return; }
-  busyOn('opening “' + name + '”'); say(''); paint();
+  const generation = documentGen;
+  const owner = busyOn('opening “' + name + '”'); say(''); paint();
   bx('open-start', name);
   try {
     const r = await fetch('/api/office/open/' + encodeURIComponent(name), { cache: 'no-store' });
     const j = await r.json();
-    if (!j.ok) { bx('open-fail', j.error || 'not ok'); say(j.error || 'could not open that spreadsheet'); return; }
+    if (owner !== busyGen || generation !== documentGen) return;
+    if (!r.ok || !j.ok || !j.snapshot) { bx('open-fail', j.error || 'not ok'); say(j.error || 'could not open that spreadsheet'); return; }
     showWorkbook(j.snapshot, name);
     aiPaint(true);          // a different workbook is a different context
     bx('open-ok', name + ' sheets=' + sheetIds(snap).length + ' mode=' + mode);
     const t = truncatedSheets(j.snapshot);
     if (t) say('This workbook is very large — ' + t + ' was only read up to the first '
-               + '200,000 cells. Saving would write back only what you can see, so this '
-               + 'copy is best treated as read-only.', 'dim');
-  } catch (e) { bx('open-fail', 'threw: ' + e); say('could not open that spreadsheet: ' + e); }
-  finally { busyOff(); renderFiles(); paint(); extCheck(); }
+               + '200,000 cells. The fallback grid cannot save a truncated copy. Use the full '
+               + 'editor to edit and save the complete workbook.', 'dim');
+    return true;
+  } catch (e) { if (owner !== busyGen || generation !== documentGen) return;
+    bx('open-fail', 'threw: ' + e); say('could not open that spreadsheet: ' + e); }
+  finally { busyOff(owner); renderFiles(); paint(); extCheck(); }
 }
 
 // ── OPEN A .docx / .pptx ─────────────────────────────────────────────────────
@@ -5674,6 +5776,7 @@ async function openDoc(name) {
 // inside the file. What does NOT happen is the tier-1 mount: there is no grid for a
 // document, so the centre gets the #blobwait sentence until the editor lands.
 function openBlob(name) {
+  documentGen++;
   if (ooInstalled === false) {
     say('“' + name + '” is a ' + nounOf(name) + ', and a ' + nounOf(name) + ' is edited '
         + 'only by the full editor — which is not installed on this Mac.\n\n'
@@ -5718,7 +5821,7 @@ function truncatedSheets(s) {
 // JavaScript dialogs from S12 onward, but keeping the warning beside the document makes
 // the consequence visible and avoids a modal interruption: first click warns, second
 // discards.
-let discardArmed = null, discardAt = 0;
+let discardArmed = null, discardAt = 0, discardGeneration = -1, discardToken = 0;
 // The same two-step arm, for the same reason, guarding the tier-2 navigation.
 let richArmed = null, richArmedAt = 0;
 // ⚠️ THE 400ms IS NOT A FLOURISH — WITHOUT IT A DOUBLE-CLICK DISCARDS YOUR WORK. A file
@@ -5729,10 +5832,11 @@ let richArmed = null, richArmedAt = 0;
 const DISCARD_MIN_MS = 400;
 function confirmDiscard(name) {
   if (!dirty) return true;
-  if (discardArmed === name && Date.now() - discardAt >= DISCARD_MIN_MS) {
+  if (discardArmed === name && discardGeneration === documentGen && Date.now() - discardAt >= DISCARD_MIN_MS) {
     discardArmed = null; return true;
   }
   discardArmed = name; discardAt = Date.now();
+  const generation = discardGeneration = documentGen, token = ++discardToken;
   /* ⚠️ CLICKING THE ROW OF THE WORKBOOK YOU ARE ALREADY IN IS A REVERT, AND IT SAYS SO
      (live finding C1). With QA-A.xlsx open and dirty, clicking ITS OWN rail row said
      '"QA-A.xlsx" has unsaved changes. Save it first, or click QA-A.xlsx again to discard
@@ -5743,8 +5847,11 @@ function confirmDiscard(name) {
     say('“' + name + '” is the workbook you have open, and it has unsaved changes. Click '
         + 'it again to DISCARD them and reload it from the last saved version on disk.',
         null,
-        { label: 'Save it instead', run: async () => { await save(); discardArmed = null; } });
-    setTimeout(() => { if (discardArmed === name) discardArmed = null; }, 6000);
+        { label: 'Save it instead', run: async () => {
+            if (generation !== documentGen) return;
+            await save(); if (token === discardToken) discardArmed = null;
+          } });
+    setTimeout(() => { if (token === discardToken) discardArmed = null; }, 6000);
     return false;
   }
   // ⚠️ THE THIRD OPTION IS THE POINT. The message used to state a dilemma — save, or
@@ -5754,12 +5861,12 @@ function confirmDiscard(name) {
   say('“' + from + '” has unsaved changes. Save it first, or click ' + name
       + ' again to discard them.', null,
       { label: 'Save & open ' + name, run: async () => {
-          await save();
-          if (dirty) return;                 // the save failed; its reason is on screen
+          if (generation !== documentGen) return;
+          if (await save() !== true || generation !== documentGen || dirty) return;
           discardArmed = null;
           openDoc(name);
         } });
-  setTimeout(() => { if (discardArmed === name) discardArmed = null; }, 6000);
+  setTimeout(() => { if (token === discardToken) discardArmed = null; }, 6000);
   return false;
 }
 
@@ -5790,7 +5897,11 @@ async function save() {
   // i.e. the file as it was when the editor opened it, straight over the user's edits.
   // That is the single worst thing this page could do, which is why the branch is the
   // first line of the function rather than somewhere inside snapshotToSave().
-  if (editorActive()) { await ooSave(false); return; }
+  if (editorActive()) return await ooSave(false);
+  if (ooInstalled && ooReady && ooDoc && ooDoc !== current) {
+    say('The editor’s save destination is out of sync. Keep it open; the saved-file preview cannot safely replace its edits.');
+    return false;
+  }
   // ⚠️ AND FOR A BLOB THERE IS NO SECOND PATH. Falling through would hand
   // /api/office/save a null snapshot for a .docx, and the bridge would refuse it with
   // require_sheet's sentence — a correct refusal, arriving after the user pressed Save
@@ -5801,33 +5912,49 @@ async function save() {
         + 'yet. Nothing was written, and the file on disk is untouched.');
     return;
   }
+  if (ooInstalled && ooBooting) {
+    say('The full editor is still opening this workbook. Save again when it is ready.');
+    return;
+  }
   let snapshot = null;
   try { snapshot = snapshotToSave(); }
   catch (e) { bx('save-fail', 'read-back threw: ' + e);
               say('could not read the workbook back: ' + e); return; }
   if (!snapshot) { say('there is nothing to save'); return; }
-  busyOn('saving “' + current + '”'); say(''); paint();
+  const name = current, held = snap, savedText = JSON.stringify(snapshot);
+  const owner = busyOn('saving “' + name + '”'); say(''); paint();
   try {
     const r = await fetch('/api/office/save', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: current, snapshot: snapshot }),
+      body: JSON.stringify({ name: name, snapshot: snapshot, expect_mtime: snapshot.file_mtime || extSeen || undefined }),
     });
     const j = await r.json();
-    if (!j.ok) { bx('save-fail', j.error || 'not ok'); say(j.error || 'save failed'); return; }
-    dirty = false;
+    if (owner !== busyGen || current !== name || snap !== held) return;
+    if (!r.ok || !j.ok) { bx('save-fail', j.error || 'not ok'); say(j.error || 'save failed'); return; }
+    histSaved = histSignature(JSON.parse(savedText));
+    dirty = histSignature(snapshotToSave()) !== histSaved;
+    if (j.mtime) {
+      snapshot.file_mtime = j.mtime;
+    }
     bx('save-ok', j.name + ' cells=' + j.cells + ' mode=' + mode);
     say('Saved ' + j.name + ' — ' + j.cells + ' cells'
-        + bakNote(j.backup), 'ok');
+        + bakNote(j.backup) + (dirty ? ' — newer edits are still unsaved.' : ''), 'ok');
     await loadFiles();
+    if (owner !== busyGen || current !== name || snap !== held) return;
     // OUR write moved the mtime. Clearing the baseline makes the next check re-read it
     // instead of reporting our own save as somebody else's edit.
-    extSeen = 0;
-  } catch (e) { bx('save-fail', 'threw: ' + e); say('save failed: ' + e); }
-  finally { busyOff(); paint(); }
+    extSeen = Number(j.mtime) || extSeen;
+    return !dirty;
+  } catch (e) { if (owner === busyGen && current === name) {
+    bx('save-fail', 'threw: ' + e); say('Save could not be confirmed: ' + e);
+  } }
+  finally { busyOff(owner); paint(); }
 }
 
 function clearWorkbook() {
+  documentGen++;
   current = null; dirty = false; snap = null; activeSid = null;
+  histSaved = null; lastRC = null; aiSel = null;
   extSeen = 0; extAsking = false;
   // Every path that closes a document goes through here (close, delete, a failed open),
   // so the blob flag is cleared HERE rather than in each of them.
@@ -5861,17 +5988,20 @@ async function remove(name, backups) {
   // still wrong); what changed is that it now SAYS SO, and that the latch it reads can
   // no longer stick for ever.
   if (busyBlock('deleting “' + String(name || '') + '”')) return;
-  busyOn('deleting “' + String(name || '') + '”'); paint();
+  const generation = documentGen;
+  const owner = busyOn('deleting “' + String(name || '') + '”'); paint();
   try {
     const r = await fetch('/api/office/delete', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: name, backups: !!backups }),
     });
     const j = await r.json();
-    if (!j.ok) { bx('delete-fail', 'http=' + r.status + ' ' + (j.error || 'not ok'));
+    if (owner !== busyGen || generation !== documentGen) return;
+    if (!r.ok || !j.ok) { bx('delete-fail', 'http=' + r.status + ' ' + (j.error || 'not ok'));
                  say(j.error || 'could not delete that spreadsheet'); return; }
     if (name === current) clearWorkbook();
     await loadFiles();
+    if (owner !== busyGen) return;
     // ⚠️ AND IT SAYS SO. A row vanishing from a list is evidence only to somebody who
     // was watching that list; the user was watching the BUTTON. Every other verb on
     // this page reports its outcome in the message strip, and this one used to be the
@@ -5880,9 +6010,10 @@ async function remove(name, backups) {
     bx('delete-ok', name + (backups ? ' +backups' : ''));
     say('Deleted “' + name + '”'
         + (backups ? ' and its safety copies.' : '.'), 'ok');
-  } catch (e) { bx('delete-fail', 'threw: ' + e);
+  } catch (e) {
+    if (owner !== busyGen) return; bx('delete-fail', 'threw: ' + e);
                 say('could not delete that spreadsheet: ' + e); }
-  finally { busyOff(); paint(); }
+  finally { busyOff(owner); paint(); }
 }
 
 // AN EMPTY NAME IS A REQUEST, NOT A MISTAKE. This used to open with
@@ -5920,7 +6051,8 @@ function bakNote(backup) {
 async function create(step, kind) {
   if (busyBlock('creating that file')) return null;
   const name = (el('new-name').value || '').trim();
-  busyOn('creating ' + (name ? '“' + name + '”' : 'the new file')); say(''); paint();
+  const generation = documentGen;
+  const owner = busyOn('creating ' + (name ? '“' + name + '”' : 'the new file')); say(''); paint();
   try {
     const r = await fetch('/api/office/new', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5928,7 +6060,8 @@ async function create(step, kind) {
     });
     let j = null;
     try { j = await r.json(); } catch (pe) { j = null; }
-    if (!j || !j.ok) {
+    if (owner !== busyGen || generation !== documentGen) return null;
+    if (!r.ok || !j || !j.ok) {
       const why = (j && j.error) || ('the bridge answered ' + r.status);
       bx('create-fail', 'http=' + r.status + ' ' + why);
       say(why || ('could not create that ' + (KIND_NOUN[kind || 'sheet'] || 'file')));
@@ -5938,21 +6071,23 @@ async function create(step, kind) {
     el('newrow').classList.remove('on');
     madeThisSession.add(j.name);          // see bakNote (live finding C3)
     await loadFiles();
+    if (owner !== busyGen || generation !== documentGen) return;
     // ⚠️ THE LATCH IS DROPPED BEFORE openDoc, DELIBERATELY: openDoc takes it itself and
     // would otherwise busyBlock against its own caller. It goes through busyOff() so
     // the create watchdog is disarmed with it — leaving that timer live would let it
     // fire in the middle of the open it handed off to.
-    busyOff();
+    busyOff(owner);
     await openDoc(j.name);
-    return j.name;
+    return current === j.name ? j.name : null;
   } catch (e) {
+    if (owner !== busyGen) return;
     // A create that fell over on the wire used to be silent everywhere but the message
     // box — and the message box was the thing that was broken. It beacons now too.
     bx('create-fail', 'threw: ' + e);
     say('could not create that ' + (KIND_NOUN[kind || 'sheet'] || 'file') + ': ' + e);
     return null;
   }
-  finally { busyOff(); paint(); }
+  finally { busyOff(owner); paint(); }
 }
 
 // ── rename ───────────────────────────────────────────────────────────────────
@@ -5969,7 +6104,12 @@ async function renameDoc() {
   const to = (el('new-name').value || '').trim();
   if (!to) { say('Type the new name first.'); return; }
   const from = current;
-  busyOn('renaming “' + from + '”'); say(''); paint();
+  if (editorActive() && (!ooChild || typeof ooChild.renameTo !== 'function')) {
+    say('This editor cannot update the open file name. Save and close the file before renaming it.');
+    return;
+  }
+  const generation = documentGen;
+  const owner = busyOn('renaming “' + from + '”'); say(''); paint();
   try {
     const r = await fetch('/api/office/rename', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5977,7 +6117,8 @@ async function renameDoc() {
     });
     let j = null;
     try { j = await r.json(); } catch (pe) { j = null; }
-    if (!j || !j.ok) {
+    if (owner !== busyGen || generation !== documentGen) return null;
+    if (!r.ok || !j || !j.ok) {
       const why = (j && j.error) || ('the bridge answered ' + r.status);
       bx('rename-fail', 'http=' + r.status + ' ' + why);
       say(why);
@@ -6015,6 +6156,9 @@ async function renameDoc() {
           bx('oo-rename', from + ' -> ' + j.name);
         } else {
           bx('oo-rename-fail', from + ' -> ' + j.name);
+          say('The file was renamed to ' + j.name + ', but the editor could not update its save destination. Keep the editor open; its edits are still there.');
+          await loadFiles();
+          return;
         }
       } else if (editorActive()) {
         // An embed too old to know its own name cannot be repointed, and a Save that
@@ -6025,6 +6169,7 @@ async function renameDoc() {
         el('new-name').value = '';
         el('newrow').classList.remove('on');
         await loadFiles();
+    if (owner !== busyGen || generation !== documentGen) return;
         return;
       }
     }
@@ -6037,14 +6182,16 @@ async function renameDoc() {
     // the open in one beat.
     paint();
     await loadFiles();
+    if (owner !== busyGen || generation !== documentGen) return;
     say('Renamed to ' + j.name + (dirty ? ' — your unsaved edits are still here, and ⌘S '
                                           + 'now writes them to the new name.' : ''),
         'ok');
   } catch (e) {
+    if (owner !== busyGen) return;
     bx('rename-fail', 'threw: ' + e);
     say('could not rename that spreadsheet: ' + e);
   }
-  finally { busyOff(); paint(); }
+  finally { busyOff(owner); paint(); }
 }
 
 function nameRow(want) {
@@ -6081,21 +6228,25 @@ async function importFile(file) {
   // A 30 MB body over the loopback is still a body: the import gets the editor-sized
   // budget rather than the bridge-call one, so the watchdog cannot cut off a real
   // upload that is simply large.
-  busyOn('importing “' + file.name + '”', BUSY_MAX_EDITOR_MS); say('', 'dim'); paint();
+  const generation = documentGen;
+  const owner = busyOn('importing “' + file.name + '”', BUSY_MAX_EDITOR_MS); say('', 'dim'); paint();
   try {
     const r = await fetch('/api/office/upload?name=' + encodeURIComponent(file.name),
                           { method: 'POST', body: file });
     const j = await r.json();
-    if (!j.ok) { bx('import-fail', j.error || 'not ok');
+    if (owner !== busyGen || generation !== documentGen) return;
+    if (!r.ok || !j.ok) { bx('import-fail', j.error || 'not ok');
                  say(j.error || 'could not import that file'); return; }
     await loadFiles();
-    busyOff();                             // openDoc takes the latch itself — see create()
+    if (owner !== busyGen || generation !== documentGen) return;
+    busyOff(owner);                             // openDoc takes the latch itself — see create()
     if (j.renamed) say('Imported as ' + j.name + ' — a workbook called ' + file.name
                        + ' was already here, so nothing was overwritten.', 'ok');
     await openDoc(j.name);
     return;
-  } catch (e) { bx('import-fail', 'threw: ' + e); say('could not import that file: ' + e); }
-  finally { busyOff(); paint(); }
+  } catch (e) {
+    if (owner !== busyGen) return; bx('import-fail', 'threw: ' + e); say('could not import that file: ' + e); }
+  finally { busyOff(owner); paint(); }
 }
 
 // ══ ASK THE MODEL — slice 2 ═══════════════════════════════════════════════════
@@ -6535,8 +6686,21 @@ function aiSnapshot() {
 }
 // Which sheet the question is about: the one on screen, or the first one if the id we
 // are holding is not in this snapshot (the rich editor hands back its own).
+function ooSelection() {
+  if (!editorActive() || !ooChild || typeof ooChild.selection !== 'function') return null;
+  try {
+    const value = ooChild.selection();
+    return value && value.doc === current ? value : null;
+  } catch (e) { return null; }
+}
 function aiSheetId(s) {
   const ids = sheetIds(s);
+  const selected = ooSelection();
+  if (selected && selected.sheet) {
+    // An unsaved new sheet has no last-saved context. Sending the first sheet would
+    // ground the answer in a different sheet while naming the user's selection.
+    return ids.find(id => s.sheets[id] && s.sheets[id].name === selected.sheet) || null;
+  }
   return (activeSid && s && s.sheets && s.sheets[activeSid]) ? activeSid : (ids[0] || null);
 }
 // Which cell the user is on. Tier 1 records it on focus (see the #gt focusin handler);
@@ -6545,6 +6709,8 @@ function aiSheetId(s) {
 // question. (getActiveWorkbook / getActiveSheet / getActiveRange / getA1Notation are
 // all present in the pinned 0.25.1 bundle; the try is for the next one.)
 function aiSelNow() {
+  const selected = ooSelection();
+  if (selected) return selected.at || '';
   if (mode === 'univer') {
     try {
       const wb = api && api.getActiveWorkbook();
@@ -6573,6 +6739,8 @@ function aiContext() {
 function aiStale() { return !!(editorActive() && dirty); }
 
 function aiSheetName() {
+  const selected = ooSelection();
+  if (selected) return selected.sheet || '';
   const s = aiSnapshot();
   const sid = s ? aiSheetId(s) : null;
   const sh = (sid && s.sheets) ? s.sheets[sid] : null;
@@ -6742,10 +6910,13 @@ function actColor(v) {
 function actStyleSet(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const out = {};
-  if (v.bl) out.bl = 1;
-  if (v.it) out.it = 1;
-  if (v.ul) out.ul = { s: 1 };
-  if (v.st) out.st = { s: 1 };
+  for (const k of ['bl', 'it', 'ul', 'st']) {
+    let flag = v[k];
+    if ((k === 'ul' || k === 'st') && flag && typeof flag === 'object') flag = flag.s;
+    if (flag === true || flag === 1 || flag === false || flag === 0) {
+      out[k] = (k === 'ul' || k === 'st') ? {s: flag ? 1 : 0} : (flag ? 1 : 0);
+    }
+  }
   if (typeof v.ff === 'string' && v.ff.trim() && v.ff.length <= 64) out.ff = v.ff.trim();
   const fs = Number(v.fs);
   if (isFinite(fs) && fs >= 1 && fs <= 409) out.fs = fs;          // office.py's own range
@@ -7263,7 +7434,8 @@ function actAddSheet(name) {
   const base = (String(name == null ? '' : name).trim() || 'Sheet').slice(0, ACT_SHEET_MAX);
   let nm = base, n = 2;
   while (taken.indexOf(nm.toLowerCase()) >= 0) {
-    nm = (base + ' ' + n).slice(0, ACT_SHEET_MAX);
+    const suffix = ' ' + n;
+    nm = base.slice(0, ACT_SHEET_MAX - suffix.length) + suffix;
     n++;
   }
   const sid = 'sheet-' + Date.now().toString(36) + '-' + (++actSeq);
@@ -7384,7 +7556,7 @@ function actRunOps(sid, ops) {
         const u = usedExtent(sh);
         if (u.rows > 1) {
           const order = sortOrder(sh, o.col, o.desc, u.rows);
-          gridRemap(sh, u.rows, u.cols, (r, c) => ({ r: order[r], c: c }));
+          sortRemap(sh, order, u.rows, u.cols);
           done.sorted++;
           if (done.wantRows < u.rows) done.wantRows = u.rows;
           if (done.wantCols < u.cols) done.wantCols = u.cols;
@@ -7457,8 +7629,9 @@ function ooWaitReady(ms) {
   return new Promise(resolve => {
     if (editorActive()) return resolve(true);
     if (!ooInstalled || ooFailed) return resolve(false);
-    const t0 = Date.now();
+    const t0 = Date.now(), generation = documentGen;
     const tick = () => {
+      if (generation !== documentGen) return resolve(false);
       if (editorActive()) return resolve(true);
       if (ooFailed) return resolve(false);
       if (Date.now() - t0 > (Number(ms) || OO_WAIT_MS)) return resolve(false);
@@ -7494,15 +7667,20 @@ async function actApply(card, plan) {
     actPaint(card);
     el('new-name').value = plan.file || '';
     const made = await create();          // names it, opens it, and reports its own errors
-    if (!made || !current) {
+    if (!made || current !== made) {
       card._state = 'ready';
       bx('action-refused', 'create failed');
       actPaint(card);
       actNote(card, 'The spreadsheet could not be created, so nothing was changed.');
       return;
     }
+    const generation = documentGen;
     if (ooInstalled) {
       const up = await ooWaitReady(OO_WAIT_MS);
+      if (generation !== documentGen || current !== made) {
+        card._state = 'ready'; actPaint(card);
+        actNote(card, 'The open workbook changed; nothing was applied.'); return;
+      }
       if (!up) {
         card._state = 'ready';
         bx('action-refused', 'create ok, editor not ready');
@@ -7604,6 +7782,7 @@ async function actApply(card, plan) {
    would restore a workbook the editor never had. The editor's own ⌘Z is the undo now,
    the card says so, and `card._undo` stays false so no button claims otherwise. */
 async function ooActApply(card, plan) {
+  const appliedWhere = actWhere(plan), generation = documentGen;
   card._state = 'busy';
   actPaint(card);
   const route = ooOpPlan(plan.ops);
@@ -7659,6 +7838,8 @@ async function ooActApply(card, plan) {
   card._undo = false;                        // the EDITOR's ⌘Z is the undo now
   card._viaEditor = !r.viaBridge;
   card._viaBridge = !!r.viaBridge;
+  card._reloaded = r.reloaded !== false;
+  card._where = appliedWhere;
   actLast = null;                            // no page-side entry to point at
   actPaint(card);
   paint();
@@ -7666,8 +7847,9 @@ async function ooActApply(card, plan) {
      + ' cells=' + done.cells + ' styled=' + done.styledCells
      + ' sheets=' + done.sheets.length + ' sorted=' + done.sorted
      + ' inserted=' + done.inserted + ' deleted=' + done.deleted);
-  say(actSummary(plan, actWhere(plan)) + ' — applied in the full editor'
-      + (r.viaBridge ? ' (through the file, and already saved).'
+  if (generation !== documentGen) return;
+  say(actSummary(plan, appliedWhere) + (r.viaBridge ? ' — saved to the file' : ' — applied in the full editor')
+      + (r.viaBridge ? (r.reloaded === false ? '; the editor has not reloaded it.' : ', and reloaded in the editor.')
                      : '. Press ⌘S to save it to the file.'), 'ok');
 }
 
@@ -7760,7 +7942,7 @@ function actPaint(card) {
     return;
   }
 
-  const where = actWhere(plan);
+  const where = card._where || actWhere(plan);
   const line = document.createElement('div');
   line.textContent = actSummary(plan, where);
   head.appendChild(line);
@@ -7788,7 +7970,7 @@ function actPaint(card) {
            + 'the editor takes it back.'
          : (card._viaBridge
             ? '. This one went through the file, so it is ALREADY SAVED and the editor '
-              + 'has reloaded it.'
+              + (card._reloaded === false ? 'has not reloaded it; see the note below.' : 'has reloaded it.')
             : '. The file is NOT saved yet — press ⌘S.'
               + (card._undo ? '' : ' This workbook is too large to hold an undo copy, '
                                  + 'so this change cannot be taken back from here.')));
@@ -8061,8 +8243,8 @@ async function aiSend() {
     });
     if (!r.ok || !r.body) throw new Error('the bridge answered ' + r.status);
     const rd = r.body.getReader(), dec = new TextDecoder();
-    let buf = '';
-    for (;;) {
+    let buf = '', completed = false;
+    for (; !completed;) {
       const { value, done } = await rd.read();
       if (done) break;
       buf += dec.decode(value, { stream: true });
@@ -8072,9 +8254,10 @@ async function aiSend() {
         const line = raw.trim();
         if (!line.startsWith('data: ')) continue;
         const payload = line.slice(6);
-        if (payload === '[DONE]') { buf = ''; break; }
+        if (payload === '[DONE]') { buf = ''; completed = true; rd.cancel().catch(() => {}); break; }
         let j = null;
         try { j = JSON.parse(payload); } catch (e) { continue; }
+        if (!j || typeof j !== 'object') continue;
         if (j.type === 'proxy_error') { failed = j.error || 'the runner refused the request'; continue; }
         if (typeof j.delta === 'string') {
           got = true;
@@ -8200,7 +8383,7 @@ const LS_AGENT_CATALOG = 'motdeck-office-agent-catalog';
 // lane the moment the gate opens.
 let aiLane = LANE_QUICK, laneWant = LANE_QUICK;
 let agentSid = '', agentStored = '', agentNamed = false, agentNaming = false;
-let agentHistoryLoading = false, agentHistoryRestoredFor = '';
+let agentHistoryLoading = false, agentHistoryRestoredFor = '', agentHistoryRequest = 0;
 let agentCatalogHash = '', agentCatalogPending = '', agentCatalogNotice = '';
 // What the last probe found. `tools` is TRUE / FALSE / NULL and the third value is the
 // point — see agentGate.
@@ -8285,6 +8468,7 @@ function agentGate(g) {
 async function agentRestoreHistory() {
   const stored = String(agentStored || '').trim();
   if (!stored || agentHistoryRestoredFor === stored) return;
+  const request = ++agentHistoryRequest;
   agentHistoryLoading = true;
   aiStatus('Restoring the saved Agent transcript…');
   aiPaint(false);
@@ -8293,7 +8477,9 @@ async function agentRestoreHistory() {
                           + '/history?view=loffice');
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || ('the bridge answered ' + r.status));
-    const rows = Array.isArray(j.history) ? j.history : [];
+    if (request !== agentHistoryRequest || stored !== agentStored) return;
+    if (!Array.isArray(j.history)) throw new Error('the bridge returned no history list');
+    const rows = j.history;
     [].forEach.call(el('ai-log').querySelectorAll('.aim'), n => n.remove());
     rows.forEach(row => {
       if (!row || (row.role !== 'user' && row.role !== 'assistant')) return;
@@ -8322,12 +8508,12 @@ async function agentRestoreHistory() {
     bx('agent-history', 'stored=' + stored + ' rows=' + rows.length
        + (j.limit_reached ? ' limit-reached' : ''));
   } catch (e) {
+    if (request !== agentHistoryRequest || stored !== agentStored) return;
     aiStatus('The saved Agent transcript could not be restored: '
              + String((e && e.message) || e), true);
     bx('agent-history-fail', String((e && e.message) || e).slice(0, 160));
   } finally {
-    agentHistoryLoading = false;
-    aiPaint(false);
+    if (request === agentHistoryRequest) { agentHistoryLoading = false; aiPaint(false); }
   }
 }
 
@@ -8533,6 +8719,8 @@ function agentCatalogRollover(nextHash) {
   const previous = agentStored;
   agentSid = ''; agentStored = ''; agentNamed = false;
   agentHistoryRestoredFor = '';
+  agentHistoryRequest++; agentHistoryLoading = false;
+  csLines = []; csShown = '';
   try {
     localStorage.removeItem(LS_AGENT_SID);
     localStorage.removeItem(LS_AGENT_STORED);
@@ -8631,10 +8819,11 @@ async function agentSend() {
                              stored_sid: agentStored || '' }),
       signal: run.controller.signal,
     });
-    if (!r.ok || !r.body) throw new Error('the bridge answered ' + r.status);
+    if (!r.ok) { carried.forEach(csNote); throw new Error('the bridge answered ' + r.status); }
+    if (!r.body) throw new Error('the bridge returned no response stream');
     const rd = r.body.getReader(), dec = new TextDecoder();
-    let buf = '';
-    for (;;) {
+    let buf = '', completed = false;
+    for (; !completed;) {
       const { value, done } = await rd.read();
       if (done) break;
       buf += dec.decode(value, { stream: true });
@@ -8644,7 +8833,7 @@ async function agentSend() {
         const line = raw.trim();
         if (!line.startsWith('data: ')) continue;
         const payload = line.slice(6);
-        if (payload === '[DONE]') { buf = ''; break; }
+        if (payload === '[DONE]') { buf = ''; completed = true; rd.cancel().catch(() => {}); break; }
         let j = null;
         try { j = JSON.parse(payload); } catch (e) { continue; }
         const st = agentFrame(j, turn, held, steps);
@@ -8662,7 +8851,8 @@ async function agentSend() {
   // naming the session; otherwise those follow-up reads can race the still-running turn.
   if (run.stopPromise) await run.stopPromise;
   if (aiRun === run) aiRun = null;
-  aiBusy = false; aiBusyAt = 0;
+  // Keep the composer locked through changeset discovery and durable naming.
+  try {
   // Every card left open when the turn ends stops pretending it is answerable.
   agentExpire(turn.wrap);
   if (run.stopRequested) {
@@ -8711,6 +8901,10 @@ async function agentSend() {
   // First-turn auto-title happens as Hermes commits this exchange. Rename only now:
   // the stored row exists and the automatic title cannot race in behind our label.
   await agentName();
+  } catch (e) {
+    aiStatus('The answer is kept, but the final session check failed: ' + String((e && e.message) || e), true);
+    bx('agent-finalize-fail', String((e && e.message) || e).slice(0, 160));
+  } finally { aiBusy = false; aiBusyAt = 0; }
   // A catalog change discovered during this turn was deliberately deferred. The old
   // session gets to finish exactly once; only the NEXT turn moves to the new contract.
   if (agentCatalogPending) await agentCatalogReconcile(agentCatalogPending);
@@ -8809,10 +9003,11 @@ function agentFrame(j, turn, held, steps) {
 // live-session rename for a session it does not own.
 async function agentName() {
   if (agentNamed || agentNaming || !agentStored) return;
+  const stored = agentStored;
   agentNaming = true;
   try {
     const requestName = async name => {
-      const r = await fetch('/api/hermes/session/' + encodeURIComponent(agentStored)
+      const r = await fetch('/api/hermes/session/' + encodeURIComponent(stored)
                             + '/rename', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name }),
@@ -8825,17 +9020,18 @@ async function agentName() {
     // rather than silently renaming/deleting it; this exact durable id makes the
     // current continuation visibly distinct and collision-free.
     if (result.r.status === 409) {
-      chosen = AGENT_SESSION_NAME + ' · ' + agentStored;
+      chosen = AGENT_SESSION_NAME + ' · ' + stored;
       result = await requestName(chosen);
     }
     const r = result.r, j = result.j;
     if (!r.ok || j.ok !== true) {
       throw new Error(j.error || 'the bridge refused the session name');
     }
+    if (stored !== agentStored) return;
     agentNamed = true;
-    bx('agent-named', chosen + ' ' + agentStored);
+    bx('agent-named', chosen + ' ' + stored);
   } catch (e) {
-    agentNamed = false; // the next completed turn may retry
+    if (stored === agentStored) agentNamed = false; // the next completed turn may retry
     bx('agent-name-fail', String((e && e.message) || e).slice(0, 120));
   } finally { agentNaming = false; }
 }
@@ -8928,7 +9124,8 @@ function agentCard(host, req, sid) {
 }
 
 async function agentApprove(card, choice) {
-  if (card._done) return;
+  if (card._done || card._pending) return;
+  card._pending = true;
   const btns = [].slice.call(card._bar.querySelectorAll('button'));
   btns.forEach(b => { b.disabled = true; });
   try {
@@ -8937,6 +9134,7 @@ async function agentApprove(card, choice) {
       body: JSON.stringify({ session_id: card._sid, choice: choice }),
     });
     const j = await r.json().catch(() => ({}));
+    if (card._done) return;
     if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
     if (!j.resolved) {
       // Nothing was pending gateway-side — the card raced upstream's own timeout or an
@@ -8950,9 +9148,9 @@ async function agentApprove(card, choice) {
     bx('agent-approved', choice + ' sid=' + card._sid);
   } catch (e) {
     actNote(card, 'approve failed: ' + ((e && e.message) || e));
-    btns.forEach(b => { b.disabled = false; });
+    if (!card._done) btns.forEach(b => { b.disabled = false; });
     bx('agent-approve-fail', String((e && e.message) || e).slice(0, 120));
-  }
+  } finally { card._pending = false; }
 }
 
 function agentStamp(card, text) {
@@ -9182,11 +9380,12 @@ function csCard(host, cs) {
 }
 
 function csBusy(card, on) {
+  card._pending = !!on;
   [].forEach.call(card._bar.querySelectorAll('button'), b => { b.disabled = !!on; });
 }
 
 async function csApply(card) {
-  if (card._done) return;
+  if (card._done || card._pending) return;
   const cs = card._cs;
   csBusy(card, true);
   let j = null;
@@ -9195,12 +9394,16 @@ async function csApply(card) {
                           + encodeURIComponent(cs.changeset_id) + '/apply',
                           { method: 'POST' });
     j = await r.json().catch(() => ({}));
-    if (!r.ok || !j || j.ok === false) throw new Error((j && j.error) || ('HTTP ' + r.status));
+    if (!r.ok || !j || j.ok !== true) throw new Error((j && j.error) || ('HTTP ' + r.status));
+    if (typeof j.receipt !== 'string' || !j.receipt || j.changeset_id !== cs.changeset_id
+        || !Array.isArray(j.verify) || !j.name) {
+      throw new Error('the bridge returned no matching save receipt; the outcome is unconfirmed');
+    }
   } catch (e) {
     // ⚠️ A FAILED APPLY IS SAID, AND THE CARD STAYS ANSWERABLE. The one thing that must
     // never happen here is the incident's shape: something looking applied when it is
     // not.
-    actNote(card, 'That was NOT applied: ' + ((e && e.message) || e));
+    actNote(card, 'Apply could not be confirmed: ' + ((e && e.message) || e));
     csBusy(card, false);
     bx('cs-apply-fail', String((e && e.message) || e).slice(0, 140));
     return;
@@ -9246,7 +9449,7 @@ async function csApply(card) {
   // ⚠️ RE-LABEL, DO NOT RE-STAMP. csStamp() empties the bar, which would take the "Undo
   // this change" chip added above with it — a receipt that grew a computed line and lost
   // the undo would be a strictly worse card.
-  if (comp) csRelabel(card, csReceiptText(j) + ' · ' + comp.line);
+  if (comp && !card._undone && card._receipt === j) csRelabel(card, csReceiptText(j) + ' · ' + comp.line);
 }
 
 /* ══ THE POST-APPLY COMPUTED CHECK — the fourth silent layer ═══════════════════
@@ -9279,16 +9482,17 @@ function csComputedText(cells, warned) {
   rows.forEach(c => {
     const t = String((c && c.text) || '');
     const v = c ? c.value : null;
-    const num = (typeof v === 'number') ? v : Number(t);
+    const empty = !t.trim() && (v == null || v === '');
+    const num = (typeof v === 'number') ? v : (t.trim() ? Number(t) : NaN);
     const isErr = t.indexOf('#') === 0;
     // A ZERO IS FLAGGED, not silently accepted: a total that came out 0 is the incident's
     // own signature. It may be legitimately 0 — hence ⚠ and not ✗ — but it is never
     // something this receipt lets past without a mark.
     const zero = !isErr && isFinite(num) && num === 0;
-    const ok = !isErr && !zero && !(c && c.error);
+    const ok = !empty && !isErr && !zero && !(c && c.error);
     if (!ok) bad++;
     bits.push(String((c && c.ref) || '?') + '='
-              + (c && c.error ? 'unreadable' : (t || String(v)))
+              + (c && c.error ? 'unreadable' : (empty ? 'empty' : (t || String(v))))
               + (ok ? ' ✓' : ' ⚠'));
   });
   let line = 'computed: ' + bits.join(', ');
@@ -9306,6 +9510,10 @@ async function csComputed(card, j) {
   const refs = ((j && j.verify) || [])
     .filter(v => String((v && v.expected) || '').charAt(0) === '=');
   if (!refs.length) return null;              // nothing computed: nothing to say
+  if (!j.name || current !== j.name || ooDoc !== j.name) {
+    actNote(card, 'Computed values were not checked because that workbook is not open.');
+    return { line: 'computed: not checked (another workbook is open)', bad: 0 };
+  }
   if (!editorActive() || !ooChild || typeof ooChild.readCells !== 'function') {
     actNote(card, CS_NO_ENGINE);
     bx('cs-computed-skip', 'no engine');
@@ -9313,7 +9521,15 @@ async function csComputed(card, j) {
   }
   let r = null;
   try {
-    r = ooChild.readCells(refs.map(v => v.ref), refs[0].sheet || '');
+    const groups = new Map();
+    refs.forEach(v => { const sheet = v.sheet || ''; if (!groups.has(sheet)) groups.set(sheet, []); groups.get(sheet).push(v.ref); });
+    const cells = [];
+    for (const [sheet, addresses] of groups) {
+      const read = ooChild.readCells(addresses, sheet);
+      if (!read || !read.ok || !Array.isArray(read.cells)) throw new Error((read && read.error) || 'the editor returned no cells');
+      read.cells.forEach(c => cells.push(Object.assign({}, c, {ref: groups.size > 1 ? sheet + '!' + c.ref : c.ref})));
+    }
+    r = {ok: true, cells: cells};
   } catch (e) {
     r = { ok: false, error: String((e && e.message) || e) };
   }
@@ -9335,7 +9551,7 @@ async function csComputed(card, j) {
 }
 
 async function csDismiss(card) {
-  if (card._done) return;
+  if (card._done || card._pending) return;
   const cs = card._cs;
   csBusy(card, true);
   try {
@@ -9343,7 +9559,7 @@ async function csDismiss(card) {
                           + encodeURIComponent(cs.changeset_id) + '/dismiss',
                           { method: 'POST' });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j || j.ok === false) throw new Error((j && j.error) || ('HTTP ' + r.status));
+    if (!r.ok || !j || j.ok !== true) throw new Error((j && j.error) || ('HTTP ' + r.status));
     card._done = true;
     csStamp(card, '✗ dismissed — nothing was written');
     csNote(j.session_line);
@@ -9356,6 +9572,7 @@ async function csDismiss(card) {
 }
 
 async function csUndo(card) {
+  if (card._pending || card._undone) return;
   const cs = card._cs;
   csBusy(card, true);
   try {
@@ -9363,12 +9580,14 @@ async function csUndo(card) {
                           + encodeURIComponent(cs.changeset_id) + '/undo',
                           { method: 'POST' });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j || j.ok === false) throw new Error((j && j.error) || ('HTTP ' + r.status));
+    if (!r.ok || !j || j.ok !== true) throw new Error((j && j.error) || ('HTTP ' + r.status));
+    card._undone = true;
     csStamp(card, '↩ undone — restored from the checkpoint taken before Apply');
     csNote(j.session_line);
     bx('cs-undone', cs.changeset_id);
     extSeen = 0;
-    ooExtReload(j.name);
+    if (current === j.name) await ooExtReload(j.name);
+    else actNote(card, 'Restored “' + j.name + '”; your open workbook was left in place.');
   } catch (e) {
     // The mtime fence lands here, and its sentence is the bridge's — "that workbook
     // changed on disk after the change was applied…". A refused undo must read as a
@@ -9389,6 +9608,7 @@ function csRelabel(card, text) {
 }
 
 function csStamp(card, text) {
+  card._pending = false;
   card._bar.innerHTML = '';
   const lang = document.createElement('span');
   lang.className = 'lang';
@@ -9428,16 +9648,20 @@ function csErrChip(wrap, tool, why) {
 // staged is a fact about the bridge's changeset store, not about what the reply said —
 // so a model that CLAIMS it staged nothing still gets the card, and one that claims it
 // staged something when it did not gets no card and no status line.
+let csReadRequest = 0;
 let csShown = '';                   // the changeset id already on screen
 
 async function csRead() {
+  const request = ++csReadRequest, generation = documentGen, sid = agentSid, stored = agentStored;
   csPolls++;
   try {
     const r = await fetch('/api/office/changeset?file=' + encodeURIComponent(current || '')
                           + '&session=' + encodeURIComponent(agentSid || ''),
                           { cache: 'no-store' });
     const j = await r.json();
-    (j && j.session_lines || []).forEach(csNote);
+    if (request !== csReadRequest || generation !== documentGen || sid !== agentSid || stored !== agentStored) return null;
+    if (!r.ok || !j || j.ok !== true) throw new Error((j && j.error) || ('HTTP ' + r.status));
+    (Array.isArray(j.session_lines) ? j.session_lines : []).forEach(csNote);
     return j;
   } catch (e) {
     bx('cs-fetch-fail', String((e && e.message) || e).slice(0, 120));
@@ -9462,6 +9686,7 @@ async function csAfterTurn(turn) {
 async function csTick() {
   if (aiLane !== LANE_AGENT || aiBusy) return null;
   const j = await csRead();
+  if (aiLane !== LANE_AGENT || aiBusy) return null;
   const cs = j && j.changeset;
   if (!cs || cs.changeset_id === csShown) return null;
   csShown = cs.changeset_id;
@@ -9539,6 +9764,7 @@ function hbSync() { return hbRun(false); }
 // workbook (bridge/office.py list_docs) — no new route, and the check rides the same
 // interval as the model pill, not a timer of its own.
 const EXT_EPS = 0.5;            // seconds of mtime slack: a filesystem, not a clock
+let extRequest = 0;
 let extSeen = 0;                // the mtime this page believes it is showing
 let extAsking = false;          // a banner is up; do not stack a second one
 let extMsgGen = -1;             // ...and WHICH message it is (see say/msgGen, extCheck)
@@ -9617,16 +9843,16 @@ async function extCheck() {
   // message strip that announced every skipped beat would bury the banners it exists to
   // raise. Silence is right here for exactly that reason and no other.
   if (!current || busy || extAsking) return null;
-  const name = current;
+  const name = current, generation = documentGen, request = ++extRequest;
   let row = null;
   try {
     const r = await fetch('/api/office/files', { cache: 'no-store' });
     const j = await r.json();
-    if (!j || !j.ok) return null;
-    row = ((j.files) || []).filter(f => f && f.name === name)[0] || null;
+    if (!r.ok || !j || j.ok !== true || !Array.isArray(j.files)) return null;
+    row = j.files.filter(f => f && f.name === name)[0] || null;
   } catch (e) { bx('ext-check-fail', String((e && e.message) || e).slice(0, 100)); return null; }
   if (!row) return null;             // deleted or renamed under us: not this banner's job
-  if (name !== current) return null; // the user opened something else mid-flight
+  if (request !== extRequest || generation !== documentGen || name !== current || busy || extAsking) return null;
   // `agent_copy` comes off the SAME row as `modified` (bridge/office.py list_docs, which
   // stats the path) — so the banner names a file that is there, per path, rather than
   // deriving a name from the workbook's and hoping (live finding L4).
@@ -9636,6 +9862,7 @@ async function extCheck() {
   // ⚠️ THE BASELINE MOVES BEFORE THE BANNER IS DRAWN, and that is what makes this
   // fire ONCE per external change instead of every beat for ever.
   const was = extSeen;
+  plan.previousSeen = was;
   extSeen = Number(row.modified) || extSeen;
   if (plan.act === 'baseline') { bx('ext-base', name + ' mtime=' + extSeen); return plan; }
   bx('ext-change', name + ' act=' + plan.act + ' seen=' + was + ' → ' + extSeen);
@@ -9651,21 +9878,30 @@ async function extCheck() {
 // document. So when the editor owns the file, "reload" is ooReload(): the editor
 // re-reads the same workbook from disk, in place, keeping the warm frame, the rail,
 // the AI conversation and the pane widths.
-function ooExtReload(name) {
+async function ooExtReload(name) {
+  if (current && name && current !== name) return false;
+  if (dirty) { say('The file changed, but your unsaved edits are still in the editor. Save or discard them before reloading.'); return false; }
   if (!editorActive()) return openDoc(name);
-  // The tier-1 snapshot is refreshed too, so the AI panel's context is the agent's
-  // version and not the one from before the write.
-  return ooReload('ext-change').then(() => ooRefreshSnapshot());
+  if (!await ooReload('ext-change')) return false;
+  await ooRefreshSnapshot();
+  return true;
 }
 
 function extAct(plan, name) {
+  const generation = documentGen;
+  const owns = () => name === current && generation === documentGen;
+  const restoreWatch = () => { if (owns() && Number.isFinite(plan.previousSeen)) extSeen = plan.previousSeen; };
   if (plan.act === 'reload') {
     // ⚠️ THE SENTENCE IS SAID AFTER THE OPEN, NOT BEFORE IT, and that is a bug found by
     // reading rather than by testing: openDoc's FIRST act is `say('')`, so a message
     // set beforehand flashes and vanishes — the spec's one required sentence, gone.
     // And only if the open left the box EMPTY: a read failure, or the very-large-
     // workbook warning, is a bigger thing to say than "reloaded".
-    ooExtReload(name).then(() => { if (!el('msg').textContent) say(plan.text, 'dim'); });
+    return ooExtReload(name).then(ok => {
+      if (ok === true && current === name) { if (!el('msg').textContent) say(plan.text, 'dim'); }
+      else restoreWatch();
+      return ok;
+    }).catch(e => { restoreWatch(); if (owns()) say('Could not reload the changed file: ' + e); return false; });
     return;
   }
   extAsking = true;
@@ -9674,14 +9910,20 @@ function extAct(plan, name) {
     // ⚠️ CLEARING `dirty` HERE IS THE POINT OF THE BUTTON, not a way round a guard.
     // Reload MEANS "discard my in-memory edits" — exactly the question confirmDiscard
     // would otherwise ask a second time, having already been answered.
-    { label: 'Reload', run: () => {
+    { label: 'Reload', run: async () => {
+        if (!owns()) return;
         extAsking = false; say('');
         dirty = false; paint();
         bx('ext-reload', name);
-        ooExtReload(name);
+        let reloaded = false;
+        try { reloaded = await ooExtReload(name); }
+        catch (e) { if (owns()) say('Could not reload the changed file: ' + e); }
+        if (reloaded !== true && owns()) { dirty = true; restoreWatch(); paint(); }
       } },
     { label: 'Keep mine', run: () => {
+        if (!owns()) return;
         extAsking = false;
+        if (snap) snap.file_mtime = extSeen;
         bx('ext-keep-mine', name);
         // ⚠️ AND THIS SENTENCE ONLY NAMES THE COPY WHEN THERE IS ONE (live finding L4).
         // Offering "Keep mine" on the strength of a backup that does not exist is the
@@ -9885,10 +10127,13 @@ el('ai-hide').onclick = () => aiSetOpen(false, 'button');
 // not only on screen: Hermes is holding it. Clearing the log and keeping the session
 // would leave the model answering out of a history the user has been shown the back of.
 el('ai-clear').onclick = () => {
+  if (aiBusyBlock()) return;
   [].forEach.call(el('ai-log').querySelectorAll('.aim'), n => n.remove());
   aiEmpty(); aiStatus('');
   agentSid = ''; agentStored = ''; agentNamed = false;
   agentHistoryRestoredFor = '';
+  agentHistoryRequest++; agentHistoryLoading = false;
+  csLines = []; csShown = '';
   try { localStorage.removeItem(LS_AGENT_SID); localStorage.removeItem(LS_AGENT_STORED); }
   catch (e) { /* private mode */ }
   bx('agent-session-cleared', '');
@@ -9912,6 +10157,7 @@ el('ai-ctx').onclick = () => {
 };
 el('ai-in').oninput = aiGrow;
 el('ai-in').onkeydown = ev => {
+  if (ev.isComposing || ev.keyCode === 229) return;
   // Enter asks, Shift+Enter is a newline — the composer convention everywhere else
   // in MOT Deck.
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); aiSend(); }
@@ -9986,7 +10232,8 @@ el('imp').onchange = ev => {
   const f = ev.target.files && ev.target.files[0];
   if (f) importFile(f);
 };
-el('new-name').onkeydown = ev => { if (ev.key === 'Enter') nameRowGo();
+el('new-name').onkeydown = ev => { if (ev.isComposing || ev.keyCode === 229) return;
+                                   if (ev.key === 'Enter') nameRowGo();
                                    if (ev.key === 'Escape') el('newrow').classList.remove('on'); };
 
 // ── the File menu, wired to the actions that already existed ─────────────────
@@ -10001,7 +10248,7 @@ mi('mi-save', save);
 // Close file has its own two-step arm rather than borrowing `discardArmed`, which is
 // keyed by FILE NAME: a sentinel stuffed into a name-keyed variable is a string that
 // has to be spelled identically in three places to work at all.
-let closeArmed = false;
+let closeArmed = null;
 mi('mi-download', () => {
   if (current) window.location.href = '/api/office/download/' + encodeURIComponent(current);
 });
@@ -10018,18 +10265,23 @@ mi('mi-download', () => {
 mi('mi-close', () => {
   // Closing lands back on the file rail rather than on nothing: #empty says what to do
   // next, and the rail is where doing it lives.
-  if (dirty && !closeArmed) {
-    closeArmed = true;
+  const generation = documentGen;
+  if (dirty && (!closeArmed || closeArmed.generation !== generation
+      || Date.now() - closeArmed.at < DISCARD_MIN_MS)) {
+    const arm = closeArmed = {generation, at: Date.now()};
     say('“' + current + '” has unsaved changes. Save it first, or choose Close file '
         + 'again to discard them.', null,
-        { label: 'Save & close', run: async () => { await save(); if (!dirty) mi_close(); } });
-    setTimeout(() => { closeArmed = false; }, 6000);
+        { label: 'Save & close', run: async () => {
+            if (generation !== documentGen) return;
+            if (await save() === true && generation === documentGen && !dirty) mi_close();
+          } });
+    setTimeout(() => { if (closeArmed === arm) closeArmed = null; }, 6000);
     return;
   }
   mi_close();
 });
 function mi_close() {
-  closeArmed = false; discardArmed = null;
+  closeArmed = null; startArmed = null; discardArmed = null;
   bx('close-file', current || 'none');
   clearWorkbook();
   // The blob state dies with the document, and the interstitial with it — otherwise the

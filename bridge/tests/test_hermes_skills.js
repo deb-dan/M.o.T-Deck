@@ -72,6 +72,7 @@ var hermesToolsSnap = null;
 var hermesSkillsSnap = null;
 var hermesSkillsOpen = false;
 var hermesSkillsFilter = '';
+eval(grab('apiArg'));
 eval(grab('hermesSkillMatch'));
 eval(grab('hermesSkillArg'));
 eval(grab('hermesSkillsShown'));
@@ -134,20 +135,16 @@ check('a backslash is escaped FIRST (order matters)',
       hermesSkillArg('a\\b') === 'a\\\\b' && hermesSkillArg("a\\'b") === "a\\\\\\'b");
 check('hermesSkillArg is total', hermesSkillArg(null) === '' && hermesSkillArg(undefined) === ''
       && hermesSkillArg(7) === '7');
-(function () {
-  const row = hermesSkillRows([S("don't-do-this", true, 'x', '')], '');
-  const m = /onchange="toggleHermesSkill\('([^']*(?:\\'[^']*)*)'/.exec(row);
-  check('a quoted name still produces a syntactically valid onchange', !!m);
-  // The real proof: the emitted handler must PARSE. A raw apostrophe would end
-  // the string early and leave a switch that silently does nothing on click.
-  let ok = true;
-  try {
-    const attr = /onchange="([^"]*)"/.exec(row)[1]
-      .replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<');
-    new Function('toggleHermesSkill', 'this_', attr.replace(/this/g, 'this_'));
-  } catch (e) { ok = false; }
-  check('…and the handler body actually parses as JS', ok);
-})();
+for (const name of ["don't-do-this", 'a\\b\n"&quot;<this>']) {
+  const row = hermesSkillRows([S(name, true, 'x', '')], '');
+  const attr = /onchange="([^"]*)"/.exec(row)[1]
+    .replace(/&(?:quot|amp|lt|gt);/g, x => ({'&quot;':'"','&amp;':'&','&lt;':'<','&gt;':'>'})[x]);
+  const control = {checked: true};
+  let args;
+  new Function('toggleHermesSkill', attr).call(control, (...received) => {args = received;});
+  check('rendered handler delivers the exact skill name: ' + JSON.stringify(name),
+    args[0] === name && args[1] === true && args[2] === control);
+}
 
 // ── hermesSkillsShown ───────────────────────────────────────────────────────
 check('shown with no filter is the whole list',

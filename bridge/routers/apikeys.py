@@ -118,9 +118,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
+import stat
+import tempfile
+import threading
 import time
 
 from fastapi import HTTPException
@@ -145,6 +149,9 @@ NAME_MAX = 48
 # mint loop that has lost its stop condition hits a REFUSAL WITH A SENTENCE instead of
 # silently growing the file llama-server parses at every launch.
 MAX_KEYS = 64
+# FastAPI runs these synchronous handlers concurrently in its worker pool.
+# Serialize the whole read/modify/write, including the derived launch key file.
+_KEY_LOCK = threading.RLock()
 
 def _p(rel: str):
     return ROOT / rel
@@ -154,22 +161,25 @@ def _atomic_secret(path, text: str) -> None:
     """Write 0600, temp-and-rename. The mode is set on the TEMP file before any bytes
     are written to it, so the secret is never momentarily world-readable."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, tmp = tempfile.mkstemp(prefix=".api-key-", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd = -1
             f.write(text)
-    except Exception:
+            f.flush()
+            os.fsync(f.fileno())
         try:
-            tmp.unlink()
-        except Exception:                                            # noqa: BLE001
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise ValueError("refusing to replace a non-regular API key file")
+        except FileNotFoundError:
             pass
-        raise
-    os.replace(str(tmp), str(path))
-    try:
-        os.chmod(str(path), 0o600)
-    except Exception:                                                # noqa: BLE001
-        pass
+        os.replace(tmp, path)
+        tmp = None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if tmp is not None:
+            os.unlink(tmp)
 
 
 # ── the store ────────────────────────────────────────────────────────────────
@@ -178,30 +188,39 @@ def read_store() -> dict:
     older/newer api_keys.json must never be able to stop the panel booting or the
     runner starting — the worst it may cost is the named keys. The built-in key is
     supplied independently through the protected local-secret overlay."""
-    try:
-        raw = json.loads(_p(STORE).read_text(encoding="utf-8"))
-    except Exception:                                                # noqa: BLE001
-        return {"v": 1, "keys": []}
-    if not isinstance(raw, dict):
-        return {"v": 1, "keys": []}
-    rows = raw.get("keys")
-    out = []
-    for r in rows if isinstance(rows, list) else []:
-        if not isinstance(r, dict):
-            continue
-        kid, key, name = r.get("id"), r.get("key"), r.get("name")
-        if not (isinstance(kid, str) and isinstance(key, str) and key.strip()):
-            continue
-        out.append({"id": kid, "name": str(name or "")[:NAME_MAX] or "unnamed",
-                    "key": key.strip(),
-                    "created": str(r.get("created") or "")})
-    return {"v": 1, "keys": out}
+    with _KEY_LOCK:
+        try:
+            raw = json.loads(_p(STORE).read_text(encoding="utf-8"))
+        except Exception:                                                # noqa: BLE001
+            return {"v": 1, "keys": []}
+        if not isinstance(raw, dict):
+            return {"v": 1, "keys": []}
+        rows = raw.get("keys")
+        out = []
+        for r in rows if isinstance(rows, list) else []:
+            if not isinstance(r, dict):
+                continue
+            kid, key, name = r.get("id"), r.get("key"), r.get("name")
+            if not (isinstance(kid, str) and isinstance(key, str) and key.strip()):
+                continue
+            out.append({"id": kid, "name": str(name or "")[:NAME_MAX] or "unnamed",
+                        "key": key.strip(),
+                        "created": str(r.get("created") or "")})
+        return {"v": 1, "keys": out}
 
 
 def write_store(st: dict) -> None:
-    _atomic_secret(_p(STORE), json.dumps({"v": 1, "keys": st.get("keys") or []},
-                                         indent=2) + "\n")
-    write_keyfile(st)
+    with _KEY_LOCK:
+        previous = read_store()
+        payload = json.dumps({"v": 1, "keys": st.get("keys") or []}, indent=2) + "\n"
+        # Commit the authoritative store last: a derived-file failure must not
+        # retain a newly minted secret that the caller never got to see.
+        write_keyfile(st)
+        try:
+            _atomic_secret(_p(STORE), payload)
+        except Exception:
+            write_keyfile(previous)
+            raise
 
 
 def keyset(st: "dict | None" = None) -> list:
@@ -221,7 +240,8 @@ def keyfile_text(st: "dict | None" = None) -> str:
 
 
 def write_keyfile(st: "dict | None" = None) -> None:
-    _atomic_secret(_p(KEYFILE), keyfile_text(st))
+    with _KEY_LOCK:
+        _atomic_secret(_p(KEYFILE), keyfile_text(st))
 
 
 def digest(st: "dict | None" = None) -> str:
@@ -282,7 +302,8 @@ def _clean_name(raw: str, taken: "list[str]") -> str:
     if name not in taken:
         return name
     for n in range(2, 200):
-        cand = f"{name} ({n})"[:NAME_MAX]
+        suffix = f" ({n})"
+        cand = name[:NAME_MAX - len(suffix)].rstrip() + suffix
         if cand not in taken:
             return cand
     return f"{name[:NAME_MAX - 8]} {secrets.token_hex(3)}"
@@ -353,6 +374,8 @@ def parse_metrics(text: str) -> dict:
         try:
             v = float(parts[1])
         except ValueError:
+            continue
+        if not math.isfinite(v):
             continue
         out[want] = int(v) if v == int(v) else round(v, 2)
     return out
@@ -542,51 +565,53 @@ class MintBody(BaseModel):
 
 @app.post("/api/apikeys")
 def api_keys_mint(body: MintBody) -> dict:
-    st = read_store()
-    if len(st["keys"]) >= MAX_KEYS:
-        # ACTIONABLE, in the checklist's exact sense: it names the limit, the count, and
-        # the ONE thing that clears it. A bare 400 leaves a caller to guess whether to
-        # retry, wait, or stop.
-        raise HTTPException(400, f"{MAX_KEYS} named keys is the limit and you have "
-                                 f"{len(st['keys'])}. Revoke one first — POST "
-                                 f"/api/apikeys/{{id}}/revoke, ids from GET /api/apikeys.")
-    name = _clean_name(body.name, [r["name"] for r in st["keys"]])
-    key = KEY_PREFIX + secrets.token_hex(16)
-    row = {"id": "k_" + secrets.token_hex(6), "name": name, "key": key,
-           "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    st["keys"].append(row)
-    write_store(st)
-    # ⚠️ THE ONLY RESPONSE IN THIS APP THAT CARRIES A KEY. It is not logged, it is not
-    # cached, and the panel shows it once with a copy button and then forgets it too.
-    return {"ok": True, "id": row["id"], "name": name, "key": key,
-            "prefix": _prefix(key), "created": row["created"], "pending": pending(st)}
+    with _KEY_LOCK:
+        st = read_store()
+        if len(st["keys"]) >= MAX_KEYS:
+            # ACTIONABLE, in the checklist's exact sense: it names the limit, the count, and
+            # the ONE thing that clears it. A bare 400 leaves a caller to guess whether to
+            # retry, wait, or stop.
+            raise HTTPException(400, f"{MAX_KEYS} named keys is the limit and you have "
+                                     f"{len(st['keys'])}. Revoke one first — POST "
+                                     f"/api/apikeys/{{id}}/revoke, ids from GET /api/apikeys.")
+        name = _clean_name(body.name, [r["name"] for r in st["keys"]])
+        key = KEY_PREFIX + secrets.token_hex(16)
+        row = {"id": "k_" + secrets.token_hex(6), "name": name, "key": key,
+               "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        st["keys"].append(row)
+        write_store(st)
+        # ⚠️ THE ONLY RESPONSE IN THIS APP THAT CARRIES A KEY. It is not logged, it is not
+        # cached, and the panel shows it once with a copy button and then forgets it too.
+        return {"ok": True, "id": row["id"], "name": name, "key": key,
+                "prefix": _prefix(key), "created": row["created"], "pending": pending(st)}
 
 
 @app.post("/api/apikeys/{kid}/revoke")
 def api_keys_revoke(kid: str) -> JSONResponse:
-    st = read_store()
-    keep = [r for r in st["keys"] if r["id"] != kid]
-    if len(keep) == len(st["keys"]):
-        # ⚠️ ACTIONABLE, AND IT NAMES THE LIKELIEST CAUSE (the checklist's error rule;
-        # `no such key` was the pre-checklist wording and is exactly the bare 404 it
-        # bans). Revoke is IDEMPOTENT in effect — a key that is already gone is gone —
-        # so the overwhelmingly common way to reach this is a double-click or a stale
-        # panel, and a message that says so turns a dead end into a shrug.
-        raise HTTPException(404, f"No key with id {kid!r}. It may already have been "
-                                 f"revoked — GET /api/apikeys lists the current ids. "
-                                 f"There "
-                                 + (f"are {len(keep)} named keys." if len(keep) != 1
-                                    else "is 1 named key."))
-    gone = next(r for r in st["keys"] if r["id"] == kid)
-    st["keys"] = keep
-    write_store(st)          # the secret leaves BOTH files in this one call
-    # HONEST ABOUT WHEN IT BINDS (fact 3). The row is gone from the panel immediately
-    # and the secret is gone from disk immediately, but the RUNNING llama-server still
-    # holds the set it was launched with. Saying "revoked" full stop would be the
-    # LIE-TO-USER class; the panel renders this sentence and offers the restart.
-    return JSONResponse({"ok": True, "name": gone["name"], "pending": pending(st),
-                         "note": "Revoked. The running runner still accepts it until "
-                                 "it restarts."})
+    with _KEY_LOCK:
+        st = read_store()
+        keep = [r for r in st["keys"] if r["id"] != kid]
+        if len(keep) == len(st["keys"]):
+            # ⚠️ ACTIONABLE, AND IT NAMES THE LIKELIEST CAUSE (the checklist's error rule;
+            # `no such key` was the pre-checklist wording and is exactly the bare 404 it
+            # bans). Revoke is IDEMPOTENT in effect — a key that is already gone is gone —
+            # so the overwhelmingly common way to reach this is a double-click or a stale
+            # panel, and a message that says so turns a dead end into a shrug.
+            raise HTTPException(404, f"No key with id {kid!r}. It may already have been "
+                                     f"revoked — GET /api/apikeys lists the current ids. "
+                                     f"There "
+                                     + (f"are {len(keep)} named keys." if len(keep) != 1
+                                        else "is 1 named key."))
+        gone = next(r for r in st["keys"] if r["id"] == kid)
+        st["keys"] = keep
+        write_store(st)          # the secret leaves BOTH files in this one call
+        # HONEST ABOUT WHEN IT BINDS (fact 3). The row is gone from the panel immediately
+        # and the secret is gone from disk immediately, but the RUNNING llama-server still
+        # holds the set it was launched with. Saying "revoked" full stop would be the
+        # LIE-TO-USER class; the panel renders this sentence and offers the restart.
+        return JSONResponse({"ok": True, "name": gone["name"], "pending": pending(st),
+                             "note": "Revoked. The running runner still accepts it until "
+                                     "it restarts."})
 
 
 @app.get("/api/apilog")

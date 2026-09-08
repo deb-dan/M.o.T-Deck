@@ -261,7 +261,7 @@ _LANES = (
     # of test_comfy_lane.py depends on — would otherwise leave core.comfycur's own ROOT
     # pointing at the real app directory, and those tests would go GREEN while measuring
     # the wrong tree. It registers no route, so route order is untouched.
-    "core.comfycur", "core.comfysubgraph", "core.comfymeta",
+    "core.comfycur", "core.comfysubgraph", "core.comfymeta", "core.comfyfiles",
     # …and the GOOSE agent lane by the SAME rule, a sixth time: new, it separates no
     # pair of neighbours, and it costs only where /goose and /api/goose/* appear.
     "routers.goose",

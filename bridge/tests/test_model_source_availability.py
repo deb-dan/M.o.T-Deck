@@ -299,7 +299,7 @@ def test_18_merge_evidence_is_source_and_path_identity_safe(tmp_path):
 
 
 def test_19_atomic_write_failure_preserves_original_bytes(tmp_path, monkeypatch):
-    path = tmp_path / "models.json"; path.write_bytes(b'{"models":["old"]}\n'); before = path.read_bytes()
+    path = tmp_path / "models.json"; path.write_bytes(b'{"models":[{"id":"old"}]}\n'); before = path.read_bytes()
     monkeypatch.setattr(SR.os, "replace", lambda *_: (_ for _ in ()).throw(OSError("no replace")))
     with pytest.raises(OSError): SR.write(str(path), [])
     assert path.read_bytes() == before
@@ -388,8 +388,10 @@ def test_24_second_unchanged_explicit_rescan_is_byte_stable_after_evidence(tmp_p
     assert registry.read_bytes() == first
 
 
-def test_25_corrupt_utf8_registry_is_atomically_recovered(tmp_path):
+def test_25_corrupt_utf8_registry_cannot_authorize_replacement(tmp_path):
     registry = tmp_path / "models.json"
     registry.write_bytes(b'{"models": \xff}')
-    SR.write(str(registry), [])
-    assert json.loads(registry.read_text()) == {"models": []}
+    before = registry.read_bytes()
+    with pytest.raises(UnicodeError):
+        SR.write(str(registry), [])
+    assert registry.read_bytes() == before

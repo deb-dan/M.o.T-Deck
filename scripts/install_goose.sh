@@ -113,7 +113,7 @@ goose_run() {   # goose_run <args…>   — the pinned binary, inside its own ho
       XDG_CONFIG_HOME="$HOMEDIR/.config" XDG_DATA_HOME="$HOMEDIR/.local/share" \
       XDG_STATE_HOME="$HOMEDIR/.local/state" XDG_CACHE_HOME="$HOMEDIR/.cache" \
       GOOSE_TELEMETRY_OFF=1 GOOSE_DISABLE_KEYRING=true \
-      "$BIN" "$@"
+      "${GOOSE_PROBE_BIN:-$BIN}" "$@"
 }
 goose_version() { mkdir -p "$HOMEDIR" 2>/dev/null || true
                   goose_run --version 2>/dev/null | tr -d '[:space:]'; }
@@ -198,23 +198,31 @@ if [[ "${post_install_done:-0}" -ne 1 ]]; then
   # The archive contains exactly `./` and `./goose` (verified at recon). Extract only
   # that one member by name, so a re-packaged archive cannot scatter files: --strip
   # nothing, just the one path.
-  rm -f "$BIN"
-  tar xzf "$TGZ" -C "$DEST/bin" ./goose \
+  GOOSE_STAGE="$(mktemp -d "$DEST/.goose-install.XXXXXX")"
+  trap 'rm -rf "${GOOSE_STAGE:-}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  tar xzf "$TGZ" -C "$GOOSE_STAGE" ./goose \
     || { die "the archive does not contain ./goose — upstream changed its layout. Nothing was installed."; }
-  [[ -f "$BIN" ]] || die "no file at $BIN after extraction."
-  chmod +x "$BIN"
+  GOOSE_PROBE_BIN="$GOOSE_STAGE/goose"
+  [[ -f "$GOOSE_PROBE_BIN" && ! -L "$GOOSE_PROBE_BIN" ]] || die "no regular goose binary after extraction."
+  chmod +x "$GOOSE_PROBE_BIN"
 
   # THE SECOND DIGEST, over the extracted bytes.
-  binsha="$(sha256_of "$BIN")"
+  binsha="$(sha256_of "$GOOSE_PROBE_BIN")"
   [[ "$binsha" == "$GOOSE_BIN_SHA256" ]] || {
-    rm -f "$BIN"
     die "the extracted binary's sha256 is ${binsha}, the pin says ${GOOSE_BIN_SHA256}. Removed it."; }
   say "sha256 verified for the extracted binary (${binsha})"
 
   # Prove it RUNS before claiming success.
   ver="$(goose_version || true)"
-  [[ -n "$ver" ]] || die "the binary is installed but does not run (see $LOG)."
+  [[ -n "$ver" ]] || die "the candidate binary does not run; the existing install was kept (see $LOG)."
   [[ "$ver" == "${GOOSE_TAG#v}" ]] || warn "the binary reports '${ver}', the pin says ${GOOSE_TAG#v} — the digests matched, so this is an upstream labelling change, not a substituted artifact."
+  # Replace only after digest and execution checks; failure leaves the prior binary.
+  mv -f "$GOOSE_PROBE_BIN" "$BIN"
+  unset GOOSE_PROBE_BIN
+  rm -rf "$GOOSE_STAGE"
+  GOOSE_STAGE=""
   say "installed: goose ${ver}"
   rm -f "$TGZ"                       # 90MB we can always re-fetch against the digest
 fi

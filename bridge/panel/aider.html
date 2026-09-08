@@ -379,11 +379,15 @@ el('btn-start').onclick = () => start();
 // to stop an agent and instead leaves it running. The POST kills the process; the
 // socket then closes because the child is gone.
 el('btn-stop').onclick = async () => {
-  el('btn-stop').disabled = true;
-  try { await jfetch('/api/aider/end', { method: 'POST' }); }
-  catch (e) { say('could not end the session: ' + e.message); }
-  el('btn-stop').disabled = false;
-  if (sock) sock.close();
+  const b = el('btn-stop'), connection = sock;
+  b.disabled = true;
+  try {
+    await jfetch('/api/aider/end', { method: 'POST' });
+    // The receipt belongs to the connection that requested End. A failed request
+    // keeps that terminal attached so the user can retry.
+    if (connection && sock === connection) connection.close();
+  } catch (e) { say('could not end the session: ' + e.message); }
+  finally { b.disabled = false; }
   await loadStatus();
 };
 
@@ -394,15 +398,17 @@ function start() {
   say('');
   t.reset();
   const q = '?cols=' + (t.cols | 0) + '&rows=' + (t.rows | 0);
-  sock = new WebSocket('ws://' + location.host + '/api/pty/aider' + q);
+  const connection = sock = new WebSocket('ws://' + location.host + '/api/pty/aider' + q);
   sock.binaryType = 'arraybuffer';
-  sock.onopen = () => { paint(); sendResize(); t.focus(); };
+  sock.onopen = () => { if (sock !== connection) return; paint(); sendResize(); t.focus(); };
   sock.onmessage = ev => {
+    if (sock !== connection) return;
     const d = ev.data;
     if (typeof d === 'string') t.write(d);
     else t.write(new Uint8Array(d));
   };
   sock.onclose = ev => {
+    if (sock !== connection) return;
     sock = null;
     paint();
     if (ev.code === 4403) say('refused: this page is not allowed to open the terminal.');
@@ -419,7 +425,7 @@ function start() {
     else if (t) t.write('\r\n\x1b[2m— session ended —\x1b[0m\r\n');
     loadStatus();
   };
-  sock.onerror = () => say('the terminal connection failed.');
+  sock.onerror = () => { if (sock === connection) say('the terminal connection failed.'); };
   paint();
 }
 

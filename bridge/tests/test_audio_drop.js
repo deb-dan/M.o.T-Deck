@@ -41,9 +41,10 @@ check('the suffix set matches bridge/voice.py REF_AUDIO_SUFFIXES',
       /REF_AUDIO_SUFFIXES = \("wav", "mp3", "flac", "m4a"\)/
         .test(fs.readFileSync(path.join(ROOT, 'bridge', 'voice.py'), 'utf8')));
 check('a successful drop writes one activity-feed line',
-      /feed\('voice', 'clip ' \+ esc\(/.test(body));
-check('the clip name is escaped before it reaches the feed (feed interpolates HTML)',
-      /esc\(j\.name \|\| stem\)/.test(body));
+      /feed\('voice', 'clip ' \+ \(j\.name \|\| stem\)/.test(body));
+check('feed escapes the clip name at its HTML boundary exactly once',
+      require('./_panel_source').extractFunction(html, 'feed').includes('${esc(msg)}')
+      && !/esc\(j\.name \|\| stem\)/.test(body));
 check('it refreshes the voice library so an open clip picker shows the new chip',
       /loadVoiceLib\(true\)/.test(body));
 
@@ -594,7 +595,7 @@ check('switchTab returns false when the native bridge is absent',
 check('the sidebar rows call openComponent, not jumpToCard directly',
       // PHASE 2: the rows are rendered from the nav model, so the call site moved into
       // renderSidebar — the rule (a component row goes through openComponent) is the same.
-      /onclick="openComponent\('\$\{escAttr\(name\)\}'\)"/.test(html));
+      /onclick="openComponent\(\$\{apiArg\(name\)\}\)"/.test(html));
 // ⚠️ REWRITTEN AT THE CONSOLIDATION SLICE. The RULE is unchanged and is what this has
 // always guarded: the Classic surface routes to its native tab and falls back to the
 // in-panel view, so it can never become a dead control. What moved is the ENTRY POINT —

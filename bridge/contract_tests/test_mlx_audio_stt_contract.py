@@ -34,6 +34,9 @@ points at another machine's interpreter (the sandbox reads a Mac-built venv).
 Run: pytest bridge/contract_tests/
 """
 import subprocess
+from functools import lru_cache
+
+import pytest
 from pathlib import Path
 
 import yaml
@@ -42,6 +45,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BIN = ROOT / "data" / "mlx-venv" / "bin" / "mlx_audio.stt.generate"
 
 
+@lru_cache(maxsize=1)
 def _help():
     """--help text, or None when it cannot be obtained. Same skip discipline as
     test_mlx_whisper_contract: real --help always contains "usage"."""
@@ -92,7 +96,7 @@ def test_console_script_present_when_mlx_audio_is_installed():
 def test_model_and_audio_flags_present():
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert "--model" in h, (
         "mlx_audio.stt.generate no longer advertises --model — stt_argv names the "
         "registry path with it")
@@ -105,7 +109,7 @@ def test_model_and_audio_flags_present():
 def test_output_path_flag_present():
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert "--output-path" in h, (
         "mlx_audio.stt.generate no longer advertises --output-path — stt_argv passes "
         "<tmpdir>/<stem> as a PREFIX and voice.stt_read_output reads <stem>.json")
@@ -114,7 +118,7 @@ def test_output_path_flag_present():
 def test_json_is_still_an_output_format():
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert "--format" in h, (
         "mlx_audio.stt.generate dropped --format — its DEFAULT is txt, which "
         "voice.stt_read_output cannot parse, so passing it is mandatory")

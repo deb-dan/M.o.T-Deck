@@ -115,7 +115,12 @@
   async function stop(turn){
     if (!turn || !turn.id || turn.stopRequested) return null;
     turn.stopRequested = true;
-    return jsonFetch('/api/turns/' + encodeURIComponent(turn.id) + '/stop', {method:'POST'});
+    try {
+      return await jsonFetch('/api/turns/' + encodeURIComponent(turn.id) + '/stop', {method:'POST'});
+    } catch (error) {
+      turn.stopRequested = false;
+      throw error;
+    }
   }
 
   function complete(ctx, state, error){
@@ -457,16 +462,19 @@
   async function prepareHermesSession(){
     if (chatPane.hermesSid) return {id:chatPane.hermesSid,
       stored_id:chatPane.hermesStoredSid || ''};
+    const opening = chatPane.openRequest, lane = chatPane.mode;
     const response = await fetch('/api/hermes/session/new', {method:'POST'});
     const made = await response.json();
-    if (!response.ok || !made.id || !made.stored_id)
-      throw new Error(made.error || 'Hermes created no durable live/stored identity');
+    if (chatPane.openRequest !== opening || chatPane.mode !== lane) throw new Error('chat selection changed');
+    if (!response.ok || !made || !made.id || !made.stored_id)
+      throw new Error((made && made.error) || 'Hermes created no durable live/stored identity');
     chatPane.hermesSid = made.id;
-    localStorage.setItem('motdeck-hermes-sid', made.id);
+    try { localStorage.setItem('motdeck-hermes-sid', made.id); } catch (_) {}
     chatPane.hermesStoredSid = made.stored_id || null;
-    if (chatPane.hermesStoredSid)
-      localStorage.setItem('motdeck-hermes-stored', chatPane.hermesStoredSid);
-    else localStorage.removeItem('motdeck-hermes-stored');
+    try {
+      if (chatPane.hermesStoredSid) localStorage.setItem('motdeck-hermes-stored', chatPane.hermesStoredSid);
+      else localStorage.removeItem('motdeck-hermes-stored');
+    } catch (_) {}
     return made;
   }
 
@@ -536,6 +544,7 @@ async function stopTurnNow(reason){
   else if (turn && turn.id && window.MOTDeckTurnStream) {
     try { await MOTDeckTurnStream.stop(turn); } catch (_) {}
   }
+  if (chatPane.curTurn !== turn) return true;
   forceEndTurn(reason);
   if (!chatPane.curTurn && !chatPane.busy) return true;
   await new Promise(resolve => setTimeout(resolve, 80));

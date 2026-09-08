@@ -358,18 +358,16 @@ if HAVE_XL:
               and os.stat(bak).st_mtime == bak_mtime)
 
         # THE MTIME FENCE
-        # ⚠️ 100 SECONDS, NOT before_mtime: writeback allows one second of slack on
-        # purpose (a float off the wire, a filesystem whose timestamp resolution is
-        # not ours to assume), and this whole test runs inside that second.
+        # Both old and same-second versions must be fenced; JSON preserves the float.
         stale = before_mtime - 100
         rep3, err3 = oo.writeback(office, work3, "book.xlsx", NEW, stale)
         check("a save whose mtime is stale is REFUSED with 409, not silently won",
               rep3 is None and err3 and err3[0] == 409, err3)
         check("…and the refusal says how to get past it",
               "force" in (err3[1] if err3 else ""))
-        check("…while a save one second off is NOT refused (the deliberate slack)",
+        check("…and a different edit in the same second is also refused",
               oo.writeback(office, work3, "book.xlsx", NEW,
-                           os.stat(target).st_mtime - 0.4)[1] is None)
+                           os.stat(target).st_mtime - 0.4)[1][0] == 409)
         rep4, err4 = oo.writeback(office, work3, "book.xlsx", NEW, stale,
                                   force=True)
         check("…and force=True overwrites deliberately, and says it did",
@@ -513,14 +511,18 @@ try:
 
     # ── the write-back ROUTE, end to end, on a workbook we make and remove ──
     if HAVE_XL:
-        d = office.office_dir(ROOT)
+        from bridge import app as app_module
+        route_root = tempfile.TemporaryDirectory(prefix="oo-route-")
+        saved_root = app_module.ROOT
+        app_module.ROOT = Path(route_root.name)
+        d = office.office_dir(route_root.name)
         name = "zz-oo-lane-selftest.xlsx"
         target = os.path.join(d, name)
         made = []
         try:
             make_xlsx(target, "before")
             made.append(target)
-            newp = os.path.join(tempfile.gettempdir(), "oo-lane-new.xlsx")
+            newp = os.path.join(route_root.name, "oo-lane-new.xlsx")
             make_xlsx(newp, "AFTER")
             NEW = open(newp, "rb").read()
             mt = os.stat(target).st_mtime
@@ -552,8 +554,11 @@ try:
                     os.unlink(p)
                 except OSError:
                     pass
+            app_module.ROOT = saved_root
+            route_root.cleanup()
 except Exception as _e:                                          # noqa: BLE001
-    print(f"  (live route checks SKIPPED: {type(_e).__name__}: {_e})")
+    check("live route checks completed without an exception", False,
+          f"{type(_e).__name__}: {_e}")
 
 # ══ 6. THE ONE-EDITOR WIRING in the two pages ════════════════════════════════
 # ⚠️ REWRITTEN AT loffice-2026-08-28a. The checks this replaced pinned a NAVIGATION —
@@ -589,7 +594,7 @@ check("…and it points at the EMBEDDED shape of the editor page",
 check("there is exactly ONE predicate for is-the-editor-the-editor, and it is a "
       "function rather than a flag read in eleven places",
       PAGE.count("function editorActive()") == 1
-      and "return !!(ooInstalled && ooReady && !!current);" in PAGE)
+      and "return !!(ooInstalled && ooReady && current && ooDoc === current);" in PAGE)
 check("…and exactly ONE place where it reaches the DOM",
       PAGE.count("function ooPaintClass()") == 1
       and PAGE.count("classList.toggle('ooedit'") == 1)
@@ -619,14 +624,14 @@ SAVE_CODE = "\n".join(l for l in SAVE.splitlines() if not l.strip().startswith("
 check("Save goes to the EDITOR when the editor owns the document, and it BRANCHES "
       "BEFORE reading the snapshot — falling through would write the file as it was "
       "when the editor opened it straight over the user's edits",
-      "if (editorActive()) { await ooSave(false); return; }" in SAVE_CODE
+      "if (editorActive()) return await ooSave(false);" in SAVE_CODE
       and SAVE_CODE.index("editorActive()") < SAVE_CODE.index("snapshotToSave"))
 EV = PAGE.split("function ooEvent(ev)")[1].split("\n// ── is it installed?")[0]
 check("the editor's onDocumentStateChange drives THE dirty flag — the same one the dot, "
       "the 'unsaved changes' line and the heartbeat already read",
       "if (kind === 'state')" in EV and "dirty = d; paint();" in EV)
-check("…and a save clears it and refreshes the file list",
-      "if (kind === 'saved')" in EV and "dirty = false" in EV and "loadFiles()" in EV)
+check("…and a save retains newer edits and refreshes the file list",
+      "if (kind === 'saved')" in EV and "dirty = !!ev.dirty" in EV and "loadFiles()" in EV)
 # ⚠️ FOUND BY PROBING, NOT BY READING, so it gets a test rather than a comment. Clearing
 # the mtime baseline (extSeen = 0) on an open means "re-baseline from disk on the next
 # check", and the next check is up to 15 seconds away — so an agent write landing inside
@@ -834,7 +839,7 @@ check("L1a: the editor's OWN save gesture is routed into the write-back, so the 
 check("L1b: and a dirty:false that NO write-back produced is REFUSED rather than "
       "forwarded — the floor under L1a, and the half that stays honest if that route is "
       "ever unreachable",
-      "if (!d && dirtyNow && !saving)" in OO and "heldClears++" in OO)
+      "if (!d && dirtyNow)" in OO and "heldClears++" in OO)
 check("…both are countable off probe(), so the fix is measurable rather than inferred",
       "extSaves: extSaves" in OO and "heldClears: heldClears" in OO)
 # B1 — rename a workbook while the editor holds it and the next save posted to the OLD
@@ -947,14 +952,14 @@ check("…and it never trims another product's undo stack",
 check("§9.2d: it is COUNTABLE off probe(), like heldClears — so the fix is measured, "
       "not inferred (live: pluginDirtyClears 1, dot off, sdkjs modified false)",
       "pluginDirtyClears: pluginDirtyClears" in OO and "pluginDirtyClears++;" in OO)
-# ⚠️ THE L1 GUARD IS LEFT BYTE-IDENTICAL, and this is the assertion that says so: the
+# The L1 guard also rejects clears during an unconfirmed write-back. The
 # two arms cannot both fire on one event (one is dirty:TRUE, the other dirty:FALSE),
 # and L1's is still the one that refuses an unearned clear.
-check("§9.2e: L1's refusal is untouched and still SECOND — a dirty:false that no "
+check("§9.2e: L1's refusal remains SECOND and covers a pending save — a dirty:false that no "
       "write-back produced is still refused",
-      "if (!d && dirtyNow && !saving) {" in OO
+      "if (!d && dirtyNow) {" in OO
       and OO.index("if (d && !dirtyNow && !saving && historyIsPluginOnly()")
-          < OO.index("if (!d && dirtyNow && !saving) {"))
+          < OO.index("if (!d && dirtyNow) {"))
 #
 # §9.3 — applyOps REACHED THE MODEL, THE PDF AND THE DISK AND WAS NOT PAINTED. Measured
 # again before the fix: SetValue('PAINTPROOF') at B7, GetValue() returned PAINTPROOF, the
@@ -967,7 +972,7 @@ check("§9.3a: the write plan runs inside the editor's own builder-script bracke
       and "api.canRunBuilderScript()" in OO and "api.asc_Recalculate()" in OO)
 check("§9.3b: and the bracket is CLOSED on every exit — the good one, a refusal, a "
       "throw — because a return that skipped it would leave the editor inside an open "
-      "transaction", "} finally { paint.end(); }" in OO)
+      "transaction", "} finally {\n    paint.end();" in OO)
 check("§9.3c: asc_Recalculate is only called if a transaction was actually started "
       "(it ENDS one, so calling it otherwise is worse than not painting)",
       "if (!started) return;" in OO)

@@ -80,3 +80,15 @@ def test_zero_exit_without_the_disk_contract_is_not_reported_as_success(monkeypa
     receipt = S._install_one("opencode")
     assert receipt["ok"] is False and receipt["installed"] is False
     assert "on-disk install contract is still incomplete" in receipt["tail"]
+
+
+def test_unexpected_disk_probe_failure_does_not_wedge_queue(monkeypatch):
+    def fail(key):
+        raise OSError('unreadable install directory')
+    monkeypatch.setattr(S, '_install_one', fail)
+    with S._OPTIONAL_LOCK:
+        S._OPTIONAL_JOB.update(id='failed-probe', running=True, receipts=[], current='')
+    S._optional_worker('failed-probe', ['aider', 'goose'])
+    snap = S._optional_snapshot()
+    assert snap['running'] is False and snap['completed'] == 2
+    assert all(not row['ok'] and 'unreadable' in row['tail'] for row in snap['receipts'])

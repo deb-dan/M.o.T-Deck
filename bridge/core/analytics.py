@@ -72,7 +72,9 @@ def api_analytics() -> JSONResponse:
             out["tokens_today"], out["turns_today"] = int(row[0] or 0), int(row[1] or 0)
             r2 = c.execute("SELECT AVG(tps) FROM (SELECT tps FROM turns WHERE tps>0 ORDER BY ts DESC LIMIT 20)").fetchone()
             out["avg_tps"] = round(r2[0], 1) if r2 and r2[0] else 0
-            r3 = c.execute("SELECT COALESCE(SUM(cached_tok),0), COALESCE(SUM(in_tok),0) FROM turns WHERE cached_tok>0").fetchone()
+            # Cache misses belong in the denominator: filtering them out inflates
+            # the displayed hit rate and hides a measured zero-hit workload.
+            r3 = c.execute("SELECT COALESCE(SUM(cached_tok),0), COALESCE(SUM(in_tok),0) FROM turns").fetchone()
             if r3 and (r3[1] or 0) > 0:
                 out["cache_hit_pct"] = round(r3[0] / r3[1] * 100)
             c.close()

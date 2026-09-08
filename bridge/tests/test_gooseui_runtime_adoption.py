@@ -4,9 +4,21 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import pytest
 
 from bridge.core import ownership
 from bridge.routers import gooseui
+
+
+@pytest.mark.parametrize('payload', ['[]', 'null', '1', '{"pid": Infinity}'])
+def test_unusable_runtime_metadata_is_not_an_adoption_claim(tmp_path, monkeypatch, payload):
+    monkeypatch.setattr(gooseui, "ROOT", tmp_path)
+    path = gooseui._runtime_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(payload)
+    path.chmod(0o600)
+    assert gooseui._read_runtime_unlocked() is None
+    assert path.read_text() == payload
 
 
 def _reset_runtime_globals():

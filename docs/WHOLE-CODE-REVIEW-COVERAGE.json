@@ -1,0 +1,4630 @@
+{
+  "base_commit": "ea47eb1",
+  "coverage_state": "Historical read coverage recorded against the per-file SHA-256 values in this file. It is not a claim that the changed post-ea47eb1 working tree has been re-read or accepted after every edit; changed hashes and new files require a new review pass before U170 can close.",
+  "scope": "Every tracked first-party source/configuration/test file plus historical code mockups; unmodified third-party submodules/assets are reviewed at integration and pin contracts, not represented as first-party code. Review ranges record actual source reading, never syntax/test execution.",
+  "files": {
+    ".gitattributes": {
+      "sha256": "1024cbcd355e68785781e24f8d3a2bfd195deec0a6d7206bdae2eb4f1193d81c",
+      "lines": 1,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1
+        ]
+      ],
+      "review_note": "Whitespace policy for retained upstream patches read."
+    },
+    ".gitignore": {
+      "sha256": "07ca4db006f8afe588efad73b9d8f36ef24d943189edec3dbbaf593e238c0495",
+      "lines": 20,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          20
+        ]
+      ],
+      "review_note": "Full build/live-state/vendor exclusion policy read."
+    },
+    ".gitmodules": {
+      "sha256": "b119a8e4dd02b3e279a45ae996d39574c8e92573c01c3f5b23cbc36f153d0c74",
+      "lines": 6,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          6
+        ]
+      ],
+      "review_note": "Both unmodified upstream submodule sources read."
+    },
+    "VERSION": {
+      "sha256": "e835f490a7e293519a98772a463599b5ff910adae97264d153d913bb4f74de0b",
+      "lines": 1,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "app/.gitignore": {
+      "sha256": "b78acd4ea42c9e85340be83fd0d1cba351aa445003b27376bbb7b4efbbf6856b",
+      "lines": 5,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          5
+        ]
+      ],
+      "review_note": "Generated per-size icon artifact exclusion read."
+    },
+    "app/main.swift": {
+      "sha256": "ec3c0ed744d3740e61dd6f303027c361129646c61934db548b489d868ec31b0c",
+      "lines": 3882,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          3882
+        ]
+      ],
+      "review_note": "All 3882 baseline lines read consecutively, including native tabs, scripts, navigation, permissions, setup, lifecycle, menus. Split duplicate refresh and focused reload defects reproduced; additional findings tracked."
+    },
+    "app/make_icon.swift": {
+      "sha256": "784d3f7759cfbe1aac9a06a1e0fbd8adc1cb1215de36e1a0b0ec476c90b3317b",
+      "lines": 236,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          236
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "bridge/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lines": 0,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [],
+      "review_note": "Empty package marker inspected; no code lines."
+    },
+    "bridge/adapter.py": {
+      "sha256": "06a97a87dae8259a6cb7d8900fd9afde817ba579079df651c6ed6710d88936bd",
+      "lines": 9,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          9
+        ]
+      ],
+      "review_note": "Entire existing stub read; pending adapter automation deliberately untouched."
+    },
+    "bridge/app.py": {
+      "sha256": "caaabd4c4bd6d955441017831ca8cbe3ffcea47cccbab38683cf9847d80e5f24",
+      "lines": 399,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          399
+        ]
+      ],
+      "review_note": "Full facade, route ordering, satellite imports and monkeypatch forwarding examined; preserved compatibility design."
+    },
+    "bridge/appsrc.py": {
+      "sha256": "23a5a54954549e95b4692d6b06910e589797c17c28920fce7f76231077a36dae",
+      "lines": 203,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          203
+        ]
+      ],
+      "review_note": "Full source-view manifest and ordered concatenation examined against facade registration."
+    },
+    "bridge/contract_tests/test_a6_measurement_contract.py": {
+      "sha256": "e2966155bb0c9234f4441520bb91b0c6798948b1d8b360ca4b1e77852e9f2fc0",
+      "lines": 62,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          62
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/contract_tests/test_aider_contract.py": {
+      "sha256": "09315325984360a7c7a459fc4d7a706ed5e4c9e218ceb83fb81c8b81dfeffaef",
+      "lines": 148,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          148
+        ]
+      ],
+      "review_note": "Every line read; reviewed test isolation, runtime contracts, design invariants and actual served-code behavior."
+    },
+    "bridge/contract_tests/test_app_identity_contract.py": {
+      "sha256": "24d74a5d8988966cc7f39108877cc60b48660e93383f84adae323fb25346d988",
+      "lines": 286,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          286
+        ]
+      ],
+      "review_note": "Every line read; reviewed test isolation, runtime contracts, design invariants and actual served-code behavior."
+    },
+    "bridge/contract_tests/test_attach_lanes_contract.py": {
+      "sha256": "6462292c3ef3526552f6ee22ac0f655ddc851111d3d58d82ee1a274ae38638d6",
+      "lines": 341,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          341
+        ]
+      ],
+      "review_note": "Read every line: integration constraints, fixtures, failure cases and honesty of test outcomes. Optional-source absence now reports skip in the reviewed contract suites."
+    },
+    "bridge/contract_tests/test_canonical_root_severance.py": {
+      "sha256": "b6041d361c830167eac7e6dac69002071051fd1245fd73f2f6ab8eade1491d9a",
+      "lines": 511,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          511
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/contract_tests/test_comfy_local_only_contract.py": {
+      "sha256": "2a06f6e10a71ae7320ef114451f2c7b10b2056bb105ccdd5cf1ad936dca9e135",
+      "lines": 67,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          67
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/contract_tests/test_detached_spawn_contract.py": {
+      "sha256": "a4c7f29913237268e0fe87a7e05644b327e61c8e12c1f6c62cc4aed0dfa2c5e8",
+      "lines": 515,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          515
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/contract_tests/test_goose_contract.py": {
+      "sha256": "45bc81b0d8eb4141058385f51c67541846ba6a04a71b1644f2721b029320d5bf",
+      "lines": 506,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          506
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/contract_tests/test_gooseui_contract.py": {
+      "sha256": "de0888936269d3986ea96d7e3783657355b59e284f0bb35b4de2c7dddee8528f",
+      "lines": 356,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          356
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/contract_tests/test_hermes_provider_contract.py": {
+      "sha256": "a0069bc54194673481f9dca02d68ab2535c0d19f8d58356ae300baddc4e1c6ed",
+      "lines": 201,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          201
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/contract_tests/test_hermes_skills_contract.py": {
+      "sha256": "0c2df83e051a556f6e7695da40e45f1f5e0a6fcb95df0473c6c7af5809693333",
+      "lines": 259,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          259
+        ]
+      ],
+      "review_note": "Read in full: upstream contracts, ownership and preservation rules, production-source assertions and test execution. MTP detection now executes the launcher block; Office rename assertion follows the guarded implementation."
+    },
+    "bridge/contract_tests/test_hermes_toolsets_contract.py": {
+      "sha256": "f1dce888a5238ed52adfb5557dd6dec3f82f5ce860b770bcf958dcb634a2624e",
+      "lines": 615,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          615
+        ]
+      ],
+      "review_note": "Read in full: upstream contracts, ownership and preservation rules, production-source assertions and test execution. MTP detection now executes the launcher block; Office rename assertion follows the guarded implementation."
+    },
+    "bridge/contract_tests/test_hermes_ws_contract.py": {
+      "sha256": "164fd23a7263cc5c43b3d2263b2761a8866e8de42e86ef5c4668194c34fb0483",
+      "lines": 519,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          519
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/contract_tests/test_installers_contract.py": {
+      "sha256": "5d9d7be0ab3fcccfa03220167ee8746e2a45a0f14477481f9eb1509b5d94b321",
+      "lines": 463,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          463
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/contract_tests/test_legacy_process_migration.py": {
+      "sha256": "638a1de7addb159e5d4a4c8b31a64b18bb82ab00aaa11ba501ec4ddd9c933234",
+      "lines": 182,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          182
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/contract_tests/test_llama_server_contract.py": {
+      "sha256": "4d61ae20b79a5c1095e51443647cf9d754cf1ca56782663ee0f2fb600393611a",
+      "lines": 310,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          310
+        ]
+      ],
+      "review_note": "Read in full: upstream contracts, ownership and preservation rules, production-source assertions and test execution. MTP detection now executes the launcher block; Office rename assertion follows the guarded implementation."
+    },
+    "bridge/contract_tests/test_llama_tts_contract.py": {
+      "sha256": "b446874b3f871d4fc5f495621a7d2a5cb1505fbb76737c263f7b2c378cc8957b",
+      "lines": 133,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          133
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/contract_tests/test_local_secret_migration.py": {
+      "sha256": "3debcc196db49cfd04e3c3b5d962e16cd7fb20f07da9965cf621bb9b31376c7a",
+      "lines": 194,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          194
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/contract_tests/test_local_secrets.py": {
+      "sha256": "1a09cf7d3258badfdf6364605123464759e6a28ce3283a9f50153433c79add18",
+      "lines": 159,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          159
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/contract_tests/test_manifest_reader.py": {
+      "sha256": "c6c08db666473127ed2c37573f3016349ac2c9f0c881172bdf582d1ddd43ee15",
+      "lines": 57,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          57
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "bridge/contract_tests/test_mlx_audio_stt_contract.py": {
+      "sha256": "0e9c843a4c4244e149f98b525248fb96783569bff395c450450daf2b8894b681",
+      "lines": 139,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          139
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/contract_tests/test_mlx_whisper_contract.py": {
+      "sha256": "c244609bc6fa94e9dda642158168e8ccf23b023128889efbdacebd9de0c33bc4",
+      "lines": 131,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          131
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/contract_tests/test_motdeck_identity_migration.py": {
+      "sha256": "8ce26996967ef1b7e1d7f1e93194426ed63da15200bd3eeb24dbabbf91233dde",
+      "lines": 277,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          277
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/contract_tests/test_motdeck_memory_identity.py": {
+      "sha256": "4c6091cc406b4c297e01d8bf1e75840fb4f9982b1b2abd54b174772dde1970c9",
+      "lines": 28,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          28
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/contract_tests/test_native_javascript_dialogs.py": {
+      "sha256": "e201771065bad868ec110267e0a49c32877ea6efecc291f5fbc884da014e3e75",
+      "lines": 25,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          25
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/contract_tests/test_no_name_kills_contract.py": {
+      "sha256": "2d6d4852acd9f032428e94341113eda80948b8161c63d49a325d66e1f9ba6592",
+      "lines": 471,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          471
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/contract_tests/test_odysseus_managed_handoff.py": {
+      "sha256": "012e203cb2a5bc82aeba636a0ec0ac8903ab46b313780abe0484d5b394ccbcb4",
+      "lines": 139,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          139
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/contract_tests/test_odysseus_msg_contract.py": {
+      "sha256": "ae3d5cd29d016864a513d17b56777de773c3fd36c4019517083a3ee52da144b4",
+      "lines": 219,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          219
+        ]
+      ],
+      "review_note": "Read every line: integration constraints, fixtures, failure cases and honesty of test outcomes. Optional-source absence now reports skip in the reviewed contract suites."
+    },
+    "bridge/contract_tests/test_odysseus_seed_contract.py": {
+      "sha256": "d54cd003b4abdff033035fa095212b620bf654dee02e6b152365b92bfbb15fd5",
+      "lines": 220,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          220
+        ]
+      ],
+      "review_note": "Read every line: integration constraints, fixtures, failure cases and honesty of test outcomes. Optional-source absence now reports skip in the reviewed contract suites."
+    },
+    "bridge/contract_tests/test_office_mcp_contract.py": {
+      "sha256": "624d08e4fea9632cedc118c32dc590ebaca9e3cd0ebc278b24fbe39f67c1f902",
+      "lines": 321,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          321
+        ]
+      ],
+      "review_note": "Read every line: integration constraints, fixtures, failure cases and honesty of test outcomes. Optional-source absence now reports skip in the reviewed contract suites."
+    },
+    "bridge/contract_tests/test_opencode_contract.py": {
+      "sha256": "cc847a6b3f53c6f8c154efaf47b5c12d161f47f60fe45f429692daebb133bc25",
+      "lines": 193,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          193
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/contract_tests/test_pidfile_port_contract.py": {
+      "sha256": "d2894b1daec28ec15c49b88db7b9bb848fbcd0892cbf72aab01b52f9488e2bd7",
+      "lines": 242,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          242
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/contract_tests/test_quitall_contract.py": {
+      "sha256": "82dfbff435a690ac538c05e2883fc69c97031efaf4ed2981f33aba066b50d18b",
+      "lines": 345,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          345
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/contract_tests/test_seam.py": {
+      "sha256": "f8bdb087887d2c1e476ad55e7424f6fe1c8c633d16daedfefde8762405b32d76",
+      "lines": 312,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          312
+        ]
+      ],
+      "review_note": "Read in full: upstream contracts, ownership and preservation rules, production-source assertions and test execution. MTP detection now executes the launcher block; Office rename assertion follows the guarded implementation."
+    },
+    "bridge/contract_tests/test_turn_buffer_contract.py": {
+      "sha256": "b34607c54c8d160d245ad71eb45dd3127a724d8cc6027639ebee32e21a154249",
+      "lines": 773,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          773
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/contract_tests/test_univer_assets_contract.py": {
+      "sha256": "ecd21cceec593052a3280b03807de3df384c5e7ccab10f394e21a896e81a2325",
+      "lines": 172,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          172
+        ]
+      ],
+      "review_note": "Read in full: production integration, failure handling, source assertions and behavioral test validity examined."
+    },
+    "bridge/contract_tests/test_version_truth_contract.py": {
+      "sha256": "05e09e934bd2bcb3b6a571d3963675c68a8a1223da9e83fca5002d70eccc4f5d",
+      "lines": 170,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          170
+        ]
+      ],
+      "review_note": "Every line read; reviewed test isolation, runtime contracts, design invariants and actual served-code behavior."
+    },
+    "bridge/contract_tests/test_voicebox_contract.py": {
+      "sha256": "8454d311b65552b4c6ffa152a4ea44c9a6760db9ea779b714de550125bd5f18e",
+      "lines": 278,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          278
+        ]
+      ],
+      "review_note": "Read every line: integration constraints, fixtures, failure cases and honesty of test outcomes. Optional-source absence now reports skip in the reviewed contract suites."
+    },
+    "bridge/contract_tests/test_voicestudio_contract.py": {
+      "sha256": "bcb3bc254845d63304b625a8452e92ec927b889e63c328b2d03c4c67db195fbc",
+      "lines": 176,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          176
+        ]
+      ],
+      "review_note": "Read every line: integration constraints, fixtures, failure cases and honesty of test outcomes. Optional-source absence now reports skip in the reviewed contract suites."
+    },
+    "bridge/contract_tests/test_wire_id_contract.py": {
+      "sha256": "1dd8018b3ee2a298e9943ef13d4c62adf7480d762c5caaf68a47ebc2790fc600",
+      "lines": 150,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          150
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/core/__init__.py": {
+      "sha256": "ed0d0714ccb5f1e853eb25f8bbefcd8c7c162dec6e8e220fff6d4f151513e6e7",
+      "lines": 11,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          11
+        ]
+      ],
+      "review_note": "Package dependency doctrine examined."
+    },
+    "bridge/core/analytics.py": {
+      "sha256": "4e796ef2af3830dbb9e91742c8579b2926b185c59ec92591c14e4fc5226c7794",
+      "lines": 81,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          81
+        ]
+      ],
+      "review_note": "Cache metric denominator defect reproduced (2 failures), corrected; all 4 SQLite producer-to-API cases pass. Remaining consumers reviewed separately."
+    },
+    "bridge/core/appctx.py": {
+      "sha256": "22123d478d80de3fe7b931568ffa331183b0e380dc7339d58add741ae81a813f",
+      "lines": 264,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          264
+        ]
+      ],
+      "review_note": "Full import/degradation/boot wiring and mutation-origin boundary examined; websocket callers to be traced separately."
+    },
+    "bridge/core/appidentity.py": {
+      "sha256": "e4306c39cbe30cde2c0a0b4afd0844b1468f5ea393db2ed23b9dc45e830a202f",
+      "lines": 96,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          96
+        ]
+      ],
+      "review_note": "Full canonical bundle resolver and matching-seed verification read."
+    },
+    "bridge/core/chatattachments.py": {
+      "sha256": "6f938307fc1835d310bbf0b29eb85838a86367b43bb8958cb2757f3710abb9e3",
+      "lines": 91,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          91
+        ]
+      ],
+      "review_note": "Full typed file validation and Hermes staging read; bytes, suffix and RPC errors examined."
+    },
+    "bridge/core/comfycur.py": {
+      "sha256": "2507b34cc0cad518d3c39a03fe3c9c8a975b2c874e482e6106ed56f317cc7808",
+      "lines": 1464,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1464
+        ]
+      ],
+      "review_note": "Read all 1464 lines: curation, disk, discovered catalogs, graph conversion, controls, output targeting. Multi-file loaders stop at first weight; dict widgets iterate keys. workflow_files counts zero/nonregular files as ready; compare pinned metadata. Negative link slots and malformed graphs can crash/miswire; trace refusal contract. Disk zero is treated unknown. No changes to retained model modes/licence policy/design."
+    },
+    "bridge/core/comfymeta.py": {
+      "sha256": "dc94d89a175113057440d2c799f2497fdd96a43176cccb189225487c357c6b21",
+      "lines": 96,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          96
+        ]
+      ],
+      "review_note": "Full metadata cache and authoritative hosted-node classification read; persisted-cache writer shares fixed-temp pattern."
+    },
+    "bridge/core/comfysubgraph.py": {
+      "sha256": "8b8375817f8d25a9ea669879b0a83319a941d068d3514a1e825f97e74196396e",
+      "lines": 378,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          378
+        ]
+      ],
+      "review_note": "Full graph expansion and boundary/widget mapping read; negative slot indices can select last slot; trace caller validation."
+    },
+    "bridge/core/events.py": {
+      "sha256": "de4b03f92826e08b9aceb163803cd3ad9c18915b5f6cb8083e9888d1a4bbc8e6",
+      "lines": 289,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          289
+        ]
+      ],
+      "review_note": "Full SSE queue, cross-thread delivery, disconnect and polling-backstop contract examined."
+    },
+    "bridge/core/fit.py": {
+      "sha256": "2ec1bd41a0378acc82a866fde7bcb3604a4ea41e0091b81a26fd9796f2aa3612",
+      "lines": 1260,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1260
+        ]
+      ],
+      "review_note": "Read all 1260 lines: header/formula/oracle/MLX, budget, load settings, remedies, remote and audio verdicts. Zero availability falls back to full Metal ceiling. Oracle ignores returncode/flash setting; compare actual launch flags before changes. MLX malformed shape gives zero cache with known verdict; needs explicit unknown. Audio peak failed write mutates cache and fixed tmp races. Deferred advisory-gate feature policy preserved."
+    },
+    "bridge/core/ggufhdr.py": {
+      "sha256": "dbf3e98a91d59ae66830a026b4fd7c4d709fc9b3a840dd21b3784f1155f4d7a5",
+      "lines": 432,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          432
+        ]
+      ],
+      "review_note": "Read all bounded metadata parsing and architecture shape conventions. Numeric guards accept NaN/infinity despite never-raises promise; _as_list int conversion can raise, _shape_word malformed dict can raise. Header file open may block on FIFO. No changes to upstream-derived SWA formulas without evidence."
+    },
+    "bridge/core/health.py": {
+      "sha256": "5b5bae47297d4e7b4633660460ad93b9b06796780830c7d42be354f2e42ef9fa",
+      "lines": 216,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          216
+        ]
+      ],
+      "review_note": "Full component and artifact debounce state examined; unknown/incomplete/recovery paths retained."
+    },
+    "bridge/core/hermesattachments.py": {
+      "sha256": "2011b4e2a566d51c3ee2d977c27294605b4451666441e368c039b2b3573c30be",
+      "lines": 134,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          134
+        ]
+      ],
+      "review_note": "Full image projection/token/open path read, including inode/size/mtime/signature validation."
+    },
+    "bridge/core/hermescfg.py": {
+      "sha256": "0912729544b8be7b6deafc4f96b4ae66ee5be0750a17470caeea5baf4ea34617",
+      "lines": 154,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          154
+        ]
+      ],
+      "review_note": "Full MCP writer/generation/token paths read; fixed temporary filename and external writer concurrency require cross-checks."
+    },
+    "bridge/core/hermesreplay.py": {
+      "sha256": "66f66dadfc3063131c2a2f9180a970866c507adef2baaa26967b5429eedcda0a",
+      "lines": 354,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          354
+        ]
+      ],
+      "review_note": "Read all gap-cache, bounded live queues, redaction and resumed-follow logic. Waiting state resets on any event rather than only answer; inspect gateway event sequences. Non-finite/surrogate payload serialization can abort WS reader; inspect upstream boundary."
+    },
+    "bridge/core/hermesturn.py": {
+      "sha256": "1ea9f7650f16d44ab04ef0f3e7a14c8537dae6b0ae7ce8f2a9e3165569d5a764",
+      "lines": 237,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          237
+        ]
+      ],
+      "review_note": "Read all turn buffers, subscriptions, lookup aliases and background collection. Collector currently treats error SSE and incomplete EOF as completed; trace UI reliance and producer sentinel guarantees. Frame list pop(0) is linear at overflow; bounded bytes but no event count."
+    },
+    "bridge/core/hfclient.py": {
+      "sha256": "89029d023e003e6e35057d38f3a6990ed40c47363e19c355dea856b63d21cd68",
+      "lines": 19,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          19
+        ]
+      ],
+      "review_note": "Both shared clients, redirect and timeout semantics examined; consumers included in remaining review."
+    },
+    "bridge/core/localsecrets.py": {
+      "sha256": "5eb433c2f6429fddad63bf4038100fa14cfbd4877e146a684711099212f9bc69",
+      "lines": 235,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          235
+        ]
+      ],
+      "review_note": "Full encoded secret parsing, permissions, atomic replacement, overlay and surgical scrub examined; provisioning concurrency to be cross-checked."
+    },
+    "bridge/core/memory.py": {
+      "sha256": "c74948831522531384f0a46f93bb8ff8088b6a1b160e2723c7fcd0439da5249e",
+      "lines": 661,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          661
+        ]
+      ],
+      "review_note": "Read all typed macOS probes, system budget, process attribution and sampler. Zero available values are discarded; cached_bytes reads wrong purgeable key. budget consumer repeats zero-as-missing. PID-only stale files can misattribute recycled processes (read-only) and tree only immediate children; trace existing ownership contract."
+    },
+    "bridge/core/memoryprefs.py": {
+      "sha256": "f7b50263efc636dcbca26f64d4b22a0544fd25f9c1a18bc4dde91c597d340975",
+      "lines": 190,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          190
+        ]
+      ],
+      "review_note": "All normalization/atomic persistence/update/acknowledgment/headroom/advice logic read. Maximum valid preference payload exceeds its reader size limit; reproduce."
+    },
+    "bridge/core/modeldelete.py": {
+      "sha256": "bf67c4c95de4013b031f2a2b775c004a13fbab8fa2f854f5d00b22ceb8120be3",
+      "lines": 390,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          390
+        ]
+      ],
+      "review_note": "Full deletion/recovery/assignment transaction read. Absent artifact still unlinks a quarantine that was never created; rollback occurs outside registry lock."
+    },
+    "bridge/core/modelid.py": {
+      "sha256": "4ec6055f5494ae6e82ec210e6aff593c1dccff76dfdcd53288c7e1c5126ebfed",
+      "lines": 273,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          273
+        ]
+      ],
+      "review_note": "Full wire/display/live identity flow read. Basename fallback reaches live identity and needs ambiguous-path counterexamples."
+    },
+    "bridge/core/modelreg.py": {
+      "sha256": "33f788effd88e145ba6c083bbe36412a36550a5e0a87868596ec3498209b42e6",
+      "lines": 1134,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1134
+        ]
+      ],
+      "review_note": "Full structural probes, membership, single-flight caching and reentrant writer locks read; malformed manifest list can raise before validation, FIFO open and quoted YAML pin parsing need regression checks."
+    },
+    "bridge/core/officelog.py": {
+      "sha256": "3cd362d6549837bcefdff3f043be8cc18ebcd70fc608de6ccaccb2b0fe2b8216",
+      "lines": 25,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          25
+        ]
+      ],
+      "review_note": "Full logger and module-unavailable response examined."
+    },
+    "bridge/core/ownership.py": {
+      "sha256": "37c96f93ebebcb739700f711ad897c09327e3cecdb19b66ba377cb6f72e894d1",
+      "lines": 445,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          445
+        ]
+      ],
+      "review_note": "All lock/record/signal/release/migration/CLI lines read. Unknown process birth currently conflated with death in cleanup; special-file open behavior needs reproduction."
+    },
+    "bridge/core/procs.py": {
+      "sha256": "ad3f7a774543283a8d74a8d512cdfb2937d9a1f2d5d431b9f4ec4a85f3be70a8",
+      "lines": 486,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          486
+        ]
+      ],
+      "review_note": "Full config, dependency closure, launch/stop ownership and tracked-child code examined; config-cycle and scalar writer callers still being cross-checked."
+    },
+    "bridge/core/runnermeasure.py": {
+      "sha256": "1ba62280430802c3da4d9b2ea7833beb1365c6c9c5e09e7c8fa78a3b138b206a",
+      "lines": 278,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          278
+        ]
+      ],
+      "review_note": "Full log parsing, launch association, bounded store and capture read; FIFO opening and malformed stored model rows need regression checks."
+    },
+    "bridge/core/singleton.py": {
+      "sha256": "70f5539907167b35ef9e77fdeffe116234722ccde88d8c0633f1b37cf70fe2bc",
+      "lines": 135,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          135
+        ]
+      ],
+      "review_note": "Full launcher-claim, refusal and release lifecycle examined; no guessed process ownership introduced."
+    },
+    "bridge/core/storageops.py": {
+      "sha256": "43da0d8717709883032c05a4ae5421521b9c12bacf14973fb6b7319153d51ae6",
+      "lines": 455,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          455
+        ]
+      ],
+      "review_note": "Full storage plans, containment, target fingerprints, staging and restoration read. Targeted YAML writer and allocation terminology candidates tracked."
+    },
+    "bridge/core/turns.py": {
+      "sha256": "501a93d22e6e3499959b57364841099e5f4360b318ffa3592313162b6bba7d7a",
+      "lines": 432,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          432
+        ]
+      ],
+      "review_note": "Read all lifecycle, global/per-turn budget, SSE parser and subscription leases. Generator closure after early DONE/overflow needs explicit lifetime regression; session string unbounded and lane validation unhashable input can raise TypeError. Existing error precedence retained."
+    },
+    "bridge/core/yamlset.py": {
+      "sha256": "642c2f50827ee3a06ffcd8e7b0322139c5dc1df7b5bd7da2cdac67da26465c4b",
+      "lines": 67,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          67
+        ]
+      ],
+      "review_note": "Full surgical writers examined; model/scalar quoting and commented block behavior require caller/counterexample checks."
+    },
+    "bridge/gearbox.py": {
+      "sha256": "301d8273bb86d58db20942bfc90c540221f2e32d9089e52b71644bfea6f8d53b",
+      "lines": 9,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          9
+        ]
+      ],
+      "review_note": "Entire existing stub read; pending routing implementation deliberately untouched."
+    },
+    "bridge/gooseprov.py": {
+      "sha256": "bc18301668f97de962433b86c71c5e5e1520099145f6f05f89d5dc8e8944dd10",
+      "lines": 482,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          482
+        ]
+      ],
+      "review_note": "Entire provider schema, model enumeration, user-setting merge policy and config writers read."
+    },
+    "bridge/gooseui.py": {
+      "sha256": "7ee27c2219e3337aa22eaac5213b0d60ace7cca710de37650df62e51fefd26e1",
+      "lines": 1146,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1146
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; changes and findings tracked during the whole-code review."
+    },
+    "bridge/modeltools.py": {
+      "sha256": "82fb43ebf22360bce7ef57c125ba24c073838c64530ea474c0a081583e740839",
+      "lines": 294,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          294
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "bridge/music.py": {
+      "sha256": "272dbfefeb7752d1a52960a17be82621f461992b3b5d8f969f28771026b94a12",
+      "lines": 2178,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          2178
+        ]
+      ],
+      "review_note": "Entire baseline read consecutively line by line. Existing behavior and all implementation branches inspected; warranted findings tracked and reproduced before fixes."
+    },
+    "bridge/nav.py": {
+      "sha256": "a2340f6a002ee83e19bc0656fc679def563add30ec0a2021c36219179753f175",
+      "lines": 739,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          739
+        ]
+      ],
+      "review_note": "All navigation rows/defaults/migrations/9+3 rules/persistence read across complete ranges. Fixed-temp writer and read-repair concurrency require reproduction; intentional layouts preserved."
+    },
+    "bridge/office.py": {
+      "sha256": "448ece993c5d76e6fdef9cecf4da2ed97297603b72dfc5ae23b9446d59e953e8",
+      "lines": 1879,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1879
+        ]
+      ],
+      "review_note": "Entire baseline read consecutively line by line. Existing behavior and all implementation branches inspected; warranted findings tracked and reproduced before fixes."
+    },
+    "bridge/office_mcp.py": {
+      "sha256": "946216929c36eebf0764994b15bacc20cb882520a5c7785594b683a4d855758e",
+      "lines": 598,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          598
+        ]
+      ],
+      "review_note": "Every baseline line read; reviewed configuration, MCP transport, complete preview/apply/undo and value mapping implementations. Findings reproduced and fixes in progress."
+    },
+    "bridge/office_ops.py": {
+      "sha256": "dad50995975a60c1e4b23b9f371af9c31da57ce129364cb1345c30f277686a67",
+      "lines": 3716,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          3716
+        ]
+      ],
+      "review_note": "Every baseline line read; reviewed configuration, MCP transport, complete preview/apply/undo and value mapping implementations. Findings reproduced and fixes in progress."
+    },
+    "bridge/officeblank.py": {
+      "sha256": "4b1e4543d0008909581d21ee6a89f06abfa58e65db34f902b5b59818635c565d",
+      "lines": 260,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          260
+        ]
+      ],
+      "review_note": "Entire baseline read consecutively line by line. Existing behavior and all implementation branches inspected; warranted findings tracked and reproduced before fixes."
+    },
+    "bridge/oo.py": {
+      "sha256": "d67fb2b5764a8e85052fcac262071c20540fec70c44a7c9db1bbbeee1dc43352",
+      "lines": 433,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          433
+        ]
+      ],
+      "review_note": "Entire baseline read consecutively line by line. Existing behavior and all implementation branches inspected; warranted findings tracked and reproduced before fixes."
+    },
+    "bridge/ooai.py": {
+      "sha256": "aadf8e099512c199ff115c575fcbd7b60339b39d5a74bdde9c0637e6135c0d47",
+      "lines": 554,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          554
+        ]
+      ],
+      "review_note": "Every baseline line read; reviewed configuration, MCP transport, complete preview/apply/undo and value mapping implementations. Findings reproduced and fixes in progress."
+    },
+    "bridge/panel/aider.html": {
+      "sha256": "f6d9df80cd9c8c355d495a3490eb69c7ce567afcfa20879fa15b67bace7e1530",
+      "lines": 439,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          439
+        ]
+      ],
+      "review_note": "All baseline HTML/CSS/JavaScript read, including themes, session history, installation, end/reattach, and polling. Fixed failed End disconnection, stale socket events and in-flight history redraw while deletion armed; behavioral Node regression."
+    },
+    "bridge/panel/assets/chat-files.js": {
+      "sha256": "6610eed4950fcb07c64c857c6bbee1b2d1ff536ae5174f22d636ef2da4e34366",
+      "lines": 33,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          33
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "bridge/panel/assets/fit-advisor.js": {
+      "sha256": "101d56f091505437651b258da25adf0eda635b96fd0685df8793c51d56d6867a",
+      "lines": 451,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          451
+        ]
+      ],
+      "review_note": "Full baseline file read; correctness, lifecycle and UI consumers traced. Findings are being resolved during the whole-code review."
+    },
+    "bridge/panel/assets/identity-migration.js": {
+      "sha256": "2d4d31a64a279956dc98a49153e2cfbc5e681008e6c83bf331a1b9ab1aab7a14",
+      "lines": 19,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          19
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "bridge/panel/assets/storage-controls.css": {
+      "sha256": "9ee38aacdab8afd1ee86b15dc8dbb052351e052381c8be1ec128bc31c08c3acb",
+      "lines": 42,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          42
+        ]
+      ],
+      "review_note": "Full baseline file read; correctness, lifecycle and UI consumers traced. Findings are being resolved during the whole-code review."
+    },
+    "bridge/panel/assets/storage-controls.js": {
+      "sha256": "71609c5b33ec8ba475a3423c70931580fe3657cdd9a6440178d0efb7125f5850",
+      "lines": 293,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          293
+        ]
+      ],
+      "review_note": "Full baseline file read; correctness, lifecycle and UI consumers traced. Findings are being resolved during the whole-code review."
+    },
+    "bridge/panel/assets/studio-design.css": {
+      "sha256": "9c1827c05a846bbc9d8f3cf6b212c8dbc0735d29dd3054186e53a078346bb8fc",
+      "lines": 1145,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1145
+        ]
+      ],
+      "review_note": "Entire stylesheet read; design scoping, inheritance, responsive geometry and interaction states examined."
+    },
+    "bridge/panel/assets/studio-office.css": {
+      "sha256": "6e8cd4a66659ed8dc679432d815b418973db386b4bc6d51dcf93b29d573f737a",
+      "lines": 720,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          720
+        ]
+      ],
+      "review_note": "Entire stylesheet read; design scoping, inheritance, responsive geometry and interaction states examined."
+    },
+    "bridge/panel/assets/turn-stream.js": {
+      "sha256": "ee48567a27a2f0f718f21bdfabb0d2bca90f9a6bb7e3592d16a5fcbf0548c300",
+      "lines": 559,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          559
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "bridge/panel/comfy.html": {
+      "sha256": "4b673821e3ecb2663c881e212731c419fba213f9b5ee8f899bf5548219a2d168",
+      "lines": 2998,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          2998
+        ]
+      ],
+      "review_note": "All baseline lines read consecutively: styling, templates, rendering, catalogue, source selection, lifecycle, controls, and full 360-check test program. Behavioral fixes preserve results without starter weights, refresh catalogue on request/state transitions, coalesce reads, retain failed-read snapshots, preserve source identity, select curated workflows and enable keyboard actions."
+    },
+    "bridge/panel/compose.html": {
+      "sha256": "094d867639ae18c993a2893d1c755d74ea2cd036d534ae7a4d8fcbbd380f2248",
+      "lines": 2643,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          2643
+        ]
+      ],
+      "review_note": "All baseline lines read, including six appearance variants, waveform/player, workbench layout, presets, folder controls, async lifecycle and the complete existing test program. Nine reproduced view-state defects corrected and verified; no reserved dock feature implemented."
+    },
+    "bridge/panel/goose.html": {
+      "sha256": "784e891ef0cfb7b37ac0d2a8c846d1e91524897678115bb382ef44c956dbcee2",
+      "lines": 866,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          866
+        ]
+      ],
+      "review_note": "All baseline HTML/CSS/JavaScript read, including themes, session history, installation, end/reattach, and polling. Fixed failed End disconnection, stale socket events and in-flight history redraw while deletion armed; behavioral Node regression."
+    },
+    "bridge/panel/index.html": {
+      "sha256": "5aea2491d3354620383f3f48f632eb928db8d4af3a6a1d54fea9864bb9a31c2f",
+      "lines": 15574,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          15574
+        ]
+      ],
+      "review_note": "Entire baseline and accumulated modified main panel read consecutively: styles, all themes, boot, navigation, settings, chat/voice/session lifecycles, models/downloads, artifacts/canvas, Music Classic and palette. Reproductions and fixes in progress; full coverage does not assert all findings resolved."
+    },
+    "bridge/panel/office.html": {
+      "sha256": "6969031a14dfeadeab756b58d48c2f028628f5dc8655159aa1b8190f2d346c58",
+      "lines": 10586,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          10586
+        ]
+      ],
+      "review_note": "Entire file read, including existing behavior, history comments and integration contracts; reviewed current edits and exercised Office regression suites."
+    },
+    "bridge/panel/oo.html": {
+      "sha256": "8f3a145ea80c6d3ea468a104505ab6a93e372b3458dd426261ce7324f80a7933",
+      "lines": 2488,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          2488
+        ]
+      ],
+      "review_note": "Entire file read, including existing behavior, history comments and integration contracts; reviewed current edits and exercised Office regression suites."
+    },
+    "bridge/pty_aider.py": {
+      "sha256": "cd928b4c0ea95eba0398cccd1da87758411e64530c45a7010dadc2af0c5cd18d",
+      "lines": 711,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          711
+        ]
+      ],
+      "review_note": "Entire shared PTY implementation read, including origin/control parsing, process lifecycle, scrollback, subscription and grace timers."
+    },
+    "bridge/pty_goose.py": {
+      "sha256": "dba178930545a1c3d40ff08e2ed57dd6210f9babbc68e40b84d713ee728f7674",
+      "lines": 1068,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1068
+        ]
+      ],
+      "review_note": "Entire CLI integration read: config/environment seeding, history parsing, previews, upstream-confirmed removal and process ownership."
+    },
+    "bridge/requirements.txt": {
+      "sha256": "43e9cb948954bd6f3936c3bb798052d6e1dd05d14cc87fd701fa8559ad185ecd",
+      "lines": 45,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          45
+        ]
+      ],
+      "review_note": "All dependency declarations and measured no-MCP-SDK decision read; no speculative dependency update."
+    },
+    "bridge/routers/__init__.py": {
+      "sha256": "26df3820fb395b0a7bf0a2bc5ac1ecb38a4553bcfd8e2f2f56fab156003ccabc",
+      "lines": 13,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          13
+        ]
+      ],
+      "review_note": "Package dependency doctrine examined."
+    },
+    "bridge/routers/aider.py": {
+      "sha256": "ab691402401442beeae2e57b9f5d2d1a620bac6e2fbeb7c8d13f0897669f4376",
+      "lines": 374,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          374
+        ]
+      ],
+      "review_note": "Full baseline read; discovery, acquisition, registry persistence and PTY ownership paths traced."
+    },
+    "bridge/routers/apikeys.py": {
+      "sha256": "c696f5af3616d2dc055ef9799aadd1411475af88a094d5e55a8ecb845004dbf9",
+      "lines": 650,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          650
+        ]
+      ],
+      "review_note": "Full secret store/mint/revoke, metrics and request-log/API catalogue read. Threaded mint/revoke have no transaction lock; fixed tmp permissions; nonfinite metrics and full-length naming require regressions."
+    },
+    "bridge/routers/aux.py": {
+      "sha256": "85ffd42a87ef85aa293da9b2ab943b2477d62dd7cd138be4910f82dcaf53ae71",
+      "lines": 298,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          298
+        ]
+      ],
+      "review_note": "Full baseline file read; correctness, lifecycle and UI consumers traced. Findings are being resolved during the whole-code review."
+    },
+    "bridge/routers/chat.py": {
+      "sha256": "6014234094774e810a8178a35c75a024ab11b58fe24c31351680f1b8d85856ae",
+      "lines": 459,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          459
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "bridge/routers/comfy.py": {
+      "sha256": "71a7d23be0878ded6cdc40c89a9a9ab4ad416054c0536a3feb40951f884558c9",
+      "lines": 1433,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1433
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; changes and findings tracked during the whole-code review."
+    },
+    "bridge/routers/component_lifecycle.py": {
+      "sha256": "187e9b5f20a6feaaa42a9dab9007216050f9e12e10edc74d307492b9675d0c40",
+      "lines": 427,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          427
+        ]
+      ],
+      "review_note": "Full dependency plan/start/stop/restart/provision code read; concurrency and refusal truth candidates tracked."
+    },
+    "bridge/routers/components.py": {
+      "sha256": "48db151f52e24fed1fabae3448909f6ba6bf1e722e58719b49364943147d3895",
+      "lines": 1367,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1367
+        ]
+      ],
+      "review_note": "Full source read; status, dependency, log and upstream configuration paths traced."
+    },
+    "bridge/routers/downloads.py": {
+      "sha256": "159ce72d96f52ad9a35c0904319db63d6a236a77c5de54a6e234931bcd9d7049",
+      "lines": 747,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          747
+        ]
+      ],
+      "review_note": "Full baseline read; discovery, acquisition, registry persistence and PTY ownership paths traced."
+    },
+    "bridge/routers/goose.py": {
+      "sha256": "18813619f729f33c12fec51580ecdb2ba7f4381d9f5878c5b4417117a5f64b4d",
+      "lines": 665,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          665
+        ]
+      ],
+      "review_note": "Entire CLI routes, session store operations, spawn ownership, websocket replay/takeover and disconnect cleanup read."
+    },
+    "bridge/routers/gooseui.py": {
+      "sha256": "7b2f7c703a93a29bb95006e337a97b7de3c76d3788597c8ed092d8858633d0e7",
+      "lines": 990,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          990
+        ]
+      ],
+      "review_note": "Entire embedded UI router read: private runtime records, adoption, launch and stop, native shim, provision and session routes."
+    },
+    "bridge/routers/help.py": {
+      "sha256": "c6c37eeb602777e5d5715d1d506143082108bd9f121b68085aab74ae305e4504",
+      "lines": 56,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          56
+        ]
+      ],
+      "review_note": "Full raw help-content route read; no rendering or content-source change indicated."
+    },
+    "bridge/routers/hermes.py": {
+      "sha256": "159ac11a74902730211410f2a74cef7b107a834e909c08673df15a8d87dedb4d",
+      "lines": 1481,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1481
+        ]
+      ],
+      "review_note": "Full baseline file read; correctness, lifecycle and UI consumers traced. Findings are being resolved during the whole-code review."
+    },
+    "bridge/routers/hermesattachments.py": {
+      "sha256": "164e92b7e7b6f9a29770f71b1914bd9c03f8357590b8b2ae5758a489f5afdfe0",
+      "lines": 16,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          16
+        ]
+      ],
+      "review_note": "Entire opaque image response route read."
+    },
+    "bridge/routers/hermeschannels.py": {
+      "sha256": "a17c77f022675a3418e945fda7381d22078028d65e49fa79ec3e9f4bad5adddb",
+      "lines": 139,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          139
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "bridge/routers/hermestools.py": {
+      "sha256": "622aec8eca6f9805e9af25435e96fab3b0ac0e42fa2cab88f6cd92c171e66646",
+      "lines": 1108,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1108
+        ]
+      ],
+      "review_note": "Full file read; adapters, user intent preservation, upstream API contracts and relay completion traced."
+    },
+    "bridge/routers/hf.py": {
+      "sha256": "dd22b078fc8afea6fe381ae1e31c517868872f6a887ac248aed97b5c852bc589",
+      "lines": 751,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          751
+        ]
+      ],
+      "review_note": "Full baseline read; discovery, acquisition, registry persistence and PTY ownership paths traced."
+    },
+    "bridge/routers/memory.py": {
+      "sha256": "ce8209cccbc0309608d9f8c4a02e1c238786562b8dd95b2c63c63ab036409a90",
+      "lines": 311,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          311
+        ]
+      ],
+      "review_note": "Full measurements, advisor, cached estimates, unload remedies and route validation read. Repeated oracle work in remedies candidate tracked."
+    },
+    "bridge/routers/misc.py": {
+      "sha256": "46a046b0441c55b409beaac67e256b4515637b75bb29cf394042236634b0e554",
+      "lines": 155,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          155
+        ]
+      ],
+      "review_note": "Full open/save/stop/MCP helpers read. Artifact collision exhaustion overwrites existing file; MCP non-200 list currently becomes known-empty."
+    },
+    "bridge/routers/model_rescan.py": {
+      "sha256": "2533290307e595c8bb2b8427f9c7810da245aa99f0484738f6349c74dc292b5b",
+      "lines": 253,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          253
+        ]
+      ],
+      "review_note": "Full baseline file read; correctness, lifecycle and UI consumers traced. Findings are being resolved during the whole-code review."
+    },
+    "bridge/routers/model_visibility.py": {
+      "sha256": "ddf3eb020c10a48b711a39661670c67c161ca905f2f1b6ff456506428ef896e1",
+      "lines": 88,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          88
+        ]
+      ],
+      "review_note": "Full visibility toggle read; validation and concurrent row removal candidates tracked."
+    },
+    "bridge/routers/models.py": {
+      "sha256": "590083cca0a999c16407c642d4302347e7cfec11e068a248b452fa6fe06f6a66",
+      "lines": 1448,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1448
+        ]
+      ],
+      "review_note": "Full baseline file read; correctness, lifecycle and UI consumers traced. Findings are being resolved during the whole-code review."
+    },
+    "bridge/routers/music.py": {
+      "sha256": "851f7767d20aef997393a9a443bfeb54a13d2748dda7a207d133dd485763f18b",
+      "lines": 417,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          417
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; changes and findings tracked during the whole-code review."
+    },
+    "bridge/routers/nav.py": {
+      "sha256": "4cf54e44b5ea715253f4d715272d8c9292d5f372a62293bafa3086a6334de877",
+      "lines": 120,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          120
+        ]
+      ],
+      "review_note": "All GET/save/MRU entry points and publication read; sync GET repair may interleave with async saves."
+    },
+    "bridge/routers/ody.py": {
+      "sha256": "91284f621158f8d7421f10b815fcef1261a13300afa9b22dabc891fb7bca0572",
+      "lines": 1375,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1375
+        ]
+      ],
+      "review_note": "Full file read; adapters, user intent preservation, upstream API contracts and relay completion traced."
+    },
+    "bridge/routers/odychat.py": {
+      "sha256": "cbaacf54336d7f559b98a57af8acf7e091f7c326334fd7dd17c456482a7e5219",
+      "lines": 169,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          169
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "bridge/routers/odyvision.py": {
+      "sha256": "f8418a72f0df869925109a1447fc668ae7e93bfdcf12c846973212f7773b303f",
+      "lines": 640,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          640
+        ]
+      ],
+      "review_note": "Full source read; status, dependency, log and upstream configuration paths traced."
+    },
+    "bridge/routers/office.py": {
+      "sha256": "066d83819a014f9ea5bd60e1ccb467f915417b78d7497c51710d1f6952f416a7",
+      "lines": 583,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          583
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; changes and findings tracked during the whole-code review."
+    },
+    "bridge/routers/oo.py": {
+      "sha256": "ab756686f118123dc0a7f499ac76d422205bc71b665621e4207af978c98ddd65",
+      "lines": 279,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          279
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; changes and findings tracked during the whole-code review."
+    },
+    "bridge/routers/panel.py": {
+      "sha256": "9aac81d541f701a530b2d01c42c2eec728e312f17fb6eb79f491f033e1b6b8fe",
+      "lines": 16,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          16
+        ]
+      ],
+      "review_note": "Full panel FileResponse and no-store headers examined."
+    },
+    "bridge/routers/quitall.py": {
+      "sha256": "cbc0d0f86921898d72e6225395939dd1f4390227428ebed9aa4b474b2e1966b0",
+      "lines": 402,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          402
+        ]
+      ],
+      "review_note": "Full ordering, sweep, ownership adapter and response/exit scheduling read; prebind child omission and event loop blocking candidates tracked."
+    },
+    "bridge/routers/sampling.py": {
+      "sha256": "db606437ea29458f0ea9126624dab89e073fe050af3b97166eab790eab87e15e",
+      "lines": 689,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          689
+        ]
+      ],
+      "review_note": "Full baseline file read; correctness, lifecycle and UI consumers traced. Findings are being resolved during the whole-code review."
+    },
+    "bridge/routers/sidecars.py": {
+      "sha256": "5fb252c06f71c77a1140947216a1e4cf906d8dd89f2b6c1b5caf4894ce903ec0",
+      "lines": 343,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          343
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "bridge/routers/storage.py": {
+      "sha256": "78d98aab10671b216f61dc90baa3b6da770f631ff27aa5f1e365f0c2802ef3b4",
+      "lines": 768,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          768
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; changes and findings tracked during the whole-code review."
+    },
+    "bridge/routers/turns.py": {
+      "sha256": "c42c2dbfb01dea387b3fa55cf1db57ec3013e2b8c5ecf5d453172174e39f1c63",
+      "lines": 108,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          108
+        ]
+      ],
+      "review_note": "Full durable Direct route adapter read; generator lifetime and validation candidates tracked."
+    },
+    "bridge/routers/version.py": {
+      "sha256": "405fa049558ba2c1f2abc9030247b9ff08fa94235e0a9bc5162907dfe0173b0a",
+      "lines": 118,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          118
+        ]
+      ],
+      "review_note": "Full version/update comparison and unavailable-state behavior examined."
+    },
+    "bridge/routers/voice.py": {
+      "sha256": "53f6e284d85eadafb731aed074167d9440a881f3292de08e04b2799c80774225",
+      "lines": 1043,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1043
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; changes and findings tracked during the whole-code review."
+    },
+    "bridge/routers/voicecomp.py": {
+      "sha256": "970eef225e4848b6fdc88ef2ec3256054f4308bf054f9aebc70a05bd29cdefc0",
+      "lines": 204,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          204
+        ]
+      ],
+      "review_note": "All MCP metadata/status/toggle logic read; unknown Odysseus list errors can falsely claim absent registration through shared helper."
+    },
+    "bridge/tests/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lines": 0,
+      "role": "test",
+      "reviewed_ranges": [],
+      "review_note": "Empty package marker inspected; no code lines."
+    },
+    "bridge/tests/_appsrc.js": {
+      "sha256": "b4f22d265a4d95c28525bd1f8073365800a69f9fb50d8954c5fb7623facc4246",
+      "lines": 50,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          50
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/tests/conftest.py": {
+      "sha256": "fac101988988b14eecc19b61fcd45cd0e611576c96f28904fca4324e27d9c093",
+      "lines": 38,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          38
+        ]
+      ],
+      "review_note": "Full standalone collection adapter read; executes legacy suites in isolated subprocess with timeout."
+    },
+    "bridge/tests/model_fixture.py": {
+      "sha256": "90691b41c47ea77f3c41eb992ba901f4ebc15cab29ab7b5aa3f8fe195d512889",
+      "lines": 43,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          43
+        ]
+      ],
+      "review_note": "Entire structural GGUF fixture builder read."
+    },
+    "bridge/tests/standalone_manifest.py": {
+      "sha256": "f4cf3b9050380bb383360ee02827f5156fea324bd793ef2a4b8fd298bdf6bda4",
+      "lines": 61,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          61
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/tests/test_action_lifecycle.js": {
+      "sha256": "edf01660b6988772ed6c5dd2ed9385da72b27af7b78305b0d7e5019424817722",
+      "lines": 45,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          45
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/tests/test_agent_web_toggle.js": {
+      "sha256": "be4a6640610b8374f0faaeaf86fae4751b9f2f853181854c9f8e71f590253342",
+      "lines": 42,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          42
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/tests/test_aider_lane.py": {
+      "sha256": "8cbdaddd5ba421a67178b6dcad79b2782ba4f44eea450731e86156b668cf58f9",
+      "lines": 754,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          754
+        ]
+      ],
+      "review_note": "Read entire file line by line; examined production seams, fixture isolation, assertions and failure paths. Execution reported separately."
+    },
+    "bridge/tests/test_api_keys.py": {
+      "sha256": "c67ac7ae536843e65c1a39da7915ef98622aac540a0993de627403ef80b1f484",
+      "lines": 396,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          396
+        ]
+      ],
+      "review_note": "Entire named-key integration test program read, including re-read of truncated middle."
+    },
+    "bridge/tests/test_api_view.js": {
+      "sha256": "fdebc81aead5ebbfc31a520a51d4de84518e818106785887226b1ef4e756a29c",
+      "lines": 510,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          510
+        ]
+      ],
+      "review_note": "Entire file read; source-driven assertions and behavior checked. Stale source-layout fixtures corrected; microphone pending-state and interpolation assertions strengthened."
+    },
+    "bridge/tests/test_app_facade.py": {
+      "sha256": "7fec0102c49cae96e9c45df969a6164bfcd12181e707bb6332756672d417577d",
+      "lines": 314,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          314
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_artifact_kind_v2.js": {
+      "sha256": "0532f872224b0956faefe5014bf63fe531b5a394470afa0aa5c3314857d26ef9",
+      "lines": 126,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          126
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/tests/test_artifact_save.py": {
+      "sha256": "a021392b6a46912d6df076b9ca40f7b0e6557575eaebc92121b4942020cb234c",
+      "lines": 83,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          83
+        ]
+      ],
+      "review_note": "Entire sanitizer-only suite read; does not cover the route overwriting a full suffix series."
+    },
+    "bridge/tests/test_attach_marker.js": {
+      "sha256": "67b77795be156d198f6cbb3e2adddf7b2ec078f7ffd7faa0bdce18c4967b67e9",
+      "lines": 143,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          143
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_audio_drop.js": {
+      "sha256": "ff521f6c2d8f07fd3b210cb50f27fecff48731be9cbfb3465b3eb1adf99bc462",
+      "lines": 810,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          810
+        ]
+      ],
+      "review_note": "Entire file read; source-driven assertions and behavior checked. Stale source-layout fixtures corrected; microphone pending-state and interpolation assertions strengthened."
+    },
+    "bridge/tests/test_audio_registry.py": {
+      "sha256": "9e121f44b6f3a8e21df121a2478a7e15f1d909b8932193a88cc5186c243cace9",
+      "lines": 564,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          564
+        ]
+      ],
+      "review_note": "Read entire file line by line; examined production seams, fixture isolation, assertions and failure paths. Execution reported separately."
+    },
+    "bridge/tests/test_audio_rows.js": {
+      "sha256": "7b5c6967bd34e278079d4e40c7a4d9fb4c8a34111c07aa643e09fc8c127c4eb7",
+      "lines": 249,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          249
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_audio_search.js": {
+      "sha256": "379c001141f562c76256dd5817cd49aa6f770d83dfc7f178072a2a5535bf3101",
+      "lines": 165,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          165
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_audio_search.py": {
+      "sha256": "79a877d6fadc601f882d29bbed008441adf43c39c1a1673632a5b6eef68ca203",
+      "lines": 325,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          325
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_audio_switch.js": {
+      "sha256": "28bcc1b9af2aeca4e1451529eda95162ffc1e5e8c7bbf3bae7e71f0722f3cf69",
+      "lines": 411,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          411
+        ]
+      ],
+      "review_note": "Entire file read; source-driven assertions and behavior checked. Stale source-layout fixtures corrected; microphone pending-state and interpolation assertions strengthened."
+    },
+    "bridge/tests/test_aux_child_reaping.py": {
+      "sha256": "95c0eb6609df68207d2b74e2195c307aee28d4035c3ffa58a6ec9ce382849436",
+      "lines": 70,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          70
+        ]
+      ],
+      "review_note": "Full baseline file read; correctness, lifecycle and UI consumers traced. Findings are being resolved during the whole-code review."
+    },
+    "bridge/tests/test_bug_echo_ledger.py": {
+      "sha256": "1d826ba7b5a863def94546ce183c81fbe16ff197e4e3c9402db2f96ec07e6ab7",
+      "lines": 284,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          284
+        ]
+      ],
+      "review_note": "Read entire file line by line; examined production seams, fixture isolation, assertions and failure paths. Execution reported separately."
+    },
+    "bridge/tests/test_canvas_logic.js": {
+      "sha256": "a2efcb2bf1d1b40941082b251442beaf270fd73b4e18302f26a26c38f0bc9651",
+      "lines": 75,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          75
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/tests/test_caps_map.py": {
+      "sha256": "8f1e49f11370a8e7b30fc3a9259d72c7d946110bba99fd09c6242f863b573c43",
+      "lines": 105,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          105
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/tests/test_chat_toolerr.js": {
+      "sha256": "68536091402e0c73081ed23309ae97ce076949871e2a0bc214192a2ca14228ca",
+      "lines": 306,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          306
+        ]
+      ],
+      "review_note": "Read in full: production integration, failure handling, source assertions and behavioral test validity examined."
+    },
+    "bridge/tests/test_comfy_download_integrity.py": {
+      "sha256": "2424892055125ea554930a0060f3034d51f1ebd5e45f6281e8f07c03341b19a4",
+      "lines": 97,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          97
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; changes and findings tracked during the whole-code review."
+    },
+    "bridge/tests/test_comfy_lane.py": {
+      "sha256": "3dbbdc79f185f6631c83b2bdc3a070dafa566ec64c2dcb4b5c9abb2394455798",
+      "lines": 761,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          761
+        ]
+      ],
+      "review_note": "Full line-by-line read, including fixtures and all branches; improved invalid memory-shape assertions where required. Validation recorded separately."
+    },
+    "bridge/tests/test_comfy_page.js": {
+      "sha256": "285124becbc6372f786db7c6b0167ee509582c156701c66abd41819b8ca934e7",
+      "lines": 1230,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          1230
+        ]
+      ],
+      "review_note": "All baseline lines read consecutively: styling, templates, rendering, catalogue, source selection, lifecycle, controls, and full 360-check test program. Behavioral fixes preserve results without starter weights, refresh catalogue on request/state transitions, coalesce reads, retain failed-read snapshots, preserve source identity, select curated workflows and enable keyboard actions."
+    },
+    "bridge/tests/test_comfy_subgraphs.py": {
+      "sha256": "f4ec149ec46cd3dfd7e2200e5813645ea415c2b54256b8e20a0dd1cead27c082",
+      "lines": 253,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          253
+        ]
+      ],
+      "review_note": "Read entire file line by line; examined production seams, fixture isolation, assertions and failure paths. Execution reported separately."
+    },
+    "bridge/tests/test_compose_page.js": {
+      "sha256": "e37068db2c77898d933dbf8436634802bea1beba55257f22d0e57b07e8d23871",
+      "lines": 951,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          951
+        ]
+      ],
+      "review_note": "All baseline lines read, including six appearance variants, waveform/player, workbench layout, presets, folder controls, async lifecycle and the complete existing test program. Nine reproduced view-state defects corrected and verified; no reserved dock feature implemented."
+    },
+    "bridge/tests/test_conv_mode.js": {
+      "sha256": "c0ef8fb524c2d1eaa275c48ad5544cababbf2044ad6a5d1abbbea8d4213729f2",
+      "lines": 444,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          444
+        ]
+      ],
+      "review_note": "Entire file read; source-driven assertions and behavior checked. Stale source-layout fixtures corrected; microphone pending-state and interpolation assertions strengthened."
+    },
+    "bridge/tests/test_copy_demotion.js": {
+      "sha256": "edfeb430145088f32348751f1dc6b3a07d4d5894ff067ce92980ffa74674f015",
+      "lines": 68,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          68
+        ]
+      ],
+      "review_note": "Entire baseline read; behavior contracts, test isolation, missing-dependency reporting and direct-source versus copied implementations checked. Copied artifact/canvas tests queued for correction during panel review."
+    },
+    "bridge/tests/test_csv_parse.js": {
+      "sha256": "1ab8ca2b82b7d0e4b71755e4fd87f5810d1abe95f02febea197a5aa73bcfc566",
+      "lines": 65,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          65
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_deepseek_lane.py": {
+      "sha256": "59768783dd253bf6bd293db54e92ad1acb4ee629de1f582feebfa9ab2963c6ec",
+      "lines": 1018,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          1018
+        ]
+      ],
+      "review_note": "Entire current file read consecutively. Historical adversarial catalogue distinguished from gates; provider preservation and navigation fixture issues corrected separately."
+    },
+    "bridge/tests/test_dep_signal.py": {
+      "sha256": "f1c2e5ca038aa242f696576e0e0196eceb68bf555c3b6efe548e2ab31104d980",
+      "lines": 936,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          936
+        ]
+      ],
+      "review_note": "Entire file read consecutively; fixtures, preservation assertions, failure paths and execution coverage examined. Nav migration fixture and omitted standalone checks corrected."
+    },
+    "bridge/tests/test_direct_stream_integrity.py": {
+      "sha256": "7ad1be661e884058863023b7d45b28b90b9b24ae462d04c1842f1cbace9902f7",
+      "lines": 149,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          149
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_download_controls.py": {
+      "sha256": "861add5aa8dfd5fef738acfcbdc896a3528cf6501dfc8b06937bdccbe2a6ba01",
+      "lines": 105,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          105
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_download_http.py": {
+      "sha256": "6424ab9c1248f69c7bc7c28b62663b136a4ae8d65be16cb50be9ea4c6bb1754b",
+      "lines": 76,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          76
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_download_rows.js": {
+      "sha256": "62b24464818c2e1c4e1efc25664bbd4445eab7d1fb33c7b431fd22302a3af2cc",
+      "lines": 439,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          439
+        ]
+      ],
+      "review_note": "Entire file read line by line, including fixtures, production integration assertions and error paths; validation recorded separately."
+    },
+    "bridge/tests/test_download_verify.py": {
+      "sha256": "e56d5ae7eb7916169138454b1a08b48dea148b877c275db1eb1ddb4d501e2045",
+      "lines": 401,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          401
+        ]
+      ],
+      "review_note": "All lines read; manifest defaults and verification failures examined."
+    },
+    "bridge/tests/test_editorial_debt.js": {
+      "sha256": "cb3037837f6a5ea543b9052c8707ab8b8e2ec09a4ddc22bbc59624dbbc709f93",
+      "lines": 458,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          458
+        ]
+      ],
+      "review_note": "Read in full: production integration, failure handling, source assertions and behavioral test validity examined."
+    },
+    "bridge/tests/test_events_hub.py": {
+      "sha256": "fcd34a0cf21e75dce41fa57f0ac70d6be4d91fabbab266c6ab72c39d720c6954",
+      "lines": 327,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          327
+        ]
+      ],
+      "review_note": "Read every line: integration constraints, fixtures, failure cases and honesty of test outcomes. Optional-source absence now reports skip in the reviewed contract suites."
+    },
+    "bridge/tests/test_fence_classify.js": {
+      "sha256": "42157eb4c7d928ff7c5f686a6c2906f7e26b25bdc7245a234ce0039d3ce5bfbf",
+      "lines": 38,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          38
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_fit_advisor.py": {
+      "sha256": "6af03058657a35737cbb30a83a7b9d9a6f6b174632185db8049027140de0520c",
+      "lines": 844,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          844
+        ]
+      ],
+      "review_note": "Full line-by-line read, including fixtures and all branches; improved invalid memory-shape assertions where required. Validation recorded separately."
+    },
+    "bridge/tests/test_float_surface.js": {
+      "sha256": "22ea0c498b6804c29065dab79fc0d61005fbe9160e1fa6e15feaff1a90682527",
+      "lines": 372,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          372
+        ]
+      ],
+      "review_note": "Read in full: production integration, failure handling, source assertions and behavioral test validity examined."
+    },
+    "bridge/tests/test_goose_empty_prune.py": {
+      "sha256": "018abfc623cd85627f731c4e042b84d6475b5ce76578575338e5d1c95b13eed1",
+      "lines": 68,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          68
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; changes and findings tracked during the whole-code review."
+    },
+    "bridge/tests/test_goose_lane.py": {
+      "sha256": "705c895251364381c285cb9490cc7bf519b47afc6ef5214577ea86cf5ddd0828",
+      "lines": 1355,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          1355
+        ]
+      ],
+      "review_note": "Entire current file read consecutively. Historical adversarial catalogue distinguished from gates; provider preservation and navigation fixture issues corrected separately."
+    },
+    "bridge/tests/test_gooseui_lane.py": {
+      "sha256": "399b1047736d10e212b29c843f019522a69c1cda0225a29c8878bc6cc967350d",
+      "lines": 906,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          906
+        ]
+      ],
+      "review_note": "Entire current file read consecutively. Historical adversarial catalogue distinguished from gates; provider preservation and navigation fixture issues corrected separately."
+    },
+    "bridge/tests/test_gooseui_runtime_adoption.py": {
+      "sha256": "7c60f06dbd42a53017591ace8ac9d780190626b5b93c90e63d87cb572787be2f",
+      "lines": 108,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          108
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; changes and findings tracked during the whole-code review."
+    },
+    "bridge/tests/test_help_route.py": {
+      "sha256": "c85566335e7d0ea162f509bd2556ab96aed392788d9637126739d2aabccb620f",
+      "lines": 120,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          120
+        ]
+      ],
+      "review_note": "Read every line: integration constraints, fixtures, failure cases and honesty of test outcomes. Optional-source absence now reports skip in the reviewed contract suites."
+    },
+    "bridge/tests/test_help_view.js": {
+      "sha256": "03d160c2db0d2c74443f41a9534f4dd994553948311ae07d02270cd37066f721",
+      "lines": 443,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          443
+        ]
+      ],
+      "review_note": "Entire file read line by line, including fixtures, production integration assertions and error paths; validation recorded separately."
+    },
+    "bridge/tests/test_hermes_attachment_rehydration.py": {
+      "sha256": "e5c44144e09b8e92693f25f69f822909e15040737d27b0483519d96d466b1a5b",
+      "lines": 77,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          77
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_hermes_cfg_gen.py": {
+      "sha256": "54d8bad9ddbfd86f5701062a2042ad70548d122d915bcf3a40c952a2a89390d7",
+      "lines": 204,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          204
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_hermes_max_turn.py": {
+      "sha256": "62895dd0000a2813230072e6431ca54e1a379683b8bc20268d46859a8d70e548",
+      "lines": 311,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          311
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_hermes_provider_seed.py": {
+      "sha256": "4408718b259a50db9acd60059ee791971a49622c71f35fbab1c6630fbb782751",
+      "lines": 716,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          716
+        ]
+      ],
+      "review_note": "Entire file read consecutively; fixtures, preservation assertions, failure paths and execution coverage examined. Nav migration fixture and omitted standalone checks corrected."
+    },
+    "bridge/tests/test_hermes_sessions.py": {
+      "sha256": "b095c1b9cc7db7787e964eca93b6f777e02a7a8697b9a7e851a19e14fa96e206",
+      "lines": 131,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          131
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_hermes_skills.js": {
+      "sha256": "d7e24bf0adfebb31aae106b167e7ad5b4ba8780340b8663c2b6ab52f2368cf50",
+      "lines": 314,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          314
+        ]
+      ],
+      "review_note": "All lines read; renderer tests execute actual production handlers and preserve source behavior."
+    },
+    "bridge/tests/test_hermes_skills.py": {
+      "sha256": "2ffabc99eb5e37e8cb1a98b1640f5173c621319a3179d0d16acb03d0bb2673e6",
+      "lines": 492,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          492
+        ]
+      ],
+      "review_note": "Full line-by-line read, including fixtures and all branches; improved invalid memory-shape assertions where required. Validation recorded separately."
+    },
+    "bridge/tests/test_hermes_sse_map.py": {
+      "sha256": "36e2867bc6d64a457d042a645a78221cc74f64160939add3405a0254ac9591dc",
+      "lines": 417,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          417
+        ]
+      ],
+      "review_note": "Entire file read line by line, including fixtures, production integration assertions and error paths; validation recorded separately."
+    },
+    "bridge/tests/test_hermes_toolsets.js": {
+      "sha256": "cc658ea72fbb217755b4b5b7d97c758e6c6a3fd04c29f15298afe35d8bb51eca",
+      "lines": 437,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          437
+        ]
+      ],
+      "review_note": "All lines read; renderer tests execute actual production handlers and preserve source behavior."
+    },
+    "bridge/tests/test_hermes_toolsets.py": {
+      "sha256": "85ecccda2e8be3556f553256ec8bb0291ef0792fa7445388436903139eb855bf",
+      "lines": 836,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          836
+        ]
+      ],
+      "review_note": "Entire file read consecutively; fixtures, preservation assertions, failure paths and execution coverage examined. Nav migration fixture and omitted standalone checks corrected."
+    },
+    "bridge/tests/test_hermes_turn_durability.py": {
+      "sha256": "2f77971c1f41f908d12e9c46bdd78a3097d60ab2fcb14769c759711e2d9da05b",
+      "lines": 402,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          402
+        ]
+      ],
+      "review_note": "Full file read; adapters, user intent preservation, upstream API contracts and relay completion traced."
+    },
+    "bridge/tests/test_hermes_whatsapp_route.py": {
+      "sha256": "42d20736d146aea377c069f18c536d8bf4192dd55745f9bcb78decfe3df741ae",
+      "lines": 174,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          174
+        ]
+      ],
+      "review_note": "Read every line: integration constraints, fixtures, failure cases and honesty of test outcomes. Optional-source absence now reports skip in the reviewed contract suites."
+    },
+    "bridge/tests/test_hermes_whatsapp_state.py": {
+      "sha256": "477edfb25bc3f757190498d91644938468868177ceced9bca0ac0c867f945a03",
+      "lines": 217,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          217
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "bridge/tests/test_identity_migration.js": {
+      "sha256": "7bcc2a2d8d3ac1044791e32c6ae7b2810ac76fa9f16186f077b0113250c6b00d",
+      "lines": 76,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          76
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_image_sidecar.py": {
+      "sha256": "689f94b45670c4b830c7f2b882c5ff1a49c54219eb8526b111c29de616222615",
+      "lines": 228,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          228
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_installed_flip.py": {
+      "sha256": "8a1dae1fae0044af20a41e36d81b8bcb235d682067dac0a15bf6e77c830cadf3",
+      "lines": 295,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          295
+        ]
+      ],
+      "review_note": "Read entire file line by line; examined production seams, fixture isolation, assertions and failure paths. Execution reported separately."
+    },
+    "bridge/tests/test_lane_affordances.js": {
+      "sha256": "39b393b04fcf02a4848495c29c37e45a97498f510726d818af75ea060a736295",
+      "lines": 369,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          369
+        ]
+      ],
+      "review_note": "Read in full: production integration, failure handling, source assertions and behavioral test validity examined."
+    },
+    "bridge/tests/test_lane_attach.py": {
+      "sha256": "b9c505c4fc97eb9fafadf6d5cc2ac0e85f57384c59ab1c1a8b089e81323dd8cf",
+      "lines": 602,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          602
+        ]
+      ],
+      "review_note": "Entire file read line by line, including fixtures, production integration assertions and error paths; validation recorded separately."
+    },
+    "bridge/tests/test_ledger_current.py": {
+      "sha256": "180b2f18ff71715fbed8fe5d432c855e7414be78abbda151764d25dc41b86bbc",
+      "lines": 39,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          39
+        ]
+      ],
+      "review_note": "Read every line: integration constraints, fixtures, failure cases and honesty of test outcomes. Optional-source absence now reports skip in the reviewed contract suites."
+    },
+    "bridge/tests/test_load_switch.py": {
+      "sha256": "87e10dbe40e4e7a1b1b9a55a69ebee3aa0aa6da663adda1eb3a53c56153aa5ea",
+      "lines": 297,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          297
+        ]
+      ],
+      "review_note": "Read in full: sampling/load settings, artifact identities, model-source ambiguity and switch flow. Updated stale fixtures/assertions to test actual failure injection and the guarded reload queue; corruption must preserve state."
+    },
+    "bridge/tests/test_loffice_stored_history.py": {
+      "sha256": "698cf9d425abf3bcae6afcbb5c70eeeb7326f404c12a63e1dcad0f66b6d56107",
+      "lines": 165,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          165
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_memory_measurement.py": {
+      "sha256": "0d0b6e46699cce1e97c4285fb78e5cceb5dcaa7be5ab019b2341e4ad8ec798bc",
+      "lines": 163,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          163
+        ]
+      ],
+      "review_note": "Full 165-line measurement attribution, persistence and preference journey suite read."
+    },
+    "bridge/tests/test_model_artifact_integrity.py": {
+      "sha256": "711f4fae2c5ff920ab5581de4a763bddb73f1169484fa19ac0514a4ac57f434f",
+      "lines": 459,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          459
+        ]
+      ],
+      "review_note": "Read in full: sampling/load settings, artifact identities, model-source ambiguity and switch flow. Updated stale fixtures/assertions to test actual failure injection and the guarded reload queue; corruption must preserve state."
+    },
+    "bridge/tests/test_model_delete.py": {
+      "sha256": "8f810ab425e7360eeb5f6d45435a0fdbdf066c79428facec847533a748146771",
+      "lines": 100,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          100
+        ]
+      ],
+      "review_note": "Every line read; reviewed test isolation, runtime contracts, design invariants and actual served-code behavior."
+    },
+    "bridge/tests/test_model_load.py": {
+      "sha256": "437ab8f122582a6a948368fb5cfc1aede2932af1f6537cecb008675910e8d180",
+      "lines": 620,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          620
+        ]
+      ],
+      "review_note": "Read in full: sampling/load settings, artifact identities, model-source ambiguity and switch flow. Updated stale fixtures/assertions to test actual failure injection and the guarded reload queue; corruption must preserve state."
+    },
+    "bridge/tests/test_model_process_safety.py": {
+      "sha256": "d698274e9269827ac86c2f2c4c197dc9fea097dcb52f0f249f672b17cd9cc8cb",
+      "lines": 285,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          285
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_model_settings.py": {
+      "sha256": "9b8a62acb63460da45ab0ac980830c31f880a57ea9313a926bb74e55b2869cc2",
+      "lines": 410,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          410
+        ]
+      ],
+      "review_note": "Read in full: sampling/load settings, artifact identities, model-source ambiguity and switch flow. Updated stale fixtures/assertions to test actual failure injection and the guarded reload queue; corruption must preserve state."
+    },
+    "bridge/tests/test_model_settings_races.js": {
+      "sha256": "80325c65f21b2ab594dd2ebfcf3e0260c7f2090e60195fca7ca7fc7eb8dfd735",
+      "lines": 91,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          91
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_model_settings_ui.js": {
+      "sha256": "2ff1d1638d70f343f5aa0b1de4720dba11b1b6f66edc28e753f5525af7217489",
+      "lines": 216,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          216
+        ]
+      ],
+      "review_note": "Every line read; reviewed test isolation, runtime contracts, design invariants and actual served-code behavior."
+    },
+    "bridge/tests/test_model_source_adapters.py": {
+      "sha256": "e37e2116483f0cf24f0cfa811d922e00ebd9874f7fed4c68411082a9c3c72e0d",
+      "lines": 220,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          220
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_model_source_availability.py": {
+      "sha256": "fc0381da8f49a473bef26aafbfc3bd4acfea49367b03535efc99c2d964529d53",
+      "lines": 397,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          397
+        ]
+      ],
+      "review_note": "Read in full: sampling/load settings, artifact identities, model-source ambiguity and switch flow. Updated stale fixtures/assertions to test actual failure injection and the guarded reload queue; corruption must preserve state."
+    },
+    "bridge/tests/test_model_tools.py": {
+      "sha256": "2e6df938cb4810b9aacef1cbace588c62c3049c6c2ab2958450e5e5078577413",
+      "lines": 313,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          313
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_msg_actions.py": {
+      "sha256": "126922e61bb2c884ed44bad9de2a3ccddf92ff04d631281aa9fa60bddc54b046",
+      "lines": 197,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          197
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_mtp_detect.py": {
+      "sha256": "d843076695be7b2ac09bd1531f51c9cad8e2720e08ae83b7607eae44737698e5",
+      "lines": 128,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          128
+        ]
+      ],
+      "review_note": "Read in full: upstream contracts, ownership and preservation rules, production-source assertions and test execution. MTP detection now executes the launcher block; Office rename assertion follows the guarded implementation."
+    },
+    "bridge/tests/test_music_deck.js": {
+      "sha256": "64257a278501c5bf6bdf802ece4f259c9fd25eb5130ce552a4fe8bad123e6ee6",
+      "lines": 228,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          228
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_music_lane.py": {
+      "sha256": "33d77752b9e9923a8bc9eaf84572d4680d4388772924fd85db7eedb95ce33580",
+      "lines": 1255,
+      "role": "test",
+      "reviewed_ranges": []
+    },
+    "bridge/tests/test_mutation_origin_fence.py": {
+      "sha256": "a53f088244b00a1472f829e6ad831b69d71cf19b2101e4610d7b79b6f5e9e8fa",
+      "lines": 59,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          59
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_nav_model.py": {
+      "sha256": "acf6a58348dde609bdc32000c4c6fd5ee342b00c4ddd7f670b178ad81d77f83b",
+      "lines": 922,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          922
+        ]
+      ],
+      "review_note": "Entire current file read consecutively. Historical adversarial catalogue distinguished from gates; provider preservation and navigation fixture issues corrected separately."
+    },
+    "bridge/tests/test_nav_panel.js": {
+      "sha256": "b4d41717bd2fc8fa15241f5a2e83e8ed340a156e7625c60583802402c327055f",
+      "lines": 904,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          904
+        ]
+      ],
+      "review_note": "Entire file read; source-driven assertions and behavior checked. Stale source-layout fixtures corrected; microphone pending-state and interpolation assertions strengthened."
+    },
+    "bridge/tests/test_nonimage_attachments.js": {
+      "sha256": "f8b165b94142f7e460fabb0562bcfde14ee1d1628c9e58e505a5ba24426430d6",
+      "lines": 97,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          97
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_ody_historical_models.py": {
+      "sha256": "4f89203bf082989741a3142a6c86107ea5ab89265918f5403f68d6ec5501858c",
+      "lines": 101,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          101
+        ]
+      ],
+      "review_note": "Read in full: upstream contracts, ownership and preservation rules, production-source assertions and test execution. MTP detection now executes the launcher block; Office rename assertion follows the guarded implementation."
+    },
+    "bridge/tests/test_ody_vlshim.py": {
+      "sha256": "2db17d2b45f1207e4a8bce328caaefffcc7a7b80c3ca9a94cea8a938b97cb1a8",
+      "lines": 500,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          500
+        ]
+      ],
+      "review_note": "Entire file read line by line, including fixtures, production integration assertions and error paths; validation recorded separately."
+    },
+    "bridge/tests/test_odysseus_live_catalog.py": {
+      "sha256": "2e506870f26c499ae25aaf8d59bfc5cbe290cdda996db05b0ac692624d972115",
+      "lines": 140,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          140
+        ]
+      ],
+      "review_note": "Read in full: upstream contracts, ownership and preservation rules, production-source assertions and test execution. MTP detection now executes the launcher block; Office rename assertion follows the guarded implementation."
+    },
+    "bridge/tests/test_odysseus_seed.py": {
+      "sha256": "68da77d26c1bcfc41c16e2d0b894ac6c69395a99f168ad0a6f5d080244be212a",
+      "lines": 505,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          505
+        ]
+      ],
+      "review_note": "Entire file read line by line, including fixtures, production integration assertions and error paths; validation recorded separately."
+    },
+    "bridge/tests/test_office_adversarial.py": {
+      "sha256": "bcea34112f5be6359d6000a795f415e5a8d5c192a8b6a346dfa1d6fe0cc0dd0f",
+      "lines": 877,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          877
+        ]
+      ],
+      "review_note": "Entire current file read consecutively. Historical adversarial catalogue distinguished from gates; provider preservation and navigation fixture issues corrected separately."
+    },
+    "bridge/tests/test_office_ai.js": {
+      "sha256": "c84a44d9cd5edcd8b3de5d93ce27aeeeb4f4b11e8ba17890bc423f9b5ca81d59",
+      "lines": 3954,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          3954
+        ]
+      ],
+      "review_note": "Entire file read, including existing behavior, history comments and integration contracts; reviewed current edits and exercised Office regression suites."
+    },
+    "bridge/tests/test_office_catalog_refresh.js": {
+      "sha256": "91cb1219dff1eeff5a3c03c95fea924ab0ff764d07502fd96c2bafbd9936e2ac",
+      "lines": 57,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          57
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_office_grid.js": {
+      "sha256": "cac7ba0077c4564e0815cfb1e68d2ef6ef37f2ba6d8090f0488c2a0956685200",
+      "lines": 2714,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          2714
+        ]
+      ],
+      "review_note": "Entire file read, including existing behavior, history comments and integration contracts; reviewed current edits and exercised Office regression suites."
+    },
+    "bridge/tests/test_office_journey.py": {
+      "sha256": "9790292cd86817f15543f3c7f42217d3547d9dec79511011095e9bced3806184",
+      "lines": 1097,
+      "role": "test",
+      "reviewed_ranges": []
+    },
+    "bridge/tests/test_office_lane.py": {
+      "sha256": "62275cfb7dff4d00feebd7fe3b21ebec36f7ce1e57c7ab44723dbb93cd284b20",
+      "lines": 1501,
+      "role": "test",
+      "reviewed_ranges": []
+    },
+    "bridge/tests/test_office_mcp.py": {
+      "sha256": "2ef8c760b02de76df77f77dcf17f1fd17d4c52aa018bfb41f737ef8829416aad",
+      "lines": 1991,
+      "role": "test",
+      "reviewed_ranges": []
+    },
+    "bridge/tests/test_office_types.py": {
+      "sha256": "7323ba5defe253c6d1522155e3118c0e4e6a30c1a467a01dddd280ab42f83493",
+      "lines": 446,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          446
+        ]
+      ],
+      "review_note": "Entire file read line by line, including fixtures, production integration assertions and error paths; validation recorded separately."
+    },
+    "bridge/tests/test_oo_ai_lane.py": {
+      "sha256": "1b385dc93fcf49d7d8db198331091dd08e1d46c06499ae807852175162cbaea4",
+      "lines": 885,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          885
+        ]
+      ],
+      "review_note": "Read in full: upstream contracts, ownership and preservation rules, production-source assertions and test execution. MTP detection now executes the launcher block; Office rename assertion follows the guarded implementation."
+    },
+    "bridge/tests/test_oo_lane.py": {
+      "sha256": "0b0f6bb107c268b8f159a6ec32ea0aa1a65638995987e68c126785e37b17192f",
+      "lines": 1019,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          1019
+        ]
+      ],
+      "review_note": "Full baseline source read line by line. Reviewed editor write truth, document switching, builder API, PDF export and pinned integration tests; implemented and tested corrections."
+    },
+    "bridge/tests/test_opencode_draft_label.js": {
+      "sha256": "cec04a53c3c3d4a921f0b9185f378cf970fd62443d50eda2fd881590ef7bb44e",
+      "lines": 368,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          368
+        ]
+      ],
+      "review_note": "Entire file read line by line, including fixtures, production integration assertions and error paths; validation recorded separately."
+    },
+    "bridge/tests/test_opencode_lane.py": {
+      "sha256": "740d4e3ee7e8d2f1499cc0d26fcb2cf305f0c134ea3b3aa1d63071bb5e49fe05",
+      "lines": 1132,
+      "role": "test",
+      "reviewed_ranges": []
+    },
+    "bridge/tests/test_opencode_runtime_model.py": {
+      "sha256": "6bcefb7846968c6e373cc3e74778118ef0842ce502192585bbe759aa8ce5eb6f",
+      "lines": 68,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          68
+        ]
+      ],
+      "review_note": "Read in full: upstream contracts, ownership and preservation rules, production-source assertions and test execution. MTP detection now executes the launcher block; Office rename assertion follows the guarded implementation."
+    },
+    "bridge/tests/test_ops_hardening.py": {
+      "sha256": "d29bf0c26e6c1f19391ab9a779332b56130e2356d153fa08c29d34afe8d3769c",
+      "lines": 716,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          716
+        ]
+      ],
+      "review_note": "Full line-by-line read, including fixtures and all branches; improved invalid memory-shape assertions where required. Validation recorded separately."
+    },
+    "bridge/tests/test_optional_components.py": {
+      "sha256": "62175c994130add93adedd10b3eef13c90f5649b19a0f14943669214b9c4c34a",
+      "lines": 72,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          72
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_parakeet_stt.py": {
+      "sha256": "a8e8011cb39060a6d17e67bf03a5af9693e959a786b28c47f7b7fa40ba4cd5a1",
+      "lines": 358,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          358
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/tests/test_partial_install_matrix.py": {
+      "sha256": "0a05d94062002dc490e7befb788bc7f789c3c4be3ea679e28c1100999bda29ca",
+      "lines": 98,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          98
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_partial_install_rendering.js": {
+      "sha256": "6ef29380a6840e39626c3934ddc0c7fb574220900ac978880cfc45e0235752b2",
+      "lines": 49,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          49
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_path_guard.py": {
+      "sha256": "d79b42656b93fa46aab787736eb6ea4adec02299a52e3d0966315ff6d329a16a",
+      "lines": 239,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          239
+        ]
+      ],
+      "review_note": "Read entire file line by line; examined production seams, fixture isolation, assertions and failure paths. Execution reported separately."
+    },
+    "bridge/tests/test_port_kill.py": {
+      "sha256": "5d5bba83f52359ce2ec4f611bef79b1e50fb8cf051684cb5f16a3e04ebf54b50",
+      "lines": 103,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          103
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_process_launch_ownership.py": {
+      "sha256": "f658eff02b255da66f02b0ac72dab175efa205b05c0479e761a8446672bf36e5",
+      "lines": 343,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          343
+        ]
+      ],
+      "review_note": "Entire test source read line by line; fixtures, isolation, behavior assertions and production integration examined."
+    },
+    "bridge/tests/test_quitall_lane.py": {
+      "sha256": "63669646584febf61052f3198859e5b8184fa49dd9a0cacd2037ad30c5eb78a9",
+      "lines": 170,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          170
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/tests/test_react_prep.js": {
+      "sha256": "b704ade4aa127d9508ac67315c3854ca6e515e7639f5c20fc53a55843140b886",
+      "lines": 79,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          79
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_recovered_turn_abort.js": {
+      "sha256": "6319090f10034fc943a3b2c8cac474bcbc799359ee742560c38d34c1752be185",
+      "lines": 99,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          99
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "bridge/tests/test_registry_hygiene.py": {
+      "sha256": "fef700ddc624f27761faa9ef20a76bf3fa7adc784ec2ee99b15a712eaeba87e7",
+      "lines": 461,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          461
+        ]
+      ],
+      "review_note": "Entire file read line by line, including fixtures, production integration assertions and error paths; validation recorded separately."
+    },
+    "bridge/tests/test_registry_writer_durability.py": {
+      "sha256": "638a33457e549d3c54ebec3afa75ab1cfdd5d88004793cef42879d7314e62db6",
+      "lines": 211,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          211
+        ]
+      ],
+      "review_note": "Full baseline read; discovery, acquisition, registry persistence and PTY ownership paths traced."
+    },
+    "bridge/tests/test_rewrite_cdns.js": {
+      "sha256": "0bbf3357881d3b3ce47463942e623f2b43bf521fbb8c0be4e2a16215b120b96e",
+      "lines": 73,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          73
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_runner_launch_provenance.py": {
+      "sha256": "878625929f64e4e9a7bdf424520e313303ac98aa4e972a6bb2a1cde1fbf845cc",
+      "lines": 79,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          79
+        ]
+      ],
+      "review_note": "Every line read; reviewed test isolation, runtime contracts, design invariants and actual served-code behavior."
+    },
+    "bridge/tests/test_script_hygiene.py": {
+      "sha256": "592eda7bbf592addd4a6d83b87d425cceeb7024651e109fa9074f7336f6a05c6",
+      "lines": 69,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          69
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/tests/test_seed_ownership.py": {
+      "sha256": "f85cd11f02d30256f489135d8e524a7c612a0911d7be625d2316699a9606ebc5",
+      "lines": 90,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          90
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/tests/test_seeded_vendor_update.py": {
+      "sha256": "479989a8974c5fb2c24695f2872575aa2ddd228e781473ae9455ff6ca14cc526",
+      "lines": 125,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          125
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/tests/test_session_integrity.py": {
+      "sha256": "66c93a5c954ba59d26f70aa71bc0b1a5f7a16cdebe1e915ae1130d36d147fa4a",
+      "lines": 65,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          65
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_speak_text.js": {
+      "sha256": "31b4f5855ceae3a7d127c811ed7e63d900348ffb4cb795b289ca8657c57d2f10",
+      "lines": 133,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          133
+        ]
+      ],
+      "review_note": "Every line read; checked fixtures against served functions and existing contracts. Replaced artifact helper mirrors where they had drifted; added regressions for reproduced defects."
+    },
+    "bridge/tests/test_sse_hybrid.js": {
+      "sha256": "0e5ce88758ca3ac601e62f1d13ebc5c81c9bfd99b08d8e2ee65975aef3d5d8bf",
+      "lines": 242,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          242
+        ]
+      ],
+      "review_note": "Entire suite read. Replaced tautological cadence assertion with a real branch difference; updated serialized-refresh contract, validated 66 checks."
+    },
+    "bridge/tests/test_standalone_corpus.py": {
+      "sha256": "763beab820d0537b9361ab6101e00d204a9a5f72c39ca23bf0fd6d2bc8ece543",
+      "lines": 37,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          37
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/tests/test_starter_voices.py": {
+      "sha256": "eaf9f9479babf264722626df509a055acf3b4c667e10993536df4d8e1b237428",
+      "lines": 709,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          709
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/tests/test_state_durability.py": {
+      "sha256": "385eedef560eb6a240f373d7523b6202ca83adcaf65c086ab165ab610b01016e",
+      "lines": 302,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          302
+        ]
+      ],
+      "review_note": "Read every existing transaction, merge and real-child shutdown test; failure-time cleanup and reader/writer guarantees checked."
+    },
+    "bridge/tests/test_storage_appidentity.py": {
+      "sha256": "79682164867f22e2e19d3d6cf178868c9b27f1a825abb1cbef308afa87188e20",
+      "lines": 65,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          65
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/tests/test_storage_chat_clear.py": {
+      "sha256": "20bea4f825c8091959de73056a2b034e034bd5cbc4daac48d2a4d2d53f20dbcc",
+      "lines": 96,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          96
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/tests/test_storage_controls.js": {
+      "sha256": "2308c29aa9b95305fe8ab67df49cae9967a95973b91d3ff3c377fbf0e8df9c0d",
+      "lines": 56,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          56
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/tests/test_storage_dialog_lifecycle.js": {
+      "sha256": "f457f906cbbf6acb2ae5cbf0d7b13969b05bbece6f31bcbb90960278136498af",
+      "lines": 110,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          110
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/tests/test_storage_optional_install.py": {
+      "sha256": "1baff8988806e3b679d53d75e07041e8661f3ca84a56e7f57e0aeb56b3169f31",
+      "lines": 82,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          82
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/tests/test_storage_reset_helper.py": {
+      "sha256": "fd12789bfb85a8a372703d720fae403631831a9aeb3305adca77c988d6382fd5",
+      "lines": 128,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          128
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/tests/test_storage_uninstall.py": {
+      "sha256": "12fd30fa852b4448ea6790dfc6d39e745642b63cbe24c281856383c7d50b79d9",
+      "lines": 384,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          384
+        ]
+      ],
+      "review_note": "Read in full: production integration, failure handling, source assertions and behavioral test validity examined."
+    },
+    "bridge/tests/test_studio_chrome.js": {
+      "sha256": "8ff7addef10a39567f5b618f0c3f1b933ebb9d13b061baf8c6f01020076603e5",
+      "lines": 836,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          836
+        ]
+      ],
+      "review_note": "Read in full: production integration, failure handling, source assertions and behavioral test validity examined."
+    },
+    "bridge/tests/test_studio_design.js": {
+      "sha256": "648a612aea1323eba3414efd6146df49fbe1f6778a9c79c75e29c24b70d4ab18",
+      "lines": 1243,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          1243
+        ]
+      ],
+      "review_note": "Every line read; reviewed test isolation, runtime contracts, design invariants and actual served-code behavior."
+    },
+    "bridge/tests/test_studio_office.js": {
+      "sha256": "8b23acde1e30abf49d7b1b3dd8ed821a19061ce1c8d0f013aad8947580510f30",
+      "lines": 716,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          716
+        ]
+      ],
+      "review_note": "Read in full: production integration, failure handling, source assertions and behavioral test validity examined."
+    },
+    "bridge/tests/test_talk_helpers.js": {
+      "sha256": "acf1f6764c4e3972d0f8abdf73e3aa561b51939187db4cdfd1a6e6fcfed411c8",
+      "lines": 153,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          153
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_theme_packs.js": {
+      "sha256": "b4e5bf758231f2d3b022e9402359ac00495eefa1750d3ac8ea673bd7e76d4153",
+      "lines": 596,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          596
+        ]
+      ],
+      "review_note": "Read in full: production integration, failure handling, source assertions and behavioral test validity examined."
+    },
+    "bridge/tests/test_theme_rendering.js": {
+      "sha256": "e74b629da05ea7735aa9dfb1937db97a73202c2e331239aee083ee6a7a85a68e",
+      "lines": 125,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          125
+        ]
+      ],
+      "review_note": "Read in full: production integration, failure handling, source assertions and behavioral test validity examined."
+    },
+    "bridge/tests/test_thinking_sidecar.py": {
+      "sha256": "b264a30b824c885ed186d94325e44782fef12fb86239a53f11f64cc5231819fd",
+      "lines": 164,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          164
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_turn_lifecycle.js": {
+      "sha256": "3d301be5a8b55619f1607171ce5d9d9efefc92329d0045ffc3fa38b19c1d7bbd",
+      "lines": 444,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          444
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "bridge/tests/test_turn_recovery_marker.js": {
+      "sha256": "1fde9c2a50986756d27e170f0be8826c1b11da2460f65e54d655803f40672d33",
+      "lines": 67,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          67
+        ]
+      ],
+      "review_note": "Entire test source read line by line; actual production helpers, failure behavior and isolation examined."
+    },
+    "bridge/tests/test_turn_stream_renderer.js": {
+      "sha256": "1f32a5fe430dd61b5d9626a4644ca1bdb43e24fdc6c30237d8e57cd144b6d103",
+      "lines": 186,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          186
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "bridge/tests/test_u74_recovery_hardening.py": {
+      "sha256": "a4b0ca6164d70b054ee77b1dc4474a3768dc9cb9dc629f37b7de97e104c7da9e",
+      "lines": 136,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          136
+        ]
+      ],
+      "review_note": "Read entire file line by line; examined production seams, fixture isolation, assertions and failure paths. Execution reported separately."
+    },
+    "bridge/tests/test_vad_segmenter.js": {
+      "sha256": "56d156019bcd7f640195186f88d09e4297956cf6bdc0db59a82e25583e65c0e0",
+      "lines": 477,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          477
+        ]
+      ],
+      "review_note": "Entire file read; source-driven assertions and behavior checked. Stale source-layout fixtures corrected; microphone pending-state and interpolation assertions strengthened."
+    },
+    "bridge/tests/test_vision_content.py": {
+      "sha256": "5c494ddbda315f1877590a65794295cb236c3e7c6ceb621c63b19a8cd659aeda",
+      "lines": 119,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          119
+        ]
+      ],
+      "review_note": "Read all lines: actual process authority, isolated test fixtures, turn replay bounds, upstream interface/manifest coverage and error postconditions. Process fixtures no longer replace real PID bookkeeping; bounded waits and capability preflight prevent stalled test cleanup."
+    },
+    "bridge/tests/test_voice_cache.py": {
+      "sha256": "492a593dd644355a778d46eb8ace1eab0e5344ac10932bcac4c901af3aaf7de6",
+      "lines": 322,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          322
+        ]
+      ],
+      "review_note": "Full file read; voice arguments, reference bounds, registry writes, worker lifecycle, transcript and cache contracts inspected."
+    },
+    "bridge/tests/test_voice_mcp.py": {
+      "sha256": "7fa5d09e675cd3df8ad4656c11112195374ac57f4224982296f19c9e8bb0795e",
+      "lines": 159,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          159
+        ]
+      ],
+      "review_note": "Full file read; voice arguments, reference bounds, registry writes, worker lifecycle, transcript and cache contracts inspected."
+    },
+    "bridge/tests/test_voice_ref.py": {
+      "sha256": "aadd5568d18ff4f6b7eb083906aa34645e3dabbebee20b514aeca4d82d73d147",
+      "lines": 327,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          327
+        ]
+      ],
+      "review_note": "Full file read; voice arguments, reference bounds, registry writes, worker lifecycle, transcript and cache contracts inspected."
+    },
+    "bridge/tests/test_voice_stt.py": {
+      "sha256": "aef557ee7e9a12077049d7f8c244f3b714e31b1e694f4f086e92597135374913",
+      "lines": 301,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          301
+        ]
+      ],
+      "review_note": "Full file read; voice arguments, reference bounds, registry writes, worker lifecycle, transcript and cache contracts inspected."
+    },
+    "bridge/tests/test_voice_tts.py": {
+      "sha256": "dcd2a3e8e020f10ba92eceb00827da79b63b401e57c0b5e692406fa7440574b2",
+      "lines": 628,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          628
+        ]
+      ],
+      "review_note": "Full file read; voice arguments, reference bounds, registry writes, worker lifecycle, transcript and cache contracts inspected."
+    },
+    "bridge/tests/test_voice_worker.py": {
+      "sha256": "de8291ab0152f6b326f57938792248c4137b62bed98a33213f9c7ecb9df2067d",
+      "lines": 473,
+      "role": "test",
+      "reviewed_ranges": [
+        [
+          1,
+          473
+        ]
+      ],
+      "review_note": "Entire file read; contracts and fixtures checked against production behavior, state ownership, install/update preservation and failure reporting."
+    },
+    "bridge/voice.py": {
+      "sha256": "8325973a53eff79d58930cc61063ffe9bbbb9dd28f520686f25ce521ed0419d9",
+      "lines": 2483,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          2483
+        ]
+      ],
+      "review_note": "Entire baseline read consecutively line by line. Existing behavior and all implementation branches inspected; warranted findings tracked and reproduced before fixes."
+    },
+    "bridge/voice_worker.py": {
+      "sha256": "dd6681684fc73badb91341682644389d81c0a0cd582e1d19025ed533a77d0c54",
+      "lines": 284,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          284
+        ]
+      ],
+      "review_note": "Entire baseline read consecutively line by line. Existing behavior and all implementation branches inspected; warranted findings tracked and reproduced before fixes."
+    },
+    "bridge/yamlfile.py": {
+      "sha256": "46fe3649ed52e30f3d5d006f67f14d9311646d76f647ce8c8664ca83b5e516bb",
+      "lines": 106,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          106
+        ]
+      ],
+      "review_note": "Full serialized read/transform/atomic replace and fsync/error cleanup examined."
+    },
+    "docs/handoff/mcp-api-keys.json": {
+      "sha256": "9bcaeb77adb5f7666ea77c42050a4cbebcdca1b2a2062e84049f5fe27167c3af",
+      "lines": 30,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/handoff/mcp-no-api-keys.json": {
+      "sha256": "5b4b7e00423fc7104125bdf223f7ab58d1ddbe5a57f0efa8809b11b1b37ae5b0",
+      "lines": 52,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/handoff/mcp.json": {
+      "sha256": "094841d4b1071e92bf533c03cca73cc5c1ade8abc010f66dff75bf5e245908e7",
+      "lines": 85,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/handoff/rollback-hermes-2026-08-28/OLD-SHA.txt": {
+      "sha256": "02e3f5bd55909275d37887df01ae7da75baa66daaaa07fee7ad3484750d7a172",
+      "lines": 2,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/handoff/rollback-hermes-2026-08-28/POISONED-mcp_schema_cache.json": {
+      "sha256": "6a4dca30350ae7be5796305e9ef59663e70a13bd33650066bc6d741cc2312f85",
+      "lines": 294,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/handoff/rollback-hermes-2026-08-28/hermes-venv-freeze-OLD.txt": {
+      "sha256": "193d5240a152bd8d1125fa550df4364d36d9f6c4024cb952e0c1b3c6a0462846",
+      "lines": 113,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/compose-a.html": {
+      "sha256": "57724e5963728dbdce50b228a6e809876792091fe68702ea799cce67b0f60b68",
+      "lines": 506,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/compose-b.html": {
+      "sha256": "d34265507f2726af5ea2604d390260df39ebf74a81e178cfe664cc3fc6f011bf",
+      "lines": 443,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/compose-c.html": {
+      "sha256": "0c9fd500d10d65ad6ef912138055c71b154fe9733b6da02d2259bbd769a522a8",
+      "lines": 438,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/compose-d.html": {
+      "sha256": "84f7b5dd08c03ca99fc0d90a63a0ce393aec80fe7bede1107c77244665ddcd22",
+      "lines": 396,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/compose-f.html": {
+      "sha256": "20caa03d08143d109589c404f58073c5357f987ec208467e9643d357008b10fc",
+      "lines": 647,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/compose-g.html": {
+      "sha256": "0bbad406cff5266037fbf9f73fd2c7141d76dc1267698500ccf936ebf9480013",
+      "lines": 684,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/compose-h.html": {
+      "sha256": "25b2c7248ea5f499b7e758c18582e1c6780a32c67513b8646f229c6e52df3ff7",
+      "lines": 647,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/compose-i.html": {
+      "sha256": "6d0c817cbf5a5973d892146ef0cb49a7fbb1d5f469c5ddefe8adb6c4fdd45fd1",
+      "lines": 1010,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/compose-j.html": {
+      "sha256": "2658fcd535fd491d9eabd75a9baaa821de9ccce4b72bb636f8facde6adecc143",
+      "lines": 1020,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/compose-k.html": {
+      "sha256": "6177647e67483d4922fe590af264a887df067a9e6998458d219953a28c187994",
+      "lines": 1027,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/generate-a.html": {
+      "sha256": "d9376aa49e4631ff8805a4648c09b0ef596ceb91509311235f7dd783dc5de13d",
+      "lines": 388,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/generate-b.html": {
+      "sha256": "5dfa953b4999719a73d8cb4005594c45ca8dbd69e13c306658c5ef4a9aa1f8f1",
+      "lines": 350,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/generate-c.html": {
+      "sha256": "8f6aa2f42f5d4d786f0f1abfb84d58e516fbd4c139425436ef9bee37c9ac5eae",
+      "lines": 394,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/generate-d.html": {
+      "sha256": "6f2087113c5a29418428fe91eab8d426ba5a9e98fc3f3c658ca5e311b885d9b3",
+      "lines": 377,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/generate-e.html": {
+      "sha256": "dbcd9e0447f398504424a1a7418b1a91bd7e4ba57db206d279c8c3652c4fe11c",
+      "lines": 576,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/generate-f.html": {
+      "sha256": "82dd58029978b2a7430e29f7ddd8c67b7240a66ec52ec20ddda32bb3200039ae",
+      "lines": 585,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/generate-g.html": {
+      "sha256": "9e2a5eabdce919e7cf3ca399399384f2d22b47420d47d48ccc270561c1ec97d0",
+      "lines": 608,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/generate-h.html": {
+      "sha256": "94648d78c8fad3010810d677b5c33bebb4b270f4641599bda4b59826372b51c7",
+      "lines": 639,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/generate-i.html": {
+      "sha256": "e903fa4c9ce524fffcb950e0d57ba0b61568bc6b21acd81a1216f6e6e061a683",
+      "lines": 737,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/generate-j.html": {
+      "sha256": "b8db58081e0f6b5b40d378189f76e4a7390eb89a09ccd8178ac11213cbc09034",
+      "lines": 742,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "docs/mockups/2026-08-29/generate-k.html": {
+      "sha256": "21d7a7ad6f650ea0179dde025ad6b06e9dc0c2b9890901e1842255184c9200c0",
+      "lines": 747,
+      "role": "historical-reference",
+      "reviewed_ranges": []
+    },
+    "guards/motdeck-path-guard/__init__.py": {
+      "sha256": "ba9d63c68f1bdf7bf99d5c3fd69a94ba7e7ee7050a8dffd33f5164887384a2a8",
+      "lines": 295,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          295
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "guards/motdeck-path-guard/plugin.yaml": {
+      "sha256": "a01859045615d010affdbdd6f9455eccfb8ebe42cb85743ebd055c2da8d62178",
+      "lines": 17,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          17
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "guards/motdeck-path-guard/policy.yaml": {
+      "sha256": "ef5e42fe68bb6de965418ed5681c54f624dac2030f53f386dd7db3a9df2eb4e5",
+      "lines": 24,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          24
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "motdeck.yaml": {
+      "sha256": "602c753ecc4918017c7ef636f0c01e0e1502feba2244734b02021b3f5d08130b",
+      "lines": 803,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          803
+        ]
+      ],
+      "review_note": "All lines read; manifest defaults and verification failures examined."
+    },
+    "policies/deepseek-directory-picker.yaml": {
+      "sha256": "327a179a92176d67304c8d9e8614351324a2150cc680a2fb4f721efb834e23f6",
+      "lines": 11,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          11
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "policies/routing.yaml": {
+      "sha256": "ddabb347453643bfa2b839e2b41f5680eb65a2a57f62e6271d177e96ec857809",
+      "lines": 17,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          17
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/app_bundle_identity.sh": {
+      "sha256": "5f2fc353c7809f5485cf7e8d7579d7cd85dc15be289e162a68dc7ce61ea50941",
+      "lines": 105,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          105
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/bootstrap.sh": {
+      "sha256": "6ed9d57df332916142f19080ea5274fde2c20bfdfe55f4f900b12ec7c334356e",
+      "lines": 104,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          104
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/build_app.sh": {
+      "sha256": "8bf5eb769e1ae79c8e7ff7ebc1239692b0c41de79e0da0e5bf150471a99493fc",
+      "lines": 319,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          319
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    },
+    "scripts/deepseek-npm/package-lock.json": {
+      "sha256": "d8eb8e9b96905e8f3b8db887e85cc1af25a028dac2cf668415c772c453fedb18",
+      "lines": 7835,
+      "role": "generated-dependency-lock",
+      "reviewed_ranges": []
+    },
+    "scripts/deepseek-npm/package.json": {
+      "sha256": "7b2fa9640358d4adf7ac0b0694bf62a7e168001b7155dcfee1734448db8ca1e7",
+      "lines": 9,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          9
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/diagnose_odysseus.sh": {
+      "sha256": "0112e764339f12ee608aa04157d2e41fcdfa18bdd7fa37ac42d3ddb6e4cc3216",
+      "lines": 42,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          42
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/doctor.sh": {
+      "sha256": "53d959784457afa86aeb3f1daf9def202e8380e82d4250472cb3846c806d52a3",
+      "lines": 29,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          29
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/ensure_bun.sh": {
+      "sha256": "94f9752b777cfd5f1d9a7375370298751d708539eb95f7347bd3953d507c1010",
+      "lines": 152,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          152
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/ensure_ffmpeg.sh": {
+      "sha256": "0a73950afcfbfc6fe98cd14b369fa060d7fafd725e15b392bbc77ca1d633ac02",
+      "lines": 120,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          120
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/ensure_node.sh": {
+      "sha256": "fab4f12fea1d3d5721427471cede72f744fa285ba0251e04e2075cde4fa0f3fc",
+      "lines": 230,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          230
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/fetch_vendor_assets.sh": {
+      "sha256": "efe99fce78f03c14e286624b919779a4b26e92152d11c4f1a24710104117122d",
+      "lines": 174,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          174
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/firstrun.sh": {
+      "sha256": "c25852a05050f45b42659fdd52fa5875bcc986aa591bbb1b17ce01c3e0c983ec",
+      "lines": 90,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          90
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/firstrun_fat.sh": {
+      "sha256": "c72472e79256a5da9c8667060dee2365931997b6ab59365e19a07ab1ddae07ee",
+      "lines": 230,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          230
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/flip_installed.py": {
+      "sha256": "8a435c8c3f1c2850f6ede72d63354244e4217307f1eef46731f19479f512f18e",
+      "lines": 129,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          129
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/generate_legacy_seed_manifest.py": {
+      "sha256": "7a6a15c66ad2ab631de902089fc645139d5a8229688a648fe27707e3d1969ae2",
+      "lines": 57,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          57
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/install_aider.sh": {
+      "sha256": "d3209cd5741163533c1f25cae46a51f5b54ad4342acf53486a1241e96698078e",
+      "lines": 168,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          168
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/install_component.sh": {
+      "sha256": "f0e2ffd5a3c20a7acee4babfe16dba3e9fa2f1810677c6e0c5ac38fb1a39f677",
+      "lines": 850,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          850
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/install_deepseek.sh": {
+      "sha256": "ce8b99729b5547213724fb1e7124ef3caca3f07741a67563c09c7b08b3809e20",
+      "lines": 290,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          290
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/install_goose.sh": {
+      "sha256": "f2c5219bbe89fc1b870bbcb65c7833ed51c785f063fe5e119883a8ee338bb6f1",
+      "lines": 287,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          287
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/install_goose_ui.sh": {
+      "sha256": "fe3e26f37d0b2d6aea5bdb01624d419f3dde3b06abe4c5da02b5553c178204b1",
+      "lines": 320,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          320
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/install_llamacpp.sh": {
+      "sha256": "b1ec7c6519ed0d60aaf4f5ff38af7691e9fb1f50d7924d0c76b30ba997892827",
+      "lines": 101,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          101
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/install_mlx.sh": {
+      "sha256": "6349da301282dd3939f112fcb4397981ec6d1d5e3d4c96f7d45d5d8f841d8e27",
+      "lines": 50,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          50
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/install_music.sh": {
+      "sha256": "34eff135d5dea10f395eac9048fe3289bc04a68af1ef26a10e617b559f758bee",
+      "lines": 381,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          381
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/install_onlyoffice.sh": {
+      "sha256": "ee070c004f7c5a8e1ffa5a33b83588c895be096cf3dc2e969a2af0926436f33e",
+      "lines": 332,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          332
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/install_oo_ai_plugin.sh": {
+      "sha256": "1e2bd0c70c4c24a0eb2aa9969ac553b78a1bbb1c9118d0c502ca2a632f3682e5",
+      "lines": 294,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          294
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/install_opencode.sh": {
+      "sha256": "c5828b35583f35616076205cb1f562893999404b8d285dd72590024976790e87",
+      "lines": 256,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          256
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/install_searxng.sh": {
+      "sha256": "1f9d40ce7fa855a99e00fbc845778867b6f39ef8d0858be452c3980d4472a9fd",
+      "lines": 97,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          97
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/local_secrets.py": {
+      "sha256": "475349be05b68c074e5732498415b4e87bf00c10b97b6c1805a3cbc020612c62",
+      "lines": 43,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          43
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/measure_fit_real.py": {
+      "sha256": "5fbee8ee32c2e3434f1354b01894a3116e07ab046413afc40a134b0461c8cfab",
+      "lines": 265,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          265
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/measure_music.sh": {
+      "sha256": "5496c50e5e2064bd0c0249cd7b1b85cc4883d1cb5b4913b42c2e8f8560d92d2f",
+      "lines": 429,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          429
+        ]
+      ],
+      "review_note": "Entire baseline script read, including embedded Python/JavaScript, measurement setup, cleanup, and probe assertions."
+    },
+    "scripts/merge_manifest.py": {
+      "sha256": "7d970eef837045128fcf6983f1e8093b11d4fdeb15c5a5656b38035d8a62433e",
+      "lines": 321,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          321
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/migrate_jan_models.sh": {
+      "sha256": "b34bc81cb67f0383fa77683c367cb7f51df8b83758550e38d3e476542bc826a2",
+      "lines": 47,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          47
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/migrate_legacy_process.py": {
+      "sha256": "60995c4cfad47cdfa100c743cd1e65b73df92c461bf6d6cd2ce2ffdfec002b6c",
+      "lines": 143,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          143
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/migrate_local_secrets.py": {
+      "sha256": "0310fa12aa62b4a9a94512cd5e5ffb3d5f1f3a1d5cc96492935c25b6a5b3cc1b",
+      "lines": 291,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          291
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/migrate_motdeck_identity.py": {
+      "sha256": "faa140f830919b0b4b35512ca19a970904c0ef844da8fc4ea2ab54c4358147c4",
+      "lines": 356,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          356
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/model_sources.py": {
+      "sha256": "643de5057b2e6c6f1e6fc33d45546a6512b73b1f207abeff3c439515ea07c9ed",
+      "lines": 130,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          130
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/normalize_ledger.py": {
+      "sha256": "67475f58524f1ab82e75309ec903de09e12b669d45359522a50e0cbc60a16409",
+      "lines": 135,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          135
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/pin_voicebox_requirements.py": {
+      "sha256": "fd16adb67caee730b79ffa45a72d7ca3242fc2031099105ed0e26cf13b68b83c",
+      "lines": 84,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          84
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/probe_onlyoffice.sh": {
+      "sha256": "65463eb8e5bf849c01494941bae68aa0f7b4f853ec7c64a57435575d1e720d4a",
+      "lines": 807,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          807
+        ]
+      ],
+      "review_note": "Entire baseline script read, including embedded Python/JavaScript, measurement setup, cleanup, and probe assertions."
+    },
+    "scripts/read_manifest.py": {
+      "sha256": "35d4466140bafb689f729c6c9bfa54eb80c4fb643e533ec79c86d28afdc12c1f",
+      "lines": 82,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          82
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/reconcile_hermes_whatsapp.py": {
+      "sha256": "8742fab3af60360752d9bdbe257bab2044f416b91aaef8037348d5f49f2e0cd4",
+      "lines": 372,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          372
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/repair_deepseek_profiles.py": {
+      "sha256": "412d1e503632ff7e114bb43dce5717919958a654da2317501bf810cdf1bca4f1",
+      "lines": 187,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          187
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/repair_relocated_venvs.py": {
+      "sha256": "32b8432f9fa6da0ed16fa4c24171b934de2b58bebb986e01ae15c4efbbd4b3ba",
+      "lines": 362,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          362
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/seed_deepseek_config.py": {
+      "sha256": "27a53fb89e5e219fd1570da1cf02fa0faccb562a3768a4c2967048ed04b42440",
+      "lines": 516,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          516
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/seed_hermes_provider.py": {
+      "sha256": "d98016a2933b6565c46fa50cbfc992f08dc9743a59904a369b4acb7f45f3b267",
+      "lines": 615,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          615
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/seed_manifests/legacy-runtime-tests.json": {
+      "sha256": "929d3ab9e193146f009a7ded2181b6b360c96bd7a1c2b0ba18e2b1eb3f8d4993",
+      "lines": 538,
+      "role": "maintained-source/config",
+      "reviewed_ranges": []
+    },
+    "scripts/seed_odysseus_jan.py": {
+      "sha256": "166e2afe5a9c741cb896a0aec2a43766786aeac315a2fa03280f13ddb6aadcf6",
+      "lines": 663,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          663
+        ]
+      ],
+      "review_note": "All baseline lines read consecutively; identity, protected selections, scan provenance, merging, metadata preservation, and destructive/error paths inspected."
+    },
+    "scripts/seed_opencode_config.py": {
+      "sha256": "d287cb59b6facc702eecfc7e7bee6b17573fc60435a0089dbc12882507428267",
+      "lines": 320,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          320
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/seed_ownership.py": {
+      "sha256": "8a7a9b92f53b48b8ee52faef9c80192558b2caf0377bd294272c59cad27baac1",
+      "lines": 227,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          227
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/seed_registry.py": {
+      "sha256": "8c0432f534f61f62667024fc4d266c09fd52227e393eba7c7884055b5e09c777",
+      "lines": 1239,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          1239
+        ]
+      ],
+      "review_note": "All baseline lines read consecutively; identity, protected selections, scan provenance, merging, metadata preservation, and destructive/error paths inspected."
+    },
+    "scripts/ship.sh": {
+      "sha256": "2b6863aab75eedb40fde2ca5e951defe2ac09d63662b74a96794109945aa7c5c",
+      "lines": 779,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          779
+        ]
+      ],
+      "review_note": "Entire baseline read, including embedded scripts, all branches, pins, packaging, lifecycle and diagnostics. Installer improvements and remaining findings recorded independently."
+    },
+    "scripts/start.sh": {
+      "sha256": "857a9f858cc464812005caca7cfe5609117f1c729133cd7e166d173409a52f6d",
+      "lines": 14,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          14
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/start_component.sh": {
+      "sha256": "d9d48f548ea66b98ab0e3820cff10b120503abeeaa229703008dbf1788b5af6d",
+      "lines": 2319,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          2319
+        ]
+      ],
+      "review_note": "Every line read in contiguous chunks. Ownership failure and mutable key-receipt defects reproduced and fixed; remaining start serialization and YAML writers tracked."
+    },
+    "scripts/stop.sh": {
+      "sha256": "2f07bfa53b2e47a87c84a519ce0bcc6bc8a59396dd5352fb4c4e330624bab1c0",
+      "lines": 99,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          99
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/storage_reset_helper.py": {
+      "sha256": "e436e173cf119fb2d91f8bce0930f2bd2870f5b42e3339992f16011e295677bf",
+      "lines": 194,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          194
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/sync_snapshot_identity.py": {
+      "sha256": "c9be9d23e7a9f8170cd2f9a1f2b28148152c50bbb5718bfe75cb70c0a3c02fe8",
+      "lines": 182,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          182
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/test_hermes.sh": {
+      "sha256": "02ca0d2c07ee2409cc21bfd32da797cf1d807df7e7d71df9ddb0a7ce2d06d659",
+      "lines": 16,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          16
+        ]
+      ],
+      "review_note": "Entire baseline file read line by line; setup, migration, preservation and error paths examined. Findings retained in review worklist."
+    },
+    "scripts/update_seeded_vendor.py": {
+      "sha256": "58a347935f9c02f73be9fb98d9efafdc653dc1c0860ca8fd082ee6b7026d9126",
+      "lines": 280,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          280
+        ]
+      ],
+      "review_note": "Entire baseline source read consecutively. Migration boundaries, generated-file ownership, configuration merging and catalog defaults examined; concrete corrections tested separately."
+    },
+    "scripts/verify.sh": {
+      "sha256": "e7db3c6ca66164471afe76872af466e2263707a0fb3e31303edacc77b44401d2",
+      "lines": 108,
+      "role": "maintained-source/config",
+      "reviewed_ranges": [
+        [
+          1,
+          108
+        ]
+      ],
+      "review_note": "Every baseline line read in contiguous chunks; current changes and adjacent consumers examined where applicable."
+    }
+  },
+  "current_work": "Continue the non-RAM inventory review and resolve the concrete counterexamples noted per file; re-read changed and new files against their final hashes before closing U170. RAM, memory-ledger and fit implementation remain at ea47eb1 by explicit user direction. Do not stop at a subsystem release or begin pending roadmap features."
+}

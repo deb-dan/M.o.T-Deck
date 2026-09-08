@@ -53,7 +53,6 @@ import asyncio
 import hashlib
 import json
 import os
-import shutil
 import time
 import uuid
 from pathlib import Path
@@ -67,6 +66,7 @@ from ..core.appctx import PANEL, ROOT, app
 from ..core.events import publish
 from ..core.procs import _ownership_matches, _read_ownership, cfg
 from ..core.comfymeta import hosted_api_nodes
+from ..core.comfyfiles import stage_source as _stage_source
 
 # ── THE RE-EXPORTED CURATION LAYER (bridge/core/comfycur.py) ─────────────────
 # Explicit, not `import *`: the underscore names below are named from the suite and
@@ -466,30 +466,7 @@ async def api_comfy_sources() -> JSONResponse:
 
 
 def stage_source(src: dict) -> "str | None":
-    """Put a chosen source file where LoadImage/LoadVideo can see it, and return the
-    name to write into the widget. A gallery file is COPIED (never moved: the gallery
-    keeps everything), and a file already in input/ is used where it lies."""
-    fn = str((src or {}).get("filename") or "")
-    if not fn:
-        return None
-    if (src.get("origin") or "gallery") == "input":
-        return fn if (input_dir() / fn).is_file() else None
-    root = output_dir().resolve()
-    try:
-        p = (root / (src.get("subfolder") or "") / fn).resolve()
-        p.relative_to(root)
-    except (ValueError, OSError):
-        return None
-    if not p.is_file():
-        return None
-    try:
-        input_dir().mkdir(parents=True, exist_ok=True)
-        dest = input_dir() / p.name
-        if not dest.exists() or dest.stat().st_size != p.stat().st_size:
-            shutil.copy2(str(p), str(dest))
-    except OSError:
-        return None
-    return dest.name
+    return _stage_source(src, input_dir(), output_dir())
 
 
 # ══ DOWNLOADS — resumable, size- AND (where pinned) sha-verified ═════════════
@@ -628,6 +605,8 @@ async def _run_cdl(dl_id: str) -> None:
                 f["state"] = "verifying"
                 publish("comfy", what="download", id=dl_id, state="verifying")
                 digest = await _sha256(part)
+                if e["state"] in ("cancelled", "paused"):
+                    return
                 if digest != f["sha256"]:
                     e.update(state="error",
                              error=(f"{f['name']}: sha256 {digest[:12]}… does not match the "
@@ -643,6 +622,11 @@ async def _run_cdl(dl_id: str) -> None:
         e["state"] = "done"
         catalog_invalidate()
         publish("comfy", what="download", id=dl_id, state="done")
+    except asyncio.CancelledError:
+        if e["state"] != "paused":
+            e["state"] = "cancelled"
+        publish("comfy", what="download", id=dl_id, state=e["state"])
+        raise
     except Exception as ex:                                      # noqa: BLE001
         e.update(state="error", error=f"{type(ex).__name__}: {ex}"[:300])
         publish("comfy", what="download", id=dl_id, state="error")
@@ -650,7 +634,9 @@ async def _run_cdl(dl_id: str) -> None:
 
 def cdl_inflight(pick_id: str):
     for e in CDL.values():
-        if e.get("pick") == pick_id and e.get("state") in ("downloading", "paused"):
+        task = e.get("task")
+        if e.get("pick") == pick_id and (e.get("state") in ("downloading", "paused")
+                                        or (task is not None and not task.done())):
             return e
     return None
 
@@ -782,7 +768,14 @@ async def api_comfy_download_cancel(dl_id: str) -> JSONResponse:
     e = CDL.get(dl_id)
     if not e:
         return JSONResponse({"ok": False, "error": "no such download"}, status_code=404)
+    if e["state"] == "done":
+        return JSONResponse({"ok": True, "download": _cdl_json(e)})
     e["state"] = "cancelled"
+    task = e.get("task")
+    if task is not None:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     # The .part is DELIBERATELY KEPT — a cancelled 9 GB download resumed tomorrow must
     # not start from zero — and `_file_state` reports it as `partial`, not present.
     publish("comfy", what="download", id=dl_id, state="cancelled")
@@ -1126,7 +1119,7 @@ async def _generate_workflow(body: dict) -> JSONResponse:
         if kind not in controls:
             continue
         src = (body.get("source") or {}) if isinstance(body.get("source"), dict) else {}
-        staged = stage_source(src) if src else None
+        staged = await asyncio.to_thread(stage_source, src) if src else None
         if not staged:
             return JSONResponse({"ok": False, "error": (
                 f"this workflow starts from {'a picture' if kind == 'image' else 'a ' + kind}"
@@ -1191,13 +1184,19 @@ async def api_comfy_job_cancel(job_id: str) -> JSONResponse:
     err = None
     try:
         r = await _CX.post(comfy_url(f"/api/jobs/{job_id}/cancel"), timeout=8.0, json={})
-        if r.status_code >= 400:
-            await _CX.post(comfy_url("/interrupt"), timeout=8.0)
+        r.raise_for_status()
+        receipt = r.json()
+        # The pinned server returns cancelled:false for finished/unknown jobs.
+        # A transport success is not cancellation, and /interrupt without an ID
+        # would stop whichever unrelated job happened to be running now.
+        if not isinstance(receipt, dict) or receipt.get("cancelled") is not True:
+            err = "ComfyUI did not cancel an active job with this ID; refreshing its status."
     except Exception as e:                                       # noqa: BLE001
         err = f"{type(e).__name__}: {e}"[:160]
-    if j:
+    if j and err is None and j["state"] not in ("done", "error", "cancelled"):
         j["state"] = "cancelled"
-    publish("comfy", what="job", id=job_id, state="cancelled")
+    if err is None:
+        publish("comfy", what="job", id=job_id, state="cancelled")
     return JSONResponse({"ok": err is None, "error": err,
                          "job": _job_json(j) if j else None})
 

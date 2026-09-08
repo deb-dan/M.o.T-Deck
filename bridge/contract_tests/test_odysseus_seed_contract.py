@@ -30,6 +30,7 @@ import ast
 import ipaddress
 import json
 import re
+import pytest
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -90,7 +91,7 @@ class _Row:
 # ── 1. the column, and what its own docstring says it is for ────────────────
 def test_model_endpoint_still_carries_the_admin_pin_column():
     if not DATABASE.exists():
-        return
+        pytest.skip("optional upstream source is absent: not DATABASE.exists()")
     src = _read(DATABASE)
     assert "class ModelEndpoint" in src
     assert "pinned_models = Column(Text" in src, (
@@ -111,7 +112,7 @@ def test_model_endpoint_still_carries_the_admin_pin_column():
 # ── 2. the merge, EXECUTED ──────────────────────────────────────────────────
 def test_pinned_models_reach_the_picker_without_any_probe():
     if not MODEL_ROUTES.exists():
-        return
+        pytest.skip("optional upstream source is absent: not MODEL_ROUTES.exists()")
     ns = _extract(_read(MODEL_ROUTES), HELPERS, CONSTS)
     # A brand-new endpoint: nothing cached (no probe has ever run), our registry pinned.
     ours = ["big-27b", "small-4b", "/models/mlx-9b"]
@@ -130,7 +131,7 @@ def test_pinned_models_reach_the_picker_without_any_probe():
 
 def test_the_merge_is_cached_union_pinned():
     if not MODEL_ROUTES.exists():
-        return
+        pytest.skip("optional upstream source is absent: not MODEL_ROUTES.exists()")
     ns = _extract(_read(MODEL_ROUTES), HELPERS, CONSTS)
     got = ns["_visible_models"](json.dumps(["live-a"]), None, json.dumps(["seeded-b"]))
     assert got == ["live-a", "seeded-b"], (
@@ -140,7 +141,7 @@ def test_the_merge_is_cached_union_pinned():
 # ── 3. the human's hide still wins ──────────────────────────────────────────
 def test_hidden_beats_pinned():
     if not MODEL_ROUTES.exists():
-        return
+        pytest.skip("optional upstream source is absent: not MODEL_ROUTES.exists()")
     ns = _extract(_read(MODEL_ROUTES), HELPERS, CONSTS)
     got = ns["_visible_models"](None, json.dumps(["small-4b"]),
                                 json.dumps(["big-27b", "small-4b"]))
@@ -152,7 +153,7 @@ def test_hidden_beats_pinned():
 # ── 4. why `local-jan` is provably ours, and why we adopt instead of duplicate ──
 def test_user_added_endpoints_get_a_random_id_not_a_readable_one():
     if not MODEL_ROUTES.exists():
-        return
+        pytest.skip("optional upstream source is absent: not MODEL_ROUTES.exists()")
     src = _read(MODEL_ROUTES)
     assert re.search(r"uuid\.uuid4\(\)[^\n]*\[:8\]", src), (
         "Odysseus's own add-endpoint form no longer mints a random 8-char id. The seed "
@@ -163,7 +164,7 @@ def test_user_added_endpoints_get_a_random_id_not_a_readable_one():
 
 def test_odysseus_still_dedupes_endpoints_by_base_url():
     if not MODEL_ROUTES.exists():
-        return
+        pytest.skip("optional upstream source is absent: not MODEL_ROUTES.exists()")
     src = _read(MODEL_ROUTES)
     assert "Dedupe" in src and "same base_url already exists" in src, (
         "the create route no longer dedupes by base_url — the seed adopts a user-made "
@@ -182,7 +183,7 @@ def test_odysseus_still_labels_a_substituted_model_on_the_message():
     which model answered — the LIE-TO-USER class — and the seeded list needs rethinking.
     """
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     renderer = _read(ODY / "static" / "js" / "chatRenderer.js")
     assert "export function modelRouteLabel" in renderer
     assert "shortModel(requested) + ' -> ' + shortModel(actual)" in renderer, (
@@ -198,7 +199,7 @@ def test_odysseus_still_labels_a_substituted_model_on_the_message():
 # ── 5. the settings keys the seed writes ────────────────────────────────────
 def test_global_settings_still_carry_the_default_chat_keys():
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(ODY / "src" / "settings.py")
     assert "def load_settings" in src and "def save_settings" in src
     consts = _read(ODY / "src" / "settings.py") + _read(ODY / "src" / "constants.py")
@@ -212,7 +213,7 @@ def test_global_settings_still_carry_the_default_chat_keys():
 
 def test_a_disabled_endpoint_is_still_a_reason_to_reassign_the_default():
     if not MODEL_ROUTES.exists():
-        return
+        pytest.skip("optional upstream source is absent: not MODEL_ROUTES.exists()")
     src = _read(MODEL_ROUTES)
     assert "_default_endpoint_needs_assignment" in src, (
         "Odysseus's own dangling-default repair is gone; the seed's settings_plan "

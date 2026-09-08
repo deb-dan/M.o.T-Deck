@@ -197,7 +197,8 @@ function headSandbox(stored) {
       return { style: { display: '' } };          // a kick region
     },
     getElementById: function (id) { return byId[id] || null; },
-    createElement: function (t) { return { tagName: String(t).toUpperCase() }; },
+    createElement: function (t) { return { tagName: String(t).toUpperCase(),
+      remove: function () { if (byId[this.id] === this) delete byId[this.id]; } }; },
     visibilityState: 'visible',
   };
   const store = {};
@@ -263,6 +264,12 @@ function headSandbox(stored) {
   f.appended[0].onerror();
   eq('a FAILED asset removes the attribute — an honest DOM, and a working Editorial '
      + 'page', f.root.attrs['data-design'], undefined);
+
+  f.win.syncDesign('focus');
+  eq('a failed stylesheet is retried on the next focus/design sync', f.appended.length, 2);
+  f.appended[1].onload();
+  f.appended[0].onerror();
+  eq('an old link error cannot remove a recovered design', f.root.attrs['data-design'], 'studio');
 
   // the flip-while-in-flight case the stamp() re-read exists for
   const g = headSandbox('studio');

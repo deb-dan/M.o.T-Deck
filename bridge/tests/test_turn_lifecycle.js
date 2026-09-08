@@ -68,7 +68,7 @@ function grab(name) {
       if (!bs && c === (t === 'sq' ? "'" : '"')) stack.pop();
     } else if (t === 'tpl') {
       if (!bs && c === '`') stack.pop();
-      else if (!bs && c === '$' && html[j + 1] === '{') { stack.push({t: 'itp', d: depth}); j++; }
+      else if (!bs && c === '$' && panelCode[j + 1] === '{') { stack.push({t: 'itp', d: depth}); j++; }
     } else {
       if (c === '/' && panelCode[j + 1] === '/') { j = panelCode.indexOf('\n', j); if (j < 0) break; prev = '\n'; continue; }
       if (c === '/' && panelCode[j + 1] === '*') { j = panelCode.indexOf('*/', j) + 1; if (j < 1) break; prev = '/'; continue; }
@@ -141,7 +141,7 @@ check('every phase of a turn labels itself',
 /* ── 3. Stop always wins ─────────────────────────────────────────────────── */
 const stop = grab('hermesStop');
 check('Stop arms a client-side force-end BEFORE it touches the network',
-  /t\.stopArmed = true;[\s\S]{0,200}setTimeout\(\(\) => forceEndTurn\([\s\S]{0,120}TURN_FORCE_MS\)/.test(stop));
+  /t\.stopArmed = true;[\s\S]{0,200}setTimeout\(\(\) => \{[\s\S]{0,100}if \(chatPane\.curTurn === t\)[\s\S]{0,140}forceEndTurn\([\s\S]{0,120}TURN_FORCE_MS\)/.test(stop));
 before(stop, 't.stopArmed = true;',
   'if (!chatPane.hermesSid || chatPane.hermesStopping) return;',
   'the force-end is armed even with NO session id yet — the pre-first-event '
@@ -164,8 +164,8 @@ for (const [fn, label] of [['newSession', '+NEW'], ['selectSession', 'a rail row
                            ['selectHermesSession', 'a Hermes rail row'],
                            ['duplicateSession', 'duplicate']]) {
   const src = grab(fn);
-  check(label + ' DETACHES a durable running turn instead of returning silently',
-    /if \(chatPane\.busy\) await (?:stopTurnNow|detachTurnNow)\(/.test(src)
+  check(label + ' resolves the current running turn before switching',
+    /if \(chatPane\.busy\)(?: await | \{\s*if \(!await )(?:stopTurnNow|detachTurnNow)\(/.test(src)
     && !/^\s*if \(chatPane\.busy\) return;/m.test(src));
 }
 

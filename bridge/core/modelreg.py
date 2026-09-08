@@ -67,7 +67,7 @@ def _require_regular(path, *, absent_ok=False):
 
 
 def _read_registry_text(path):
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     fd = os.open(path, flags)
     try:
         if not _stat.S_ISREG(os.fstat(fd).st_mode):

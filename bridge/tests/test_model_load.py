@@ -554,9 +554,9 @@ ok("panel empty box / 'default' option = reset (null, never a stored zero)",
 ok("panel has a reset-all", "loadResetAll" in panel)
 ok("panel has an Apply & reload chip", "Apply &amp; reload" in panel)
 ok("Apply goes through the EXISTING switch path on the same id",
-   "switchModel(id," in panel.split("function loadApply")[1][:400])
+   "await switchModel(id," in panel.split("function loadApply")[1].split("async function loadPost")[0])
 ok("...and is a no-op while another load is in flight",
-   "if (!id || modelsBusy) return;" in panel.split("function loadApply")[1][:300])
+   "if (!id || modelsBusy || loadApplying) return;" in panel.split("function loadApply")[1][:300])
 # v2.1: the Apply chip + pill MOVED to the shared launch row (renderLaunch), so an
 # MLX model — which has no Load group at all — still has somewhere to apply from.
 lau = panel.split("function renderLaunch")[1].split("\nfunction ")[0]

@@ -1,72 +1,17 @@
-// ARTIFACT COVERAGE V2 unit test — artifactKind() additions (mermaid / csv / json) +
-// the fenced-block wiring (LANG_EXT + worthy rule) in bridge/panel/index.html.
-// Mirrors the panel implementations (established test pattern). Offline, no deps.
-// Run: node bridge/tests/test_artifact_kind_v2.js
-
-// --- mirrors of the v2 sniffs ---
-const MERMAID_RE = /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|gantt|pie|mindmap|journey|timeline|gitGraph|quadrantChart)\b/;
-function sniffMermaid(t){ return MERMAID_RE.test(t); }
-function sniffJson(t){
-  if (!/^[\[{]/.test(t)) return false;
-  try { const v = JSON.parse(t); return typeof v === 'object' && v !== null; }
-  catch (e) { return false; }
-}
-function sniffCsv(t){
-  const lines = t.split(/\r?\n/).filter(l => l.trim() !== '').slice(0, 10);
-  if (lines.length < 2) return false;
-  const tabs = (lines[0].match(/\t/g) || []).length;
-  const commas = (lines[0].match(/,/g) || []).length;
-  const d = (tabs > 0 && tabs >= commas) ? '\t' : ',';
-  const n = lines[0].split(d).length - 1;
-  if (n < 1) return false;
-  return lines.every(l => l.split(d).length - 1 === n);
-}
-// --- mirror of artifactKind() (v2) ---
-function artifactKind(filename, content){
-  const fn = (filename || '').toLowerCase().trim();
-  const ext = (fn.match(/\.([a-z0-9]+)$/) || [])[1] || '';
-  const c = content || '';
-  const EXT = {
-    html:'html', htm:'html', svg:'svg', jsx:'react', tsx:'react', js:'js', mjs:'js', cjs:'js',
-    md:'markdown', markdown:'markdown', mdown:'markdown',
-    mmd:'mermaid', mermaid:'mermaid', csv:'csv', tsv:'csv', pdf:'pdf',
-    png:'image', jpg:'image',
-    py:'code', ts:'code', go:'code', rs:'code', sh:'code',
-    json:'json', yaml:'code', yml:'code', css:'code', sql:'code'
-  };
-  let kind = EXT[ext] || '';
-  const importsReact = /import\s+[\s\S]*?from\s*['"]react(?:-dom)?(?:\/[\w-]+)?['"]/.test(c)
-                     || /require\(\s*['"]react['"]\s*\)/.test(c)
-                     || /\bReactDOM\b|\bReact\.(?:createElement|Component|useState|Fragment)\b/.test(c);
-  const hasJsxTag = /<[A-Z][A-Za-z0-9]*[\s/>]/.test(c);
-  if (!kind){
-    const t = c.replace(/^\s+/, '');
-    if (/^<svg[\s>]/i.test(t)) kind = 'svg';
-    else if (/^<!doctype html/i.test(t) || /^<html[\s>]/i.test(t) || /<\/(?:div|body|head|p|span|section|main|h[1-6])>/i.test(t)) kind = 'html';
-    else if (sniffMermaid(t)) kind = 'mermaid';
-    else if (sniffJson(t)) kind = 'json';
-    else if (sniffCsv(t)) kind = 'csv';
-    else if (importsReact || hasJsxTag) kind = 'react';
-    else if (/^#{1,6}\s|\n#{1,6}\s|```|^\s*[-*]\s+\S/m.test(t)) kind = 'markdown';
-    else kind = 'code';
-  }
-  if ((kind === 'js' || kind === 'html') && (importsReact || hasJsxTag)) kind = 'react';
-  return kind;
-}
-// --- mirror of the fenced-block wiring (LANG_EXT subset + worthy rule) ---
-const LANG_EXT = { html:'html', svg:'svg', jsx:'jsx', javascript:'js', js:'js', python:'py',
-  json:'json', mermaid:'mmd', mmd:'mmd', csv:'csv', tsv:'tsv', md:'md' };
-function classify(lang, code){
-  const ext = LANG_EXT[lang] || '';
-  const synth = 'artifact.' + (ext || 'txt');
-  const kind = artifactKind(ext ? synth : '', code);
-  const lines = code.split('\n').length;
-  const big = lines >= 8 || code.length >= 300;
-  const worthy = kind === 'html' || kind === 'svg' || kind === 'react'
-              || kind === 'mermaid' || kind === 'csv' || kind === 'json'
-              || (kind === 'js' && big) || (kind === 'code' && big);
-  return { kind, worthy };
-}
+// Execute production detection and the production fenced-block classifier.
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+const {extractFunction}=require('./_panel_source');
+const source=fs.readFileSync(path.join(__dirname,'../panel/index.html'),'utf8');
+const context=vm.createContext({});
+vm.runInContext(source.match(/^const MERMAID_RE = .*;$/m)[0],context);
+vm.runInContext(source.match(/const LANG_EXT = \{[\s\S]*?\n\};/)[0],context);
+for(const name of ['sniffMermaid','sniffJson','sniffCsv','artifactKind'])
+  vm.runInContext(extractFunction(source,name),context);
+const block=extractFunction(source,'_appendCodeBlock');
+// The prefix calculates kind/worthy; only the subsequent DOM construction is omitted.
+vm.runInContext(block.slice(0,block.indexOf('  const box ='))+'return {kind,worthy};}',context);
+const artifactKind=context.artifactKind;
+const classify=(lang,code)=>context._appendCodeBlock(null,lang,code);
 
 let pass = 0, fail = 0;
 function eq(name, got, want){

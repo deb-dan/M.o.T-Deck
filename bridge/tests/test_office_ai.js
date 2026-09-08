@@ -452,6 +452,7 @@ check('with no selection the "selected cell" line is simply absent',
 eval(grab('sheetIds'));
 var AI_SNAP = null;                              // the snapshot the stub hands back
 let activeSid = 's1', current = 'x', mode = 'grid', api = null;
+function ooSelection() { return null; } // tier-1 fixture; real editor selection is tested separately
 function aiSnapshot() { return AI_SNAP; }        // the tier switch is tested in the browser
 eval(grab('aiSheetId')); eval(grab('aiExtent'));
 [[wb, 4, 2, false],
@@ -835,7 +836,7 @@ const cd = grab('confirmDiscard');
 check('the unsaved-changes message offers the third option outright instead of '
       + 'describing a dilemma and walking away', /Save & open/.test(cd) && /await save\(\)/.test(cd));
 check('…and does NOT open when the save failed — its reason is already on screen',
-      /if \(dirty\) return;/.test(cd));
+      /await save\(\) !== true \|\| generation !== documentGen \|\| dirty/.test(cd));
 check('a DOUBLE-CLICK on a file row can no longer arm and confirm a discard between two '
       + 'halves of one gesture', /DISCARD_MIN_MS/.test(cd) && num('DISCARD_MIN_MS') >= 250);
 const sayFn = grab('say');
@@ -999,10 +1000,10 @@ eval(grab('actSheetExists')); eval(grab('actAddSheet')); eval(grab('actResolveSt
 eval(grab('actRunOps')); eval(grab('actWhere'));
 // the shared machinery the two new ops execute through — the SAME functions the menu
 // gestures use, which is the whole reason the AI path cannot drift from the manual one
-eval(grab('gridRemap')); eval(grab('sheetFormulas')); eval(grab('sheetMerges'));
+eval(grab('sortRemap')); eval(grab('gridRemap')); eval(grab('sheetFormulas')); eval(grab('sheetMerges'));
 eval(grab('sortKey')); eval(grab('sortOrder'));
 eval(grab('rcMerges')); eval(grab('rcApply'));
-eval(grab('histEntry'));
+eval(grab('histSignature')); eval(grab('histEntry'));
 
 check('the caps mirror the grid they write into: the column ceiling is TIER1_MAX_COLS',
       ACT_MAX_COL === num('TIER1_MAX_COLS') - 1);
@@ -1718,8 +1719,8 @@ eq('EXACTLY these functions may write a cell — the grid\'s own three, the temp
               'replaceWrite', 'styleWrite']);
 check('…and the two new writers are SHARED by the menu gestures and the AI ops, so the '
       + 'model cannot reach a code path the menu does not',
-      /gridRemap\(/.test(grab('sortGo')) && /gridRemap\(/.test(grab('rcApply'))
-      && /gridRemap\(/.test(grab('actRunOps')) && /rcApply\(/.test(grab('actRunOps'))
+      /sortRemap\(/.test(grab('sortGo')) && /gridRemap\(/.test(grab('sortRemap')) && /gridRemap\(/.test(grab('rcApply'))
+      && /sortRemap\(/.test(grab('actRunOps')) && /rcApply\(/.test(grab('actRunOps'))
       && /rcApply\(/.test(grab('rcGo'))
       && /replaceWrite\(/.test(grab('findReplaceOne'))
       && /replaceWrite\(/.test(grab('findReplaceAll')));
@@ -1859,7 +1860,7 @@ check('the card\'s Undo goes through the page\'s undo stack rather than restorin
       /histGo\('undo'\)/.test(un) && !/snap = /.test(un));
 check('…which restores the clone whole, dirty flag included, so a clean document goes '
       + 'back to CLEAN and stops asking to be saved for a change that no longer exists',
-      /snap = e\.snap/.test(grab('histRestore')) && /dirty = e\.dirty/.test(grab('histRestore')));
+      /snap = e\.snap/.test(grab('histRestore')) && /histSignature\(snap\) !== histSaved/.test(grab('histRestore')));
 check('…and it will not restore over a DIFFERENT workbook',
       /current !== actLast\.name/.test(un));
 check('…nor silently do nothing when a later change replaced the copy: a dead button '
@@ -2215,7 +2216,7 @@ eq('the dedicated session is named exactly `loffice`',
    (code.match(/AGENT_SESSION_NAME = '([^']+)'/) || [])[1], 'loffice');
 check('…renamed through the EXISTING rename route, on the DURABLE id (the gateway has '
       + 'no rename for a live session it does not own)',
-      /'\/api\/hermes\/session\/' \+ encodeURIComponent\(agentStored\)/.test(grab('agentName')));
+      /'\/api\/hermes\/session\/' \+ encodeURIComponent\(stored\)/.test(grab('agentName')));
 check('…once, and never load-bearing: a rename that fails costs a beacon and remains '
       + 'retryable rather than being logged as success',
       /if \(agentNamed \|\| agentNaming \|\| !agentStored\) return;/.test(grab('agentName'))
@@ -2225,7 +2226,7 @@ check('…once, and never load-bearing: a rename that fails costs a beacon and r
 check('a real Hermes title conflict preserves the older session and retries with this '
       + 'exact durable id rather than guessing, deleting, or overwriting',
       /result\.r\.status === 409/.test(grab('agentName'))
-      && /AGENT_SESSION_NAME \+ ' · ' \+ agentStored/.test(grab('agentName'))
+      && /AGENT_SESSION_NAME \+ ' · ' \+ stored/.test(grab('agentName'))
       && /result = await requestName\(chosen\)/.test(grab('agentName')));
 check('…only after the durable turn work completes, so first-turn auto-title cannot '
       + 'win behind it',
@@ -2593,8 +2594,8 @@ check('THE DIRTY FLIP RIDES paint(), the one funnel every change of `dirty` alre
         // `busy = false` became `busyOff()` at the stuck-latch fix (2026-08-29): the
         // reset also disarms the operation's watchdog, so a raw assignment here would
         // leave a timer live to fire in the middle of the NEXT operation.
-        /finally \{ busyOff\(\); renderFiles\(\); paint\(\); extCheck\(\); \}/.test(grab('openDoc'))
-        && /finally \{ busyOff\(\); paint\(\); \}/.test(grab('save'))
+        /finally \{ busyOff\(owner\); renderFiles\(\); paint\(\); extCheck\(\); \}/.test(grab('openDoc'))
+        && /finally \{ busyOff\(owner\); paint\(\); \}/.test(grab('save'))
         && /paint\(\); aiPaint\(true\)/.test(grab('mi_close')));
 }
 check('the keepalive rides the page tick, not a timer of its own',
@@ -2754,8 +2755,7 @@ eval(grab('extPlan'));
      would never be read. Found by reading the code, and pinned here so it cannot come
      back the obvious way round. */
   check('…and says the sentence AFTER it, because openDoc clears the message line first',
-        /ooExtReload\(name\)\.then\(\(\) => \{ if \(!el\('msg'\)\.textContent\) say\(plan\.text, 'dim'\); \}\)/
-          .test(ea)
+        /ooExtReload\(name\)\.then\(ok => \{\s*if \(ok === true && current === name\) \{ if \(!el\('msg'\)\.textContent\) say\(plan\.text, 'dim'\);/.test(ea)
         && /busyOn\('opening [^)]*\); say\(''\); paint\(\);/.test(grab('openDoc')));
   check('…and never over the top of something openDoc had to say — a read failure or a '
         + 'truncation warning is the bigger sentence', /!el\('msg'\)\.textContent/.test(ea));
@@ -2796,7 +2796,7 @@ eval(grab('extPlan'));
         /extSeen = Number\(row\.modified\)[\s\S]{0,200}extAct\(plan, name\)/.test(ec));
   check('a workbook that was opened, saved or closed gets a FRESH baseline rather than '
         + 'a stale one — a stale-old mtime would accuse the agent of the user\'s own save',
-        /extSeen = 0;/.test(grab('showWorkbook')) && /extSeen = 0;/.test(grab('save'))
+        /extSeen = Number\(data && data\.file_mtime\)/.test(grab('showWorkbook')) && /extSeen = Number\(j\.mtime\)/.test(grab('save'))
         && /extSeen = 0/.test(grab('clearWorkbook')));
   check('…and an open establishes it at once rather than a beat later',
         /renderFiles\(\); paint\(\); extCheck\(\)/.test(grab('openDoc')));
@@ -2811,7 +2811,7 @@ eval(grab('extPlan'));
         && /extMsgGen = msgGen;/.test(grab('extAct')));
   check('one banner at a time, and it does not race the load it asked for',
         /if \(!current \|\| busy \|\| extAsking\) return/.test(ec)
-        && /if \(name !== current\) return null/.test(ec));
+        && /generation !== documentGen \|\| name !== current/.test(ec));
   check('a workbook that vanished is not this banner\'s business',
         /if \(!row\) return null/.test(ec));
 }
@@ -2962,9 +2962,9 @@ eval(grab('extPlan'));
         && !/innerHTML/.test(grab('csRelabel')));
   check('…and a non-ok apply NEVER reaches it: the throw is before the stamp',
         src.indexOf('throw new Error') < src.indexOf('csReceiptText'));
-  check('…a failed apply says "NOT applied" and leaves the card answerable, rather than '
+  check('…an unconfirmed apply says so and leaves the card answerable, rather than '
         + 'stamping something',
-        /That was NOT applied: /.test(src) && /csBusy\(card, false\)/.test(src));
+        /Apply could not be confirmed: /.test(src) && /csBusy\(card, false\)/.test(src));
   check('…and the receipt\'s RE-READ is shown, so "it says it wrote it" and "the file '
         + 'says so" are two visible facts',
         /re-read from the file after saving/.test(src) && /j\.verify/.test(src));
@@ -3062,7 +3062,7 @@ eval(grab('extPlan'));
         /csNote\(j\.session_line\)/.test(src) && /csNote\(j\.session_line\)/.test(dis)
         && /csNote\(j\.session_line\)/.test(un));
   check('…and lines the page missed (it was reloaded) are recovered from the bridge',
-        /session_lines \|\| \[\]\)\.forEach\(csNote\)/.test(grab('csRead')));
+        /Array\.isArray\(j\.session_lines\) \? j\.session_lines : \[\]\)\.forEach\(csNote\)/.test(grab('csRead')));
   check('a line is never queued twice', /csLines\.indexOf\(s\) < 0/.test(grab('csNote')));
 
   // ── ✗ CHIPS: the silent-failure gap, closed ──
@@ -3132,19 +3132,20 @@ eval(grab('extPlan'));
               'csTypeLines', 'csWarnLines', 'csComputedText', 'csComputed'];
   check('every function this slice added is actually IN the page — a vacuous fence is '
         + 'no fence', S2.every(n => fnNames.indexOf(n) >= 0), S2.filter(n => fnNames.indexOf(n) < 0));
-  check('and NOT ONE of them writes a cell, moves one, or sets the dirty flag',
-        S2.every(n => !writers.test(stripComments(grab(n)))),
-        S2.filter(n => writers.test(stripComments(grab(n)))));
+  const cellWrites = /\bputCell\(|\bcommit\(|\brenderGrid\(|\bparseInput\(/;
+  check('none of these helpers writes or moves a cell',
+        S2.every(n => !cellWrites.test(stripComments(grab(n)))),
+        S2.filter(n => cellWrites.test(stripComments(grab(n)))));
   /* ⚠️ THE ONE DELIBERATE EXCEPTION, NAMED RATHER THAN HIDDEN: extAct's Reload button
      sets `dirty = false`. That is not a write — it is the ANSWER to the question the
      button asked ("discard my in-memory edits"), and clearing it is what stops
      confirmDiscard asking the same question a second time. It can only ever LOSE
-     in-memory edits the user just chose to lose, and it never touches a cell. */
+     in-memory edits the user just chose to lose. A failed reload restores the unsaved flag; neither path touches a cell. */
   eq('…with exactly one flag touched anywhere in the new lane, in the one place the '
      + 'user asked for it',
      S2.filter(n => /\bdirty = (true|false)\b/.test(stripComments(grab(n)))), ['extAct']);
-  check('…and it is `false`, never `true`: nothing in this lane can make the page dirty',
-        !/\bdirty = true\b/.test(stripComments(grab('extAct'))));
+  check('failed reload restores the unsaved flag only for the same document',
+        /if \(reloaded !== true && owns\(\)\) \{ dirty = true;/.test(stripComments(grab('extAct'))));
   check('nothing in the new lane can apply a Quick-lane action plan either',
         S2.every(n => !/actApply|actRunOps|replaceWrite|gridRemap/
           .test(stripComments(grab(n)))));
@@ -3248,16 +3249,14 @@ eval(grab('ooEditorOps'));
   const one = ooEditorOps([{ op: 'set', r: 2, c: 3, values: [['x']] }], null)
     .filter(r => r.k === 'set')[0];
   eq('…while a single cell is still a single cell, not a degenerate range', one.at, 'D3');
-  /* THE OP GRAMMAR ALLOWS RAGGED ROWS (a short row means "nothing further along this
-     one"), and handing a ragged array to a rectangular range is a second thing to get
-     wrong — so the grid is PADDED with null, which is what the tier-1 writer already
-     means by "leave that cell". */
+  // Missing cells are outside the proposal. Each emitted rectangle contains only
+  // explicit values; an explicit null still clears its own cell.
   const rag = ooEditorOps([{ op: 'set', r: 0, c: 0,
                              values: [['a', 'b', 'c'], ['d']] }], null)
-    .filter(r => r.k === 'set')[0];
-  eq('a ragged grid is padded to the rectangle it claims', rag.at, 'A1:C2');
-  eq('…with the EMPTY STRING in the cells the model did not name — not null, which the '
-     + 'editor turns into #N/A', rag.values, [['a', 'b', 'c'], ['d', '', '']]);
+    .filter(r => r.k === 'set');
+  eq('ragged rows use separate ranges without padding', rag.map(r => r.at), ['A1:C1', 'A2']);
+  eq('unspecified cells are absent from the write', rag.map(r => r.values),
+     [[['a', 'b', 'c']], [['d']]]);
   check('and the child counts what it was SENT, which is only honest because the range '
         + 'now matches the array',
         /done\.cells \+= \(row \|\| \[\]\)\.length/.test(
@@ -3874,7 +3873,7 @@ OO_STYLE_KEYS.forEach(k => {
     check('L1b: a dirty:false that NO write-back produced is refused rather than '
           + 'forwarded — the floor under L1a, and the half that keeps us honest if that '
           + 'route is ever unreachable',
-          /if \(!d && dirtyNow && !saving\)/.test(oo)
+          /if \(!d && dirtyNow\)/.test(oo)
           && /heldClears\+\+/.test(oo)
           && /tell\('state', \{dirty: true\}\)/.test(oo));
     check('…and BOTH are countable off probe(), so the fix is measurable rather than '

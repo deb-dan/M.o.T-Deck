@@ -17,6 +17,10 @@ Run: pytest bridge/contract_tests/test_opencode_contract.py -q
 import os
 import re
 import subprocess
+import errno
+import tempfile
+
+import pytest
 
 import yaml
 
@@ -29,14 +33,22 @@ def _installed() -> bool:
 
 
 def _run(*args) -> str:
-    """stdout+stderr, or '' when the binary cannot run here (a foreign ISA in the
-    sandbox is a SKIP, never a failure — the same rule test_mlx_whisper_contract uses
-    for a cross-machine venv shebang)."""
-    try:
-        p = subprocess.run([BIN, *args], capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return (p.stdout or "") + (p.stderr or "")
+    """Probe a pinned binary with an isolated home and truthful unavailable results."""
+    with tempfile.TemporaryDirectory(prefix="opencode-contract-") as home:
+        env = dict(os.environ, HOME=home, XDG_CONFIG_HOME=home + '/config',
+                   XDG_CACHE_HOME=home + '/cache', XDG_DATA_HOME=home + '/data',
+                   XDG_STATE_HOME=home + '/state', OPENCODE_DISABLE_AUTOUPDATE='1')
+        try:
+            p = subprocess.run([BIN, *args], capture_output=True, text=True, timeout=60,
+                               env=env, stdin=subprocess.DEVNULL)
+        except OSError as exc:
+            if exc.errno in (errno.ENOENT, errno.ENOEXEC):
+                pytest.skip(f"OpenCode cannot execute on this host: {exc}")
+            raise
+        assert p.returncode == 0, p.stderr
+        out = (p.stdout or "") + (p.stderr or "")
+        assert out.strip(), f"OpenCode {args} returned no output"
+        return out
 
 
 def _pin() -> str:
@@ -46,10 +58,8 @@ def _pin() -> str:
 
 def test_version_matches_the_pin():
     if not _installed():
-        return
+        pytest.skip("OpenCode binary is not installed")
     out = _run("--version").strip()
-    if not out:
-        return                       # cannot execute here → skip, do not fail
     assert _pin() in out, (
         f"the installed binary reports {out!r} but build.opencode_pin is {_pin()!r} — "
         "either the pin moved without a reinstall, or its auto-updater ran (which is "
@@ -60,10 +70,8 @@ def test_serve_still_takes_hostname_and_port():
     """THE launch line. `--port` matters most: upstream's own default is 0 (an
     ephemeral port), so a rename here would leave the tab pointing at nothing."""
     if not _installed():
-        return
+        pytest.skip("OpenCode binary is not installed")
     out = _run("serve", "--help")
-    if not out.strip():
-        return
     for flag in ("--hostname", "--port"):
         assert flag in out, f"`opencode serve` no longer offers {flag}"
 
@@ -73,10 +81,8 @@ def test_serve_and_web_are_still_both_present():
     `serve` ever disappears, the branch must move to `web` plus a way to suppress the
     browser — so notice here rather than in a Start that pops Safari."""
     if not _installed():
-        return
+        pytest.skip("OpenCode binary is not installed")
     out = _run("--help")
-    if not out.strip():
-        return
     assert re.search(r"\bserve\b", out), "the `serve` subcommand is gone"
 
 
@@ -117,7 +123,7 @@ def test_the_env_contract_still_exists_in_the_binary():
     program just starts writing somewhere else, or updating itself.
     """
     if not _installed():
-        return
+        pytest.skip("OpenCode binary is not installed")
     needles = ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
                "OPENCODE_DISABLE_AUTOUPDATE", "autoupdate"]
     found = _strings(BIN, needles)
@@ -134,7 +140,7 @@ def test_the_provider_package_our_config_names_still_exists():
     OpenAI-compatible endpoint; if it moved, our fan-out would produce a provider
     OpenCode cannot load — and the tab would look configured but answer nothing."""
     if not _installed():
-        return
+        pytest.skip("OpenCode binary is not installed")
     assert "@ai-sdk/openai-compatible" in _strings(BIN, ["@ai-sdk/openai-compatible"]), (
         "the openai-compatible provider package name changed — bridge's opencode "
         "config fan-out (scripts/start_component.sh) writes it verbatim")
@@ -162,7 +168,7 @@ def test_the_routes_our_diagnostics_and_landing_depend_on_still_exist():
     session to diagnose. Fail here instead.
     """
     if not _installed():
-        return
+        pytest.skip("OpenCode binary is not installed")
     needles = ["/provider", "/global/config", "/project/current", "connected"]
     found = _strings(BIN, needles)
     missing = [n for n in needles if n not in found]
@@ -180,7 +186,7 @@ def test_the_config_keys_provider_discovery_reads_still_exist():
     disconnects our provider from inside OpenCode, THAT is the key that hides it, and
     a rename would make the symptom undiagnosable."""
     if not _installed():
-        return
+        pytest.skip("OpenCode binary is not installed")
     needles = ["disabled_providers", "enabled_providers"]
     found = _strings(BIN, needles)
     missing = [n for n in needles if n not in found]

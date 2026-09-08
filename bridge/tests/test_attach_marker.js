@@ -108,8 +108,8 @@ check('the newest matching turn is found',
       P.lastAttachmentId(HIST, 'second question') === 22);
 check('the sent text (marker-free) matches the stored text (marker present)',
       P.lastAttachmentId(HIST, '  second question  ') === 22);
-check('a text that matches nothing falls back to the NEWEST attachment',
-      P.lastAttachmentId(HIST, 'text the server rewrote') === 22);
+check('an unmatched question never authorizes deleting another attachment',
+      P.lastAttachmentId(HIST, 'text the server rewrote') === null);
 check('duplicate texts resolve to the newest of the duplicates',
       P.lastAttachmentId([
         { role: 'user', content: 'same\n[image attached]', attachment: {id: 1} },
@@ -119,7 +119,7 @@ check('user rows WITHOUT an attachment are ignored',
       P.lastAttachmentId([
         { role: 'user', content: 'second question' },
         { role: 'user', content: 'first question\n[image attached]', attachment: {id: 11} },
-      ], 'second question') === 11);
+      ], 'second question') === null);
 check('assistant rows are never considered',
       P.lastAttachmentId([
         { role: 'assistant', content: 'hi', attachment: {id: 99} },
@@ -133,8 +133,8 @@ check('an attachment with a null id is not usable',
       P.lastAttachmentId([{ role: 'user', content: 'hi', attachment: {id: null} }], 'hi') === null);
 check('id 0 is a legitimate id (never treated as missing)',
       P.lastAttachmentId([{ role: 'user', content: 'hi', attachment: {id: 0} }], 'hi') === 0);
-check('a null userText still resolves the newest attachment',
-      P.lastAttachmentId(HIST, null) === 22);
+check('a missing question does not borrow a different image',
+      P.lastAttachmentId(HIST, null) === null);
 check('the history array is not mutated',
       HIST.length === 4 && HIST[0].attachment.id === 11);
 

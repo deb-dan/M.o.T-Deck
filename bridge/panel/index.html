@@ -2146,7 +2146,9 @@
           var _dl = document.createElement('link');
           _dl.rel = 'stylesheet'; _dl.id = 'studio-design-css';
           _dl.href = '/assets/studio-design.css';
+          _dl.onerror = function () { _dl.dataset.failed = 'true'; };
           _dl.onload = function () {
+            if (_dl.dataset.managed === 'true') return;
             var _d = document.documentElement;
             _d.dataset.design = 'studio';
             if (_dg === 'studio-light') _d.dataset.dvariant = 'light';
@@ -2342,7 +2344,7 @@
               onchange="onImagePicked(event)" hidden>
             <textarea id="chat-input" rows="2" placeholder="Message MOT…"
               oninput="growInput(this)"
-              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing&&event.keyCode!==229){event.preventDefault();sendChat();}"></textarea>
             <!-- PHASE D: dictation (push-to-talk). Hidden until an STT default exists
                  (loadVoiceCfg).
                  ⚠️ v1.5.26 — IT MOVED AHEAD OF SEND, and that is the whole point of the
@@ -2768,7 +2770,7 @@ function feed(tag, msg) {
   const f = document.getElementById('feed');
   const t = new Date().toTimeString().slice(0,5);
   f.insertAdjacentHTML('afterbegin',
-    `<div class="row"><span class="tag">${tag}</span><span>${msg}</span><span style="margin-left:auto">${t}</span></div>`);
+    `<div class="row"><span class="tag">${esc(tag)}</span><span>${esc(msg)}</span><span style="margin-left:auto">${t}</span></div>`);
   while (f.children.length > 8) f.lastChild.remove();
 }
 
@@ -2867,7 +2869,7 @@ function sseRun(key, ms, fn){
   if (sseCoalesce[key]) return;
   sseCoalesce[key] = setTimeout(() => {
     sseCoalesce[key] = null;
-    try { fn(); } catch (e) {}
+    try { Promise.resolve(fn()).catch(() => {}); } catch (e) {}
   }, ms);
 }
 
@@ -2942,6 +2944,7 @@ function sseBoot(){
       sseStats.frames++;
       sseStep('frame');
       let j = null; try { j = JSON.parse(m.data); } catch (e) { return; }
+      if (!j || typeof j !== 'object' || Array.isArray(j)) return;
       // `missed` = the hub dropped events for this subscriber (a wedged tab catching
       // up). The honest reaction is to refetch everything, which is also the only
       // reaction this page has.
@@ -2958,10 +2961,49 @@ function sseBoot(){
 window.__sse = () => ({phase: sseState.phase, cadence_ms: pollCadenceMs(pollState()),
                        state: pollState(), stats: sseStats});
 
-async function refresh(manual) {
+let statusRefreshPending = null, statusRefreshAgain = false, statusRefreshManual = false;
+function refresh(manual) {
+  statusRefreshManual = statusRefreshManual || !!manual;
+  if (statusRefreshPending) { statusRefreshAgain = true; return statusRefreshPending; }
+  // Start in a microtask so the pending promise exists before sseStep can request
+  // another refresh on a zombie-stream transition.
+  statusRefreshPending = Promise.resolve().then(async () => {
+    do {
+      statusRefreshAgain = false;
+      const requested = statusRefreshManual; statusRefreshManual = false;
+      try { await refreshStatusOnce(requested); }
+      catch (error) {
+        feed('status', 'could not refresh the panel — ' + (error.message || error));
+        armPoll();
+      }
+    } while (statusRefreshAgain);
+  }).finally(() => { statusRefreshPending = null; });
+  return statusRefreshPending;
+}
+
+async function panelReadJSON(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(url, {signal:controller.signal, cache:'no-store'});
+    if (!response.ok) throw new Error('HTTP ' + response.status + ' reading ' + url);
+    const body = await response.json();
+    if (!body || typeof body !== 'object' || Array.isArray(body))
+      throw new Error('invalid response reading ' + url);
+    return body;
+  } finally { clearTimeout(timer); }
+}
+
+async function refreshStatusOnce(manual) {
   sseStep('tick');            // zombie-stream check, on the timer we already have
   let s;
-  try { s = await (await fetch('/api/status')).json(); statusFails = 0; }
+  try {
+    s = await panelReadJSON('/api/status');
+    if (!s.components || typeof s.components !== 'object' || Array.isArray(s.components)
+        || !Object.values(s.components).every(c => c && typeof c === 'object' && !Array.isArray(c))
+        || !s.disk || typeof s.disk !== 'object') throw new Error('incomplete status');
+    statusFails = 0;
+  }
   catch {
     // A single miss is almost always a mid-switch blip (runner/fan-out restart briefly
     // saturates uvicorn) — don't cry "unreachable" until it persists (item D).
@@ -3020,16 +3062,20 @@ async function refresh(manual) {
   const m = document.getElementById('metrics');
   const running = Object.values(s.components).filter(c=>c.running).length;
   const installed = Object.values(s.components).filter(c=>c.installed).length;
+  const [analyticsRead, versionRead] = await Promise.allSettled(
+    ['/api/analytics', '/api/version'].map(panelReadJSON));
   let aTiles = '';
   try {   // usage analytics (doc-09) — local SQLite, cheap; degrade silently if unavailable
-    const a = await (await fetch('/api/analytics')).json();
+    if (analyticsRead.status !== 'fulfilled') throw analyticsRead.reason;
+    const a = analyticsRead.value;
     aTiles = metric('Tokens today', `${(a.tokens_today||0).toLocaleString()}<small> · ${a.turns_today||0} turns</small>`) +
              metric('Speed', `${a.avg_tps||0}<small> tok/s</small>`);
     if (a.cache_hit_pct != null) aTiles += metric('Cache hit', `${a.cache_hit_pct}<small> %</small>`);
   } catch {}
   let vTile = '';
   try {   // PART 4: local motdeck version + best-effort (usually private-repo → none) update notice
-    const ver = await (await fetch('/api/version')).json();
+    if (versionRead.status !== 'fulfilled') throw versionRead.reason;
+    const ver = versionRead.value;
     if (ver && ver.motdeck) {
       let vv = esc(ver.motdeck);
       // U56: this tile now shows ROOT/VERSION — the number QA bumps every release —
@@ -3375,6 +3421,8 @@ function navMigrate(raw) {
 }
 
 let navModel = null;
+let navRevision = 0, navWrites = 0, navConfirmed = null;
+let navSavePending = Promise.resolve();
 function navGet() {
   if (!navModel) {
     let raw = null;
@@ -3396,25 +3444,34 @@ function navSaveLocal() {
    from it before any request), data/nav.json is the SHARED one — and the shared one
    wins on load, because that is the file the native shell drew its tab strip from. */
 async function navSync() {
+  if (navWrites) return;
+  const revision = navRevision;
   try {
-    const r = await (await fetch('/api/nav')).json();
-    if (!r || !r.ok || !r.nav) return;
+    const response = await fetch('/api/nav');
+    const r = await response.json();
+    if (!response.ok || !r || !r.ok || !r.nav || revision !== navRevision || navWrites) return;
     navModel = navNormalize(r.nav);
+    navConfirmed = navModel;
     navSaveLocal();
     renderSidebar();
   } catch (e) {}
 }
 async function navSave() {
+  const next = navModel, revision = ++navRevision;
+  navWrites++;
   navSaveLocal();
   renderSidebar();
-  try {
+  const pending = navSavePending.then(async () => { try {
     const r = await fetch('/api/nav', { method:'POST', headers:{'Content-Type':'application/json'},
-                                        body: JSON.stringify({ nav: navModel }) });
+                                        body: JSON.stringify({ nav: next }) });
     const j = await r.json();
-    if (!r.ok || !j.ok) return (j && j.error) || ('save failed (' + r.status + ')');
-    navModel = navNormalize(j.nav);
-    navSaveLocal();
-    renderSidebar();
+    if (!r.ok || !j || !j.ok || !j.nav) return (j && j.error) || ('save failed (' + r.status + ')');
+    navConfirmed = navNormalize(j.nav);
+    if (revision === navRevision) {
+      navModel = navConfirmed;
+      navSaveLocal();
+      renderSidebar();
+    }
     // Tell the SHELL immediately rather than making it wait for its nav_gen poll. The
     // poll is the backstop (and the only path when the change came from a solo tab,
     // which has no script-message handler); this is the fast path.
@@ -3422,6 +3479,9 @@ async function navSave() {
     if (h) { try { h.postMessage({ cmd:'navChanged' }); } catch (e) {} }
     return '';
   } catch (e) { return 'save failed — the bridge did not answer'; }
+  finally { navWrites--; } });
+  navSavePending = pending.then(() => {}, () => {});
+  return pending;
 }
 
 // Kept as its own name because it is the whole panel→shell contract; derived from the
@@ -3465,7 +3525,7 @@ const SHELL_STALE_NOTE = 'this build of the app has no such tab — run ./script
 function navShellNote(id, why) {
   const e = navEntry(id);
   const label = (e && e.label) || id;
-  feed('nav', esc(label) + ' opens in a native tab — ' + esc(why));
+  feed('nav', label + ' opens in a native tab — ' + why);
   const row = document.getElementById('nav-' + id);
   if (!row) return;
   const old = row.querySelector('.nav-note');
@@ -3584,9 +3644,9 @@ function renderSidebar() {
     // ⧉ = open this view as an OVERLAY over whatever you are doing. Hover-revealed and
     // its own click target: the row's onclick still navigates normally.
     const pk = peekEligible(e.id)
-      ? `<span class="pk-open" onclick="peekOpen('${escAttr(e.id)}', event, this)"
+      ? `<span class="pk-open" onclick="peekOpen(${apiArg(e.id)}, event, this)"
            title="Open as overlay" aria-label="Open ${escAttr(e.label)} as overlay">⧉</span>` : '';
-    return `<a id="nav-${escAttr(e.id)}"${on} onclick="navOpen('${escAttr(e.id)}')" title="${escAttr(e.label)}"
+    return `<a id="nav-${escAttr(e.id)}"${on} onclick="navOpen(${apiArg(e.id)})" title="${escAttr(e.label)}"
       aria-label="${escAttr(e.label)}"><span class="ico">${esc(e.ico || '·')}</span> ${esc(e.label)}${pk}</a>`;
   }).join('');
   const known = {}; NAV_ENTRIES.forEach(e => { if (e.kind === 'component') known[e.id] = 1; });
@@ -3606,7 +3666,7 @@ function renderSidebar() {
               : `show ${name} on MOT Deck`;
     // id="nav-<name>": the same shape the workspace rows use, so navShellNote can write
     // its aside onto the row that was clicked. Component ids never collide with view ids.
-    return `<a id="nav-${escAttr(name)}" onclick="openComponent('${escAttr(name)}')" title="${esc(tip)}" aria-label="${esc(name)}" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
+    return `<a id="nav-${escAttr(name)}" onclick="openComponent(${apiArg(name)})" title="${esc(tip)}" aria-label="${esc(name)}" style="cursor:pointer"><span class="ico"><span class="dot ${cls}" style="display:inline-block"></span></span>
         <span style="text-transform:capitalize">${esc(name)}</span></a>`;
   }).join('');
   const lbl = document.getElementById('sidecomponents-lbl');
@@ -4108,11 +4168,11 @@ const chatPane = {
   // Hermes lane (Phase 1): its own gateway session id, independent of the Odysseus
   // rail — persisted so the conversation survives panel reloads (dashboard restarts
   // invalidate it; the bridge's stale-sid retry mints a fresh one transparently).
-  hermesSid: localStorage.getItem('motdeck-hermes-sid') || null,
+  hermesSid: (() => { try { return localStorage.getItem('motdeck-hermes-sid') || null; } catch (_) { return null; } })(),
   // Phase 3: the rail lists STORED sessions (state.db rows); the live gateway sid
   // above is what prompt.submit addresses. Selection is keyed by the stored id
   // (survives dashboard restarts, unlike hermesSid).
-  hermesStoredSid: localStorage.getItem('motdeck-hermes-stored') || null,
+  hermesStoredSid: (() => { try { return localStorage.getItem('motdeck-hermes-stored') || null; } catch (_) { return null; } })(),
   // A /api/hermes/stop POST is in flight for THIS pane's turn (re-entrancy guard).
   hermesStopping: false,
   sessions: [],                // Odysseus rail rows
@@ -4488,8 +4548,8 @@ function renderHelp() {
   const d = helpState.doc, q = helpState.q;
   const shown = d.sections.filter(s => helpMatches(s, q));
   toc.innerHTML = shown.map(s =>
-    `<a onclick="helpJump('${escAttr(s.id)}', this)" class="${s.id === helpState.active ? 'on' : ''}">${esc(s.title)}</a>`
-    + s.subs.map(u => `<a class="sub${u.id === helpState.active ? ' on' : ''}" onclick="helpJump('${escAttr(u.id)}', this)">${esc(u.title)}</a>`).join('')
+    `<a onclick="helpJump(${apiArg(s.id)}, this)" class="${s.id === helpState.active ? 'on' : ''}">${esc(s.title)}</a>`
+    + s.subs.map(u => `<a class="sub${u.id === helpState.active ? ' on' : ''}" onclick="helpJump(${apiArg(u.id)}, this)">${esc(u.title)}</a>`).join('')
   ).join('');
   const lead = q ? '' : (d.lead ? '<div class="art-md">' + d.lead + '</div>' : '');
   body.innerHTML = lead + (shown.length
@@ -4582,7 +4642,7 @@ function apiDate(iso) { return String(iso || '').slice(0, 10) || '—'; }
    ENDS at the second quote, and the button is silently inert. Nothing throws, nothing
    logs, and a source-text test asserting `/apiArm\("k_abc"\)/` passes while the only
    revoke control in the product does nothing. Caught by clicking it. */
-function apiArg(s) { return JSON.stringify(String(s == null ? '' : s)).replace(/"/g, '&quot;'); }
+function apiArg(s) { return escAttr(JSON.stringify(String(s == null ? '' : s))); }
 
 // ── section 1: the endpoint ─────────────────────────────────────────────────
 /* `runner` is the row the panel's own /api/status poll already holds — the same object
@@ -5085,23 +5145,31 @@ let _designLastStudio = 'studio';
 /* ONE promise, so a double-click cannot start two fetches and re-activation is free.
    The boot path may already have appended the link; both cases resolve through here. */
 let _designAsset = null;
+let _designRequest = 0;
 function designAsset() {
   if (_designAsset) return _designAsset;
   _designAsset = new Promise((res, rej) => {
     let el = document.getElementById('studio-design-css');
-    if (el) {
-      if (el.sheet) { res(); return; }            // already parsed (boot path)
-      el.addEventListener('load', () => res());
-      el.addEventListener('error', () => rej(new Error('stylesheet failed')));
-      return;
+    if (el && el.dataset.failed === 'true') { el.remove(); el = null; }
+    if (el && el.sheet) { res(); return; }
+    const fresh = !el;
+    if (!el) {
+      el = document.createElement('link');
+      el.rel = 'stylesheet'; el.id = 'studio-design-css';
+      el.href = '/assets/studio-design.css';
     }
-    el = document.createElement('link');
-    el.rel = 'stylesheet'; el.id = 'studio-design-css';
-    el.href = '/assets/studio-design.css';
-    el.addEventListener('load', () => res());
-    el.addEventListener('error', () => rej(new Error('stylesheet failed')));
-    document.head.appendChild(el);
-  });
+    el.dataset.managed = 'true'; // late boot onload must not override a user selection
+    const finish = error => {
+      clearTimeout(timer);
+      el.removeEventListener('load', loaded); el.removeEventListener('error', failed);
+      if (error) { el.remove(); rej(error); } else res();
+    };
+    const loaded = () => finish(null);
+    const failed = () => finish(new Error('stylesheet failed'));
+    const timer = setTimeout(failed, 10000);
+    el.addEventListener('load', loaded); el.addEventListener('error', failed);
+    if (fresh) document.head.appendChild(el);
+  }).catch(error => { _designAsset = null; throw error; });
   return _designAsset;
 }
 
@@ -5143,6 +5211,7 @@ const PACKS_GATED_NOTE = 'Luxury Gold and Cyber apply to the Editorial design on
 
 async function setDesign(v) {
   const id = designId(v);
+  const request = ++_designRequest;
   const chip = document.getElementById('design-chip');
   if (id !== 'editorial') {
     // FIRST CLICK ONLY: the stylesheet has to arrive before the attribute is stamped.
@@ -5151,13 +5220,16 @@ async function setDesign(v) {
     const t0 = Date.now();
     try { await designAsset(); }
     catch (e) {
+      if (request !== _designRequest) return storedDesign();
       if (chip) { chip.classList.remove('loading'); chip.textContent = '✦'; }
       feed('design', 'studio design stylesheet failed to load — staying on Editorial');
       return 'editorial';
     }
+    if (request !== _designRequest) return storedDesign();
     if (chip) { chip.classList.remove('loading'); chip.textContent = '✦'; }
     if (cold) feed('design', 'studio design loaded in ' + (Date.now() - t0) + 'ms');
   }
+  if (chip) { chip.classList.remove('loading'); chip.textContent = '✦'; }
   designApply(id);
   if (id !== 'editorial') _designLastStudio = id;
   try { localStorage.setItem('motdeck-design', id); } catch (e) {}
@@ -5254,6 +5326,7 @@ function showView(v) {
   // AUTO-DICTATION: the mic must never stay live behind another view.
   if (v !== 'chat' && typeof stopConv === 'function') stopConv('left the Chat view');
   if (v !== 'chat' && typeof stopAuto === 'function') stopAuto('left the Chat view');
+  if (v !== 'chat' && typeof stopTalk === 'function') stopTalk(true);
   if (v === 'chat' && !chatPane.sid) initChat();
   if (v === 'chat') { document.getElementById('chat-input').focus(); ensureCapsStrip(); }
   if (v === 'models') initModels();
@@ -5602,12 +5675,14 @@ async function setMode(m) {
   // half-rendered lane.
   if (!['agent', 'chat', 'hermes'].includes(m)) m = 'agent';
   const prev = chatPane.mode;
+  const request = chatPane.openRequest = Symbol();
   // U31: a Chat/Agent lane switch detaches only this pane's SSE subscription; the
   // bridge-owned producer continues and is reconciled when its lane/session is
   // selected again. Hermes keeps its existing gateway lifecycle, but switching
   // views likewise does not imply an interrupt. Explicit Stop remains the only
   // path here that cancels upstream work.
   if (chatPane.busy && m !== prev) await detachTurnNow('lane switch');
+  if (request !== chatPane.openRequest) return;
   chatPane.mode = m;
   try { localStorage.setItem('motdeck-chat-mode', m); } catch (_) {}
   document.getElementById('mode-agent').classList.toggle('on', m === 'agent');
@@ -5623,6 +5698,7 @@ async function setMode(m) {
   // AUTO-DICTATION: a lane switch is a different conversation — drop the live mic.
   if (typeof stopConv === 'function') stopConv('lane switch');
   if (typeof stopAuto === 'function') stopAuto('lane switch');
+  if (typeof stopTalk === 'function') stopTalk(true);
   maybeCloseArtifact();   // lane switch = different conversation; unpinned artifacts close
   // Phase 3: the session rail follows the ACTIVE LANE. Entering Hermes mode →
   // Hermes stored sessions (+ reopen the last one); back to Agent/Chat →
@@ -5709,7 +5785,7 @@ function capSwitchRow(name, desc, group, key, checked) {
       <div class="cap-err" id="${id}-err" hidden></div></div>
     <div class="cap-ctl"><label class="cap-sw">
       <input type="checkbox" id="${id}" ${checked ? 'checked' : ''}
-        onchange="capsWrite('${group}','${escAttr(key)}', this.checked, this, '${id}')">
+        onchange="capsWrite('${group}',${apiArg(key)}, this.checked, this, '${id}')">
       <span class="track"></span><span class="knob"></span></label></div>
   </div>`;
 }
@@ -5853,12 +5929,12 @@ function navRowHtml(bar, r) {
       <span class="cap-pill">always</span></div>`;
   }
   return `<div class="nv-row" draggable="true" data-id="${escAttr(r.id)}"
-      ondragstart="navDragStart(event,'${bar}','${escAttr(r.id)}')" ondragend="navDragEnd(event)">
+      ondragstart="navDragStart(event,'${bar}',${apiArg(r.id)})" ondragend="navDragEnd(event)">
     <span class="nv-h" title="Drag to reorder">⠿</span>
     <span class="nv-n">${ico} ${esc(e.label || r.id)}</span>
     <label class="cap-sw" title="${r.pinned ? 'showing — switch off to hide' : 'hidden — switch on to show'}">
       <input type="checkbox" ${r.pinned ? 'checked' : ''}
-        onchange="navToggle('${bar}','${escAttr(r.id)}', this)">
+        onchange="navToggle('${bar}',${apiArg(r.id)}, this)">
       <span class="track"></span><span class="knob"></span></label></div>`;
 }
 function navBarHtml(bar) {
@@ -5991,10 +6067,13 @@ function navApply(next) {
   const err = navValidate(next);
   if (err) { renderNavDlg(err); return Promise.resolve(err); }
   const prev = navGet();
+  if (!navConfirmed) navConfirmed = prev;
   navModel = next;
   renderNavDlg('');
   return navSave().then(e2 => {
-    if (e2) { navModel = prev; navSaveLocal(); renderSidebar(); renderNavDlg(e2); }
+    if (e2 && navModel === next) {
+      navModel = navConfirmed; navSaveLocal(); renderSidebar(); renderNavDlg(e2);
+    }
     return e2 || '';
   });
 }
@@ -6099,12 +6178,12 @@ function capsModelSub(label, desc, epKey, mdlKey) {
     models.forEach(m => { if (m === mdl) found = true; opts.push(`<option value="${escAttr(m)}"${m === mdl ? ' selected' : ''}>${esc(m)}</option>`); });
     if (mdl && !found) opts.push(`<option value="${escAttr(mdl)}" selected>${esc(mdl)} (stored)</option>`);
     mdlCtl = `<select class="cap-sel" id="${mErrId}"
-      onchange="capsWrite('setting','${escAttr(mdlKey)}', this.value, this, '${mErrId}')">${opts.join('')}</select>`;
+      onchange="capsWrite('setting',${apiArg(mdlKey)}, this.value, this, '${mErrId}')">${opts.join('')}</select>`;
   } else {
     const dlId = 'dl-' + mdlKey;
     const dlOpts = capsAllModelIds().map(m => `<option value="${escAttr(m)}">`).join('');
     mdlCtl = `<input class="cap-sel" list="${dlId}" id="${mErrId}" value="${escAttr(mdl)}" placeholder="Same as chat"
-      onchange="capsWrite('setting','${escAttr(mdlKey)}', this.value, this, '${mErrId}')">
+      onchange="capsWrite('setting',${apiArg(mdlKey)}, this.value, this, '${mErrId}')">
       <datalist id="${dlId}">${dlOpts}</datalist>`;
   }
   return `<div class="cap-row"><div class="cap-txt"><div class="cap-name">${esc(label)}</div>
@@ -6113,7 +6192,7 @@ function capsModelSub(label, desc, epKey, mdlKey) {
       <div class="cap-desc">"Same as chat" uses the current chat model's endpoint.</div>
       <div class="cap-err" id="${epErrId}-err" hidden></div></div>
       <div class="cap-ctl"><select class="cap-sel" id="${epErrId}"
-        onchange="capsEpChange('${escAttr(epKey)}','${escAttr(mdlKey)}', this)">${epOpts}</select></div></div>
+        onchange="capsEpChange(${apiArg(epKey)},${apiArg(mdlKey)}, this)">${epOpts}</select></div></div>
     <div class="cap-row"><div class="cap-txt"><div class="cap-name" style="font-size:13px">Model</div>
       <div class="cap-desc">Which model on that endpoint. Blank = same as chat.</div>
       <div class="cap-err" id="${mErrId}-err" hidden></div></div>
@@ -6218,7 +6297,7 @@ function renderBuiltinTools() {
         <div class="cap-err" id="bt-${escAttr(id)}-err" hidden></div></div>
         <div class="cap-ctl"><label class="cap-sw">
           <input type="checkbox" ${on?'checked':''}
-            onchange="toggleBuiltinTool('${escAttr(id)}', this.checked, this)">
+            onchange="toggleBuiltinTool(${apiArg(id)}, this.checked, this)">
           <span class="track"></span><span class="knob"></span></label></div></div>`;
     }).join('');
     return `<div class="cap-row"><div class="cap-txt">
@@ -6228,7 +6307,7 @@ function renderBuiltinTools() {
         <div class="cap-err" id="btcat-${escAttr(title.replace(/[^a-z]/gi,''))}-err" hidden></div></div>
       <div class="cap-ctl"><label class="cap-sw">
         <input type="checkbox" ${allOn?'checked':''}
-          onchange="toggleBuiltinCategory('${escAttr(present.join(','))}', this.checked, this)">
+          onchange="toggleBuiltinCategory(${apiArg(present.join(','))}, this.checked, this)">
         <span class="track"></span><span class="knob"></span></label></div></div>
       <div class="cap-sub" id="${cid}" hidden>${subRows}</div>`;
   };
@@ -6342,19 +6421,19 @@ function renderMcpServers() {
                  : `<span class="cap-pill off">${esc(st)}</span>`;
     const tc = (typeof s.tool_count === 'number')
       ? `<span class="cap-count">${s.enabled_tool_count ?? s.tool_count}/${s.tool_count} tools</span>` : '';
-    const sub = 'mcpsub-' + escAttr(s.id);
+    const sub = 'mcpsub-' + s.id;
     return `<div class="cap-row"><div class="cap-txt">
         <div class="cap-name">${esc(s.name || s.id)}${stPill}${tc}</div>
         <div class="cap-desc">${esc(s.transport || '')}${s.error ? ' · ' + esc(String(s.error).slice(0,80)) : ''}</div>
-        <button class="cap-exp" onclick="expandMcpTools('${escAttr(s.id)}','${sub}', this)">▸ per-tool</button>
+        <button class="cap-exp" onclick="expandMcpTools(${apiArg(s.id)},${apiArg(sub)}, this)">▸ per-tool</button>
         <button class="cap-btn" id="mcprm-${escAttr(s.id)}" style="margin-left:8px;padding:2px 10px"
-          onclick="removeMcpServer('${escAttr(s.id)}','${escAttr(s.name || s.id)}', this)">Remove</button>
+          onclick="removeMcpServer(${apiArg(s.id)},${apiArg(s.name || s.id)}, this)">Remove</button>
         <div class="cap-err" id="mcp-${escAttr(s.id)}-err" hidden></div></div>
       <div class="cap-ctl"><label class="cap-sw">
         <input type="checkbox" ${on?'checked':''}
-          onchange="toggleMcpServer('${escAttr(s.id)}', this.checked, this)">
+          onchange="toggleMcpServer(${apiArg(s.id)}, this.checked, this)">
         <span class="track"></span><span class="knob"></span></label></div></div>
-      <div class="cap-sub" id="${sub}" hidden><div class="cap-desc" style="padding-left:14px">…</div></div>`;
+      <div class="cap-sub" id="${escAttr(sub)}" hidden><div class="cap-desc" style="padding-left:14px">…</div></div>`;
   }).join('');
   return `<div class="caps-group"><span class="cap-h">Connected tools (MCP)</span>
     <div class="cap-desc" style="margin:-4px 0 10px"><span class="cap-pill on">Agent · external servers</span>
@@ -6394,7 +6473,7 @@ function renderVoiceMcp() {
         <div class="cap-err" id="voice-${escAttr(k)}-err" hidden></div></div>
       <div class="cap-ctl"><label class="cap-sw">
         <input type="checkbox" ${on ? 'checked' : ''} ${(!ready && !on) ? 'disabled' : ''}
-          onchange="toggleVoiceMcp('${escAttr(k)}', this.checked, this)">
+          onchange="toggleVoiceMcp(${apiArg(k)}, this.checked, this)">
         <span class="track"></span><span class="knob"></span></label></div></div>`;
   }).join('');
   return `<div class="caps-group" id="caps-voice"><span class="cap-h">Voice tools (MCP)</span>
@@ -6587,7 +6666,7 @@ function renderHermesTools() {
         <div class="cap-err" id="${id}-err" hidden></div></div>
       <div class="cap-ctl"><label class="cap-sw">
         <input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${lock ? 'disabled' : ''}
-          onchange="toggleHermesToolset('${escAttr(t.name)}', this.checked, this)">
+          onchange="toggleHermesToolset(${apiArg(t.name)}, this.checked, this)">
         <span class="track"></span><span class="knob"></span></label></div></div>${isSk ? renderHermesSkills(t) : ''}`;
   }).join('');
   const lockNote = lock
@@ -6903,7 +6982,7 @@ function hermesSkillRows(shown, lock) {
         <div class="cap-err" id="${id}-err" hidden></div></div>
       <div class="cap-ctl"><label class="cap-sw">
         <input type="checkbox" ${s.enabled ? 'checked' : ''} ${lock ? 'disabled' : ''}
-          onchange="toggleHermesSkill('${escAttr(hermesSkillArg(s.name))}', this.checked, this)">
+          onchange="toggleHermesSkill(${apiArg(s.name)}, this.checked, this)">
         <span class="track"></span><span class="knob"></span></label></div></div>`;
   }).join('');
 }
@@ -7118,7 +7197,7 @@ function renderMcpToolRows(id, subId) {
       ${t.description ? `<div class="cap-desc">${esc(String(t.description).slice(0,140))}</div>` : ''}
       </div><div class="cap-ctl"><label class="cap-sw">
         <input type="checkbox" ${on?'checked':''}
-          onchange="toggleMcpTool('${escAttr(id)}','${escAttr(nm)}', this.checked, this)">
+          onchange="toggleMcpTool(${apiArg(id)},${apiArg(nm)}, this.checked, this)">
         <span class="track"></span><span class="knob"></span></label></div></div>`;
   }).join('');
 }
@@ -7170,7 +7249,7 @@ function renderSkills() {
       const badge = ov ? '<span class="cap-pill on">custom</span>' : '';
       const reset = ov
         ? `<button class="cap-btn" id="skrst-${escAttr(nm)}" style="margin-top:6px;padding:2px 10px"
-             onclick="resetSkillOverride('${escAttr(nm)}', this)">Reset to default</button>` : '';
+             onclick="resetSkillOverride(${apiArg(nm)}, this)">Reset to default</button>` : '';
       return `<div class="cap-row"><div class="cap-txt">
           <div class="cap-name">${esc(nm)}${badge}</div>
           ${s.description ? `<div class="cap-desc">${esc(String(s.description).slice(0,180))}</div>` : ''}
@@ -7202,7 +7281,7 @@ function renderSkills() {
       <span class="cap-h" style="margin:0">Skills</span>
       <span class="cap-desc" style="margin:0">▸ ${nBi} built-in · ${nUser} learned</span></button>
     <div id="caps-skills-body" hidden>
-      <div class="cap-desc" style="margin:8px 0 10px">Built-in skills are the instruction blocks the agent uses for its native tools. Reset a customised one to its default here; turn tools on/off in the Tools section above. (Real per-skill on/off is coming with the Hermes lane.)</div>
+      <div class="cap-desc" style="margin:8px 0 10px">Built-in skills are the instruction blocks the agent uses for its native tools. Reset a customised one to its default here; turn tools on/off in the Tools section above. Hermes has its own per-skill switches under Hermes tools.</div>
       <div class="cap-card">${biRows}</div>
       ${userBlock}</div></div>`;
 }
@@ -7668,6 +7747,7 @@ function pickImage(){
 }
 
 function clearImage(){
+  chatPane.attachRead = (chatPane.attachRead || 0) + 1;
   chatPane.attachedImage = null;
   const f = document.getElementById('chat-file'); if (f) f.value = '';
   const strip = document.getElementById('chat-attachstrip');
@@ -7690,6 +7770,9 @@ function onImagePicked(ev){
 
 /* shared by the ⊕ picker and drag-and-drop */
 function acceptImageFile(file){
+  clearImage();
+  const request = chatPane.attachRead, lane = chatPane.mode, opening = chatPane.openRequest;
+  const owns = () => request === chatPane.attachRead && lane === chatPane.mode && opening === chatPane.openRequest;
   if (!/^image\/(png|jpeg|webp)$/.test(file.type || '')){
     const ext = ((file.name || '').match(/\.[^.]+$/) || [''])[0].toLowerCase();
     const allowed = ['.txt','.md','.csv','.json','.py','.js','.html','.pdf'];
@@ -7701,9 +7784,9 @@ function acceptImageFile(file){
       const f = document.getElementById('chat-file'); if (f) f.value = '';
       attachNote('file too large (max 10 MB)'); return; }
     const fr = new FileReader();
-    fr.onerror = () => { chatPane.attachedImage = null; attachNote('could not read that file'); };
-    fr.onload = () => showAttachedFile(String(fr.result || ''), file.name,
-                                       file.type || 'application/octet-stream');
+    fr.onerror = () => { if (!owns()) return; chatPane.attachedImage = null; attachNote('could not read that file'); };
+    fr.onload = () => { if (owns()) showAttachedFile(String(fr.result || ''), file.name,
+                                       file.type || 'application/octet-stream'); };
     fr.readAsDataURL(file); return;
   }
   const verdict = attachVerdict(chatPane.mode, liveVision, odyVisionCfg());
@@ -7712,8 +7795,8 @@ function acceptImageFile(file){
     const f = document.getElementById('chat-file'); if (f) f.value = '';
     attachNote('image too large (max 8 MB)'); return; }
   const fr = new FileReader();
-  fr.onerror = () => { chatPane.attachedImage = null; attachNote('could not read that image'); };
-  fr.onload = () => showAttachedImage(String(fr.result || ''), file.name);
+  fr.onerror = () => { if (!owns()) return; chatPane.attachedImage = null; attachNote('could not read that image'); };
+  fr.onload = () => { if (owns()) showAttachedImage(String(fr.result || ''), file.name); };
   fr.readAsDataURL(file);
 }
 
@@ -7803,8 +7886,8 @@ window.motdeckNativeAudioDrop = async function(name, dataUrl){
                               body: body });
     const j = await res.json().catch(() => ({}));
     if (!res.ok || !j.ok){
-      feed('voice', esc((j && j.error) || ('the bridge refused (' + res.status + ')'))); return; }
-    feed('voice', 'clip ' + esc(j.name || stem) + ' added to the voice library');
+      feed('voice', (j && j.error) || ('the bridge refused (' + res.status + ')')); return; }
+    feed('voice', 'clip ' + (j.name || stem) + ' added to the voice library');
     // refresh the library so an open clip picker shows the new chip (no pin change)
     await loadVoiceLib(true);
   } catch (e){ feed('voice', 'could not reach the bridge'); }
@@ -8341,9 +8424,16 @@ function speakText(raw){
 
 // exactly one clip plays app-wide; starting another stops (and resets) the previous
 let currentAudio = null;     // {audio, url, btn, wrap, onDone?}
+let speakRequest = 0, speakPending = null;
 const SPEAK_LABEL = '▶ speak', SPEAK_TITLE = 'Speak this reply';
 
 function stopSpeaking(){
+  ++speakRequest;
+  if (speakPending) {
+    const btn = speakPending;
+    speakPending = null;
+    btn.disabled = false; btn.textContent = SPEAK_LABEL; btn.title = SPEAK_TITLE;
+  }
   const c = currentAudio;
   if (!c) return;
   currentAudio = null;
@@ -8382,19 +8472,26 @@ function speakFlash(btn, text, title){
 async function msgSpeak(wrap, btn, onDone){
   if (currentAudio && currentAudio.btn === btn){ stopSpeaking(); return false; }   // ■ stop
   stopSpeaking();
+  const request = speakRequest;
   const text = speakText(msgRaw(wrap));
   if (!text){ speakFlash(btn, 'nothing to speak', 'this message is code only'); return false; }
   btn.disabled = true; btn.textContent = '…'; btn.title = 'Rendering…';
+  speakPending = btn;
   let res;
   try {
     res = await fetch('/api/voice/tts', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({text})});
   } catch (e) {
+    if (request !== speakRequest) return false;
+    speakPending = null;
     speakFlash(btn, 'err', 'could not reach the bridge'); return false;
   }
+  if (request !== speakRequest) return false;
   if (!res.ok){
     let msg = '';
     try { const j = await res.json(); msg = (j && j.error) || ''; } catch (e) {}
+    if (request !== speakRequest) return false;
+    speakPending = null;
     if (!msg) msg = (res.status === 409) ? 'a render is already in progress'
                                          : ('the bridge refused (' + res.status + ')');
     speakFlash(btn, 'err', msg); return false;
@@ -8402,11 +8499,14 @@ async function msgSpeak(wrap, btn, onDone){
   let url;
   try {
     const blob = await res.blob();
+    if (request !== speakRequest) return false;
+    speakPending = null;
     url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     currentAudio = { audio, url, btn, wrap, onDone: onDone || null };
     audio.onended = () => { if (currentAudio && currentAudio.audio === audio) stopSpeaking(); };
     audio.onerror = () => {
+      if (!currentAudio || currentAudio.audio !== audio) return;
       const b = currentAudio && currentAudio.btn;
       stopSpeaking();
       speakFlash(b, 'err', 'the browser could not play that clip');
@@ -8416,6 +8516,8 @@ async function msgSpeak(wrap, btn, onDone){
     return true;
   } catch (e) {
     if (url) { try { URL.revokeObjectURL(url); } catch (e2) {} }
+    if (request !== speakRequest) return false;
+    speakPending = null;
     currentAudio = null;
     speakFlash(btn, 'err', String((e && e.message) || e));
     return false;
@@ -8467,6 +8569,7 @@ function refreshSpeakChips(){
    bridge transcribes. Errors reuse the ▶ speak flash idiom (speakFlash) so both
    voice surfaces fail the same visible way. */
 let talkRec = null;              // { rec, chunks, timer, stream, fmt, stop } while live
+let talkRequest = 0, talkStarting = false;
 /* ---------- STUDIO CHROME: the icon/text pair (2026-08-20) ----------
    A composer control carries BOTH children at all times — an icon span (.st-only) and
    the editorial text span (.ed-only) — and the stylesheet alone decides which one is
@@ -8598,7 +8701,7 @@ function renderTalkBtn(){
   if (!btn) return;
   const on = sttOn();
   btn.hidden = !on;
-  if (!on && talkRec) stopTalk(true);          // model cleared mid-recording → drop it
+  if (!on && (talkRec || talkStarting)) stopTalk(true);
   if (!talkRec && on){
     btn.classList.remove('rec');
     ctlPaint(btn, 'i-mic', '', TALK_LABEL, '');
@@ -8617,28 +8720,35 @@ function talkPaint(sec){
 }
 
 function toggleTalk(){
-  if (talkRec) stopTalk(false); else startTalk();
+  if (talkStarting) stopTalk(true);
+  else if (talkRec) stopTalk(false); else startTalk();
 }
 
 async function startTalk(){
   const btn = document.getElementById('chat-talk');
-  if (!btn || talkRec) return;
+  if (!btn || talkRec || talkStarting) return;
   if (convOn()) stopConv('manual dictation started');  // conv and manual are exclusive
-  if (autoVad) stopAuto('manual dictation started');   // manual and auto are exclusive
+  if (autoVad || autoStarting) stopAuto('manual dictation started');
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined'){
     speakFlash(btn, 'no mic', 'this webview cannot record audio');
     renderTalkBtn(); return;
   }
   let stream;
+  const request = ++talkRequest;
+  talkStarting = true;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
+    if (request !== talkRequest) return;
+    talkStarting = false;
     // The app must carry NSMicrophoneUsageDescription AND grant the webview's
     // capture request; without either, this is where it surfaces.
     console.warn('[talk] getUserMedia failed', e);
     speakFlash(btn, 'err', 'microphone permission — see Logs/README');
     renderTalkBtn(); return;
   }
+  if (request !== talkRequest) { stream.getTracks().forEach(t => t.stop()); return; }
+  talkStarting = false;
   const { mime, fmt } = talkMime();
   let rec;
   try {
@@ -8651,9 +8761,14 @@ async function startTalk(){
   }
   const chunks = [];
   rec.ondataavailable = ev => { if (ev.data && ev.data.size) chunks.push(ev.data); };
-  rec.onstop = () => finishTalk(chunks, fmt);
   const t0 = Date.now();
-  talkRec = { rec, chunks, stream, fmt, t0, timer: null, cancelled: false };
+  const recording = { rec, chunks, stream, fmt, t0, timer: null, cancelled: false };
+  talkRec = recording;
+  rec.onstop = () => finishTalk(chunks, fmt, recording);
+  rec.onerror = () => {
+    if (talkRec !== recording) return;
+    stopTalk(true); speakFlash(btn, 'err', 'microphone recording failed');
+  };
   talkRec.timer = setInterval(() => {
     if (!talkRec) return;
     const sec = (Date.now() - talkRec.t0) / 1000;
@@ -8676,6 +8791,7 @@ async function startTalk(){
 
 /* cancel=true → tear everything down and transcribe NOTHING */
 function stopTalk(cancel){
+  if (cancel) { ++talkRequest; talkStarting = false; }
   const r = talkRec;
   if (!r) return;
   r.cancelled = !!cancel;
@@ -8688,9 +8804,12 @@ function stopTalk(cancel){
   if (btn){ btn.classList.remove('rec'); btn.textContent = '…'; btn.title = 'Transcribing…'; }
 }
 
-async function finishTalk(chunks, fmt){
-  const r = talkRec;
-  talkRec = null;
+async function finishTalk(chunks, fmt, recording){
+  const r = recording || talkRec;
+  if (!r || talkRec !== r || r.cancelled) return;
+  if (r.timer) clearInterval(r.timer);
+  try { r.stream.getTracks().forEach(t => t.stop()); } catch (_) {}
+  try {
   const btn = document.getElementById('chat-talk');
   if (!r || r.cancelled){ renderTalkBtn(); return; }
   const blob = new Blob(chunks, { type: (chunks[0] && chunks[0].type) || '' });
@@ -8700,10 +8819,12 @@ async function finishTalk(chunks, fmt){
     res = await fetch('/api/voice/stt?fmt=' + encodeURIComponent(fmt), {
       method: 'POST', headers: { 'Content-Type': 'audio/' + fmt }, body: blob });
   } catch (e) {
+    if (talkRec !== r || r.cancelled) return;
     speakFlash(btn, 'err', 'could not reach the bridge'); renderTalkBtn(); return;
   }
   let j = null;
   try { j = await res.json(); } catch (e) {}
+  if (talkRec !== r || r.cancelled) return;
   if (!res.ok || !j || !j.ok){
     let msg = (j && j.error) || '';
     if (!msg) msg = (res.status === 409) ? 'a voice render is already in progress'
@@ -8714,6 +8835,9 @@ async function finishTalk(chunks, fmt){
   if (!text){ speakFlash(btn, 'err', 'nothing was heard'); renderTalkBtn(); return; }
   appendTranscript(text);
   renderTalkBtn();
+  } finally {
+    if (talkRec === r) { talkRec = null; renderTalkBtn(); }
+  }
 }
 
 /* ---------- composer auto-grow (LM Studio behaviour) ----------
@@ -8801,6 +8925,7 @@ const AUTO_LABEL = 'auto';
 const AUTO_TITLE = 'Hands-free dictation — listen continuously and transcribe each utterance';
 
 let autoVad = null;               // the live session; null = off
+let autoRequest = 0, autoStarting = null;
 
 /* PURE: the noise floor of a window of RMS samples = their MEDIAN.
    Median not mean: one door slam inside the window would drag a mean up for two
@@ -9014,7 +9139,7 @@ function renderAutoBtn(){
   if (!btn) return;
   const on = sttOn();
   btn.hidden = !on;
-  if (!on && autoOn()) stopAuto('the speech-to-text default was cleared');
+  if (!on && (autoOn() || autoStarting === 'auto')) stopAuto('the speech-to-text default was cleared');
   btn.classList.toggle('on', autoOn());
   if (autoOn()){
     ctlPaint(btn, 'i-auto', '● ', 'auto', 'on');
@@ -9031,7 +9156,7 @@ function renderAutoBtn(){
 
 function toggleAuto(){
   if (convOn()) stopConv('auto dictation started');   // conv and auto are exclusive
-  if (autoVad) stopAuto(''); else startAuto('auto');
+  if (autoVad || autoStarting) stopAuto(''); else startAuto('auto');
 }
 
 /* ══ THE AUDIO-MODE SWITCH (v1.5.26, Debi's design) ═══════════════════════════
@@ -9094,8 +9219,8 @@ function renderAudioSwitch(){
 
 /* The MIDDLE position. Not a third mode — the absence of the other two. */
 function audioModeOff(){
-  if (convOn()) stopConv('the audio switch was set to off');
-  else if (autoOn()) stopAuto('the audio switch was set to off');
+  if (convOn() || autoStarting === 'conv') stopConv('the audio switch was set to off');
+  else if (autoOn() || autoStarting) stopAuto('the audio switch was set to off');
   else renderAudioSwitch();          // already off: repaint rather than do nothing
 }
 
@@ -9126,19 +9251,24 @@ function audioSwKey(e){
    so it is shared rather than duplicated: one worklet, one segmenter, ONE teardown. */
 async function startAuto(mode){
   const btn = document.getElementById(mode === 'conv' ? 'chat-conv' : 'chat-auto');
-  if (!btn || autoVad) return;
-  if (talkRec) stopTalk(true);                  // manual and auto are exclusive
+  if (!btn || autoVad || autoStarting) return;
+  stopTalk(true);                  // cancels a pending permission request too
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia
       || typeof AudioWorkletNode === 'undefined'){
     autoFlash(btn, 'no mic', 'this webview cannot capture audio'); return;
   }
   let stream, ctx;
+  const request = ++autoRequest;
+  autoStarting = mode === 'conv' ? 'conv' : 'auto';
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e){
+    if (request !== autoRequest) return;
+    autoStarting = null;
     console.warn('[auto] getUserMedia failed', e);
     autoFlash(btn, 'err', 'microphone permission — see Logs/README'); return;
   }
+  if (request !== autoRequest) { stream.getTracks().forEach(t => t.stop()); return; }
   try {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     if (!ctx.audioWorklet) throw new Error('AudioContext.audioWorklet missing');
@@ -9155,9 +9285,12 @@ async function startAuto(mode){
       'this.i=0;}}return true;}}' +
       'registerProcessor("motdeck-vad",V);';
     const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
-    await ctx.audioWorklet.addModule(url);
-    URL.revokeObjectURL(url);
+    try { await ctx.audioWorklet.addModule(url); }
+    finally { URL.revokeObjectURL(url); }
     if (ctx.state === 'suspended') await ctx.resume();   // a suspended ctx pumps no frames
+    if (request !== autoRequest) {
+      stream.getTracks().forEach(t => t.stop()); await ctx.close(); return;
+    }
     const node = new AudioWorkletNode(ctx, 'motdeck-vad',
       { processorOptions: { block: VAD_BLOCK } });
     const frameMs = (VAD_BLOCK / ctx.sampleRate) * 1000;
@@ -9168,15 +9301,18 @@ async function startAuto(mode){
                 st: vadInit(frameMs, { hangoverMs: hangoverFor(sttFormat()) }),
                 frames: [], base: 0,
                 queue: [], busy: false, errors: 0, stopping: false };
-    node.port.onmessage = (ev) => autoFrame(ev.data);
+    const capture = autoVad;
+    node.port.onmessage = (ev) => { if (autoVad === capture) autoFrame(ev.data); };
     ctx.createMediaStreamSource(stream).connect(node);   // never connect to output
   } catch (e){
     try { stream.getTracks().forEach(t => t.stop()); } catch (e2) {}
     try { if (ctx) ctx.close(); } catch (e2) {}
-    autoVad = null;
+    if (request !== autoRequest) return;
+    autoStarting = null; autoVad = null;
     console.warn('[auto] worklet setup failed', e);
     autoFlash(btn, 'err', String((e && e.message) || e)); return;
   }
+  autoStarting = null;
   renderAutoBtn();
   renderConvBtn();
 }
@@ -9245,7 +9381,7 @@ async function autoDrain(){
       // conversation mode: an empty transcript is still a SUCCESSFUL call (the VAD
       // gated in a noise) — it resets the failure counter and simply resumes.
       if (autoVad === a) convEvent(text ? 'transcript' : 'transcript_empty', text);
-    } else if (text) appendTranscript(text, false);
+    } else if (text && autoVad === a) appendTranscript(text, false);
     if (autoVad === a) a.errors = 0;
   } catch (e){
     console.warn('[' + a.mode + '] stt failed', e);
@@ -9274,6 +9410,7 @@ async function autoDrain(){
    STT default being cleared, three failures in a row — comes through here, because
    the mic light staying on after auto mode ends would be the worst kind of bug. */
 function stopAuto(reason){
+  ++autoRequest; autoStarting = null;
   const a = autoVad;
   if (!a) return;
   a.stopping = true;
@@ -9455,7 +9592,7 @@ function renderConvBtn(){
   if (!btn) return;
   const avail = convAvail();
   btn.hidden = !avail;
-  if (!avail && convOn()) stopConv('a voice default was cleared');
+  if (!avail && (convOn() || autoStarting === 'conv')) stopConv('a voice default was cleared');
   btn.classList.toggle('on', convOn());
   if (convOn()){
     const dot = (convSt.phase === 'speaking' || convSt.phase === 'grace') ? '▸ ' : '● ';
@@ -9471,12 +9608,12 @@ function renderConvBtn(){
 }
 
 function toggleConv(){
-  if (convOn()) stopConv(''); else startConv();
+  if (convOn() || autoStarting === 'conv') stopConv(''); else startConv();
 }
 
 async function startConv(){
-  if (convOn()) return;
-  if (autoOn()) stopAuto('conversation mode started');   // conv and auto are exclusive
+  if (convOn() || autoStarting === 'conv') return;
+  if (autoOn() || autoStarting) stopAuto('conversation mode started');
   if (talkRec) stopTalk(true);                           // …and manual dictation too
   convSt = convStep(convSt, 'start').st;
   await startAuto('conv');                               // shared capture half
@@ -9582,7 +9719,7 @@ function stopConv(reason){
   convSt = convStep(convSt, 'stop', reason).st;
   convWrap = null;
   stopSpeaking();                    // the assistant must not keep talking
-  if (autoVad && autoVad.mode === 'conv') stopAuto(reason || 'conversation ended');
+  if ((autoVad && autoVad.mode === 'conv') || autoStarting === 'conv') stopAuto(reason || 'conversation ended');
   if (reason) console.log('[conv] stopped: ' + reason);
   renderConvBtn();
 }
@@ -9662,8 +9799,8 @@ function renderSessions(){
       it.innerHTML = `<div class="nm">${esc(s.name || 'Untitled')}</div>
         <div class="meta">${relTime(s.updated_at)}${s.message_count ? (' · ' + s.message_count + ' msg') : ''} <span class="cs-tag">hermes</span></div>
         <div class="cs-act">
-          <button title="Rename" onclick="beginRename('${s.id}', this)">✎</button>
-          <button class="cs-del" title="Delete" onclick="armDelete('${s.id}', this)">✕</button>
+          <button title="Rename" onclick="beginRename(${apiArg(s.id)}, this)">✎</button>
+          <button class="cs-del" title="Delete" onclick="armDelete(${apiArg(s.id)}, this)">✕</button>
         </div>`;
       el.appendChild(it);
     }
@@ -9675,18 +9812,17 @@ function renderSessions(){
     it.className = 'cs-item' + (s.id === chatPane.sid ? ' on' : '');
     it.onclick = (e) => { if (e.target.closest('.cs-act') || e.target.classList.contains('cs-rename')) return; selectSession(s.id); };
     it.innerHTML = `<div class="nm">${esc(s.name || 'Untitled')}</div>
-      <div class="meta">${relTime(s.updated_at)}${s.message_count ? (' · ' + s.message_count + ' msg') : ''}${s.model_status === 'unavailable' ? ' <span class="cs-tag" title="' + esc(s.model_note || '') + '">model unavailable</span>' : ''}</div>
+      <div class="meta">${relTime(s.updated_at)}${s.message_count ? (' · ' + s.message_count + ' msg') : ''}${s.model_status === 'unavailable' ? ' <span class="cs-tag" title="' + escAttr(s.model_note || '') + '">model unavailable</span>' : ''}</div>
       <div class="cs-act">
-        <button title="Rename" onclick="beginRename('${s.id}', this)">✎</button>
-        <button title="Duplicate" onclick="duplicateSession('${s.id}')">⎘</button>
-        <button class="cs-del" title="Delete" onclick="armDelete('${s.id}', this)">✕</button>
+        <button title="Rename" onclick="beginRename(${apiArg(s.id)}, this)">✎</button>
+        <button title="Duplicate" onclick="duplicateSession(${apiArg(s.id)})">⎘</button>
+        <button class="cs-del" title="Delete" onclick="armDelete(${apiArg(s.id)}, this)">✕</button>
       </div>`;
     el.appendChild(it);
   }
 }
 
 async function selectHermesSession(storedId){
-  maybeCloseArtifact();   // artifact follows its conversation unless pinned
   // Reopen a stored Hermes session: POST resume → the bridge returns a LIVE
   // gateway sid (session.resume binds it to the stored conversation) + the
   // transcript. The next Send continues the conversation via that live sid.
@@ -9705,23 +9841,32 @@ async function selectHermesSession(storedId){
   if (chatPane.busy && storedId && storedId === chatPane.hermesStoredSid) return;
   // A genuine switch to a DIFFERENT session still stops the turn first (Fable:
   // stop-then-proceed) — you cannot stream turn A into session B's pane.
-  if (chatPane.busy) await stopTurnNow('session switch');
-  chatPane.hermesStoredSid = storedId;
-  localStorage.setItem('motdeck-hermes-stored', storedId);
-  renderSessions();
-  document.getElementById('chat-msgs').innerHTML = '';
+  const request = chatPane.openRequest = Symbol(), selectedLane = chatPane.mode;
+  const current = () => request === chatPane.openRequest && chatPane.mode === selectedLane;
+  stopConv('session switch'); stopAuto('session switch'); stopTalk(true); stopSpeaking();
+  maybeCloseArtifact();
+  if (chatPane.busy) {
+    if (!await stopTurnNow('session switch')) return;
+  }
+  if (!current()) return;
   try {
-    const r = await (await fetch('/api/hermes/session/resume', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: storedId})})).json();
-    if (r && r.id){
-      chatPane.hermesSid = r.id; localStorage.setItem('motdeck-hermes-sid', r.id);
+    const response = await fetch('/api/hermes/session/resume', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: storedId})});
+    const r = await response.json();
+    if (!current()) return;
+    if (response.ok && r && r.id){
+      chatPane.hermesStoredSid = storedId;
+      try { localStorage.setItem('motdeck-hermes-stored', storedId); } catch (_) {}
+      document.getElementById('chat-msgs').innerHTML = '';
+      chatPane.hermesSid = r.id; try { localStorage.setItem('motdeck-hermes-sid', r.id); } catch (_) {}
       if (r.stored_id && r.stored_id !== storedId){
         // Compression chains: resume follows the lineage to the live tip
         // (methods_session.py:351-369) — track the id it actually opened.
         chatPane.hermesStoredSid = r.stored_id;
-        localStorage.setItem('motdeck-hermes-stored', r.stored_id);
+        try { localStorage.setItem('motdeck-hermes-stored', r.stored_id); } catch (_) {}
       }
-      for (const m of (r.history || []).slice(-30)){
+      renderSessions();
+      for (const m of (Array.isArray(r.history) ? r.history : []).slice(-30)){
         if (m.role === 'user'){
           const w = addMsg('user', m.content || '');
           for (const att of (m.attachments || [])) addRestoredAttachment(w, att);
@@ -9750,6 +9895,7 @@ async function selectHermesSession(storedId){
       chatNotice('could not open that Hermes session' + (r && r.error ? ' — ' + String(r.error).slice(0,120) : ''));
     }
   } catch (error) {
+    if (!current()) return;
     chatNotice('could not open that Hermes session — '
       + String(error && error.message || error).slice(0, 120));
   }
@@ -9776,7 +9922,6 @@ function renderOdyHistory(snapshot){
 }
 
 async function selectSession(sid){
-  maybeCloseArtifact();   // artifact follows its conversation unless pinned
   if (chatPane.mode === 'hermes') return;   // Phase-3 fix: lane guard — a stale
                                        // Odysseus row clicked under the Hermes
                                        // chip must NOT bind chatPane.sid / wedge Send.
@@ -9785,7 +9930,12 @@ async function selectSession(sid){
                                        // running HERMES turn and then return.
   if (chatPane.busy && sid && sid === chatPane.sid) return;      // re-opening the session
                                        // you are already in is not a switch
+  const request = chatPane.openRequest = Symbol(), selectedLane = chatPane.mode;
+  const current = () => request === chatPane.openRequest && chatPane.mode === selectedLane;
+  stopConv('session switch'); stopAuto('session switch'); stopTalk(true); stopSpeaking();
+  maybeCloseArtifact();
   if (chatPane.busy) await detachTurnNow('session switch');
+  if (!current()) return;
   chatPane.sid = sid;
   const s = chatPane.sessions.find(x => x.id === sid);
   // Keep the session's stored model VERBATIM as the fallback echo — laneModelLabel
@@ -9793,7 +9943,7 @@ async function selectSession(sid){
   // was written for registry ids and turned an MLX path into nonsense.
   chatPane.model = (s && s.model) || '';
   stampFor((s && s.model) || '');   // never pass undefined — that means "re-stamp, keep session model"
-  localStorage.setItem('motdeck-chat-sid', sid);
+  try { localStorage.setItem('motdeck-chat-sid', sid); } catch (_) {}
   renderSessions();
   document.getElementById('chat-msgs').innerHTML = '';
   try {
@@ -9803,60 +9953,71 @@ async function selectSession(sid){
     const lane = chatPane.mode === 'chat' ? 'chat' : 'agent';
     const turnStatePromise = window.MOTDeckTurnStream
       ? MOTDeckTurnStream.reconcile(lane, sid) : Promise.resolve({active:null, interrupted:false});
-    const h = await (await fetch(`/api/ody/history/${sid}`)).json();
-    if (chatPane.sid !== sid || chatPane.mode !== lane) return;
+    const [h, turnState] = await Promise.all([
+      panelReadJSON(`/api/ody/history/${encodeURIComponent(sid)}`), turnStatePromise]);
+    if (!current() || chatPane.sid !== sid || chatPane.mode !== lane) return;
     renderOdyHistory(h);
-    const turnState = await turnStatePromise;
     const active = turnState.active;
-    if (turnState.interrupted && chatPane.sid === sid && chatPane.mode === lane) {
+    if (!active && current() && chatPane.sid === sid && chatPane.mode === lane) {
+      // `/active` and Odysseus history are separate local authorities. They can be
+      // served in either order: a turn may commit after the first history snapshot
+      // but before `/active` observes it as terminal. One post-observation refetch
+      // closes that race. It is local and read-only; no resume/rebind side effect.
+      const settledHistory = await panelReadJSON(`/api/ody/history/${encodeURIComponent(sid)}`);
+      if (current() && chatPane.sid === sid && chatPane.mode === lane) renderOdyHistory(settledHistory);
+    } else if (window.MOTDeckTurnStream && current() && chatPane.sid === sid
+               && chatPane.mode === lane) {
+      const fresh = await MOTDeckTurnStream.metadata(active.id).catch(() => null);
+      if (!current()) return;
+      if (fresh && ['completed','failed','stopped','interrupted'].includes(fresh.state)) {
+        // The producer crossed its terminal boundary while the first history request
+        // was in flight. Refetch once; otherwise that perfectly legal ordering can
+        // leave the just-finished answer invisible until a second reload.
+        const finalHistory = await panelReadJSON(`/api/ody/history/${encodeURIComponent(sid)}`);
+        if (current() && chatPane.sid === sid && chatPane.mode === lane) renderOdyHistory(finalHistory);
+      } else if (fresh) {
+        await MOTDeckTurnStream.recover(fresh, lane, sid);
+      }
+    }
+    if (turnState.interrupted && current() && chatPane.sid === sid && chatPane.mode === lane) {
       const interrupted = addMsg('assistant',
         'This turn was interrupted because the local bridge restarted before it completed.');
       interrupted.classList.add('turn-interrupted');
       scrollChat();
     }
-    if (!active && chatPane.sid === sid && chatPane.mode === lane) {
-      // `/active` and Odysseus history are separate local authorities. They can be
-      // served in either order: a turn may commit after the first history snapshot
-      // but before `/active` observes it as terminal. One post-observation refetch
-      // closes that race. It is local and read-only; no resume/rebind side effect.
-      const settledHistory = await (await fetch(`/api/ody/history/${sid}`)).json();
-      if (chatPane.sid === sid && chatPane.mode === lane) renderOdyHistory(settledHistory);
-    } else if (window.MOTDeckTurnStream && chatPane.sid === sid
-               && chatPane.mode === lane) {
-      const fresh = await MOTDeckTurnStream.metadata(active.id).catch(() => null);
-      if (fresh && ['completed','failed','stopped','interrupted'].includes(fresh.state)) {
-        // The producer crossed its terminal boundary while the first history request
-        // was in flight. Refetch once; otherwise that perfectly legal ordering can
-        // leave the just-finished answer invisible until a second reload.
-        const finalHistory = await (await fetch(`/api/ody/history/${sid}`)).json();
-        if (chatPane.sid === sid && chatPane.mode === lane) renderOdyHistory(finalHistory);
-      } else if (fresh) {
-        await MOTDeckTurnStream.recover(fresh, lane, sid);
-      }
-    }
-  } catch {}
+  } catch (error) { if (current()) chatNotice('could not load this chat — ' + String(error.message || error).slice(0,120)); }
 }
 
 async function duplicateSession(sid){
+  const request = chatPane.openRequest = Symbol(), lane = chatPane.mode;
+  const current = () => request === chatPane.openRequest && lane === chatPane.mode;
+  if (chatPane.mode === 'hermes') return;
   if (chatPane.busy) await detachTurnNow('session duplicate');
+  if (!current()) return;
   const s = chatPane.sessions.find(x => x.id === sid);
   const name = ((s && s.name) || 'Chat') + ' (copy)';
   try {
     const r = await (await fetch(`/api/ody/session/${sid}/duplicate`, {method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})})).json();
-    if (r.error || !r.id) return;
+    if (!current()) return;
+    if (!r || r.error || !r.id) { chatNotice('could not create this chat'); return; }
     await loadSessions();
+    if (!current()) return;
     await selectSession(r.id);
-  } catch {}
+  } catch (error) { if (current()) chatNotice('could not create this chat — ' + String(error.message || error).slice(0,120)); }
 }
 
 async function newSession(){
+  const request = chatPane.openRequest = Symbol(), lane = chatPane.mode;
+  const current = () => request === chatPane.openRequest && lane === chatPane.mode;
   maybeCloseArtifact();   // new chat = new context; unpinned artifacts close
   // 2026-08-14: +NEW used to be a SILENT NO-OP while a turn was in flight — and
   // a wedged turn never ended, so the button was simply dead until an app
   // restart. A new chat now STOPS the running turn first (Fable design: stop
   // then proceed) and says so in the activity feed.
   if (chatPane.busy) await detachTurnNow('new chat');
+  if (!current()) return;
+  stopConv('new chat'); stopAuto('new chat'); stopTalk(true); stopSpeaking();
   if (chatPane.mode === 'hermes'){
     // Hermes lane: fresh gateway session + clear the pane + refresh the rail
     // (Phase 3). NOTE: the gateway defers the DB row to the first prompt
@@ -9864,24 +10025,31 @@ async function newSession(){
     // the rail after the first message. ⚠ PENDING FABLE QA.
     try {
       const r = await (await fetch('/api/hermes/session/new', {method:'POST'})).json();
-      if (r && r.id){ chatPane.hermesSid = r.id; localStorage.setItem('motdeck-hermes-sid', r.id); }
+      if (!current()) return;
+      if (!r || r.error || !r.id) { chatNotice('could not create a Hermes chat'); return; }
+      chatPane.hermesSid = r.id;
+      try { localStorage.setItem('motdeck-hermes-sid', r.id); } catch (_) {}
       chatPane.hermesStoredSid = (r && r.stored_id) || null;
-      if (chatPane.hermesStoredSid) localStorage.setItem('motdeck-hermes-stored', chatPane.hermesStoredSid);
-      else localStorage.removeItem('motdeck-hermes-stored');
+      try {
+        if (chatPane.hermesStoredSid) localStorage.setItem('motdeck-hermes-stored', chatPane.hermesStoredSid);
+        else localStorage.removeItem('motdeck-hermes-stored');
+      } catch (_) {}
       document.getElementById('chat-msgs').innerHTML = '';
       document.getElementById('chat-input').focus();
       loadSessions();
-    } catch {}
+    } catch (error) { if (current()) chatNotice('could not create this chat — ' + String(error.message || error).slice(0,120)); }
     return;
   }
   try {
     const r = await (await fetch('/api/ody/session/new', {method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:'New chat'})})).json();
-    if (r.error || !r.id) return;
+    if (!current()) return;
+    if (!r || r.error || !r.id) { chatNotice('could not create this chat'); return; }
     await loadSessions();
+    if (!current()) return;
     await selectSession(r.id);
     document.getElementById('chat-input').focus();
-  } catch {}
+  } catch (error) { if (current()) chatNotice('could not create this chat — ' + String(error.message || error).slice(0,120)); }
 }
 
 function beginRename(sid, btn){
@@ -9896,13 +10064,17 @@ function beginRename(sid, btn){
   const commit = async (save) => {
     if (done) return; done = true;
     const v = input.value.trim();
-    if (save && v){
-      const url = hermes ? `/api/hermes/session/${sid}/rename`
-                         : `/api/ody/session/${sid}/rename`;
-      await fetch(url, {method:'POST',
-        headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:v})});
-    }
-    await loadSessions();
+    try {
+      if (save && v){
+        const url = hermes ? `/api/hermes/session/${encodeURIComponent(sid)}/rename`
+                           : `/api/ody/session/${encodeURIComponent(sid)}/rename`;
+        const r = await fetch(url, {method:'POST',
+          headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:v})});
+        const j = await r.json();
+        if (!r.ok || !j || j.error || j.ok === false) throw new Error((j && j.error) || 'rename refused');
+      }
+    } catch (error) { chatNotice('could not rename this chat — ' + String(error.message || error).slice(0,120)); }
+    finally { if (input.isConnected) input.replaceWith(nm); await loadSessions(); }
   };
   input.onkeydown = (e) => { if (e.key === 'Enter'){ e.preventDefault(); commit(true); } else if (e.key === 'Escape'){ commit(false); } };
   input.onblur = () => commit(false);
@@ -9918,29 +10090,43 @@ function armDelete(sid, btn){
 }
 async function doDelete(sid){
   chatPane.delArm = null;
-  if (chatPane.mode === 'hermes'){
-    // Phase 3: WS session.delete (refuses live rows) — deleting the currently
-    // open session passes the live sid so the bridge session.close's it first.
-    const isCurrent = sid === chatPane.hermesStoredSid;
-    await fetch(`/api/hermes/session/${sid}/delete`, {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({live_id: isCurrent ? (chatPane.hermesSid || '') : ''})});
-    if (isCurrent){
-      chatPane.hermesStoredSid = null; chatPane.hermesSid = null;
-      localStorage.removeItem('motdeck-hermes-stored');
-      localStorage.removeItem('motdeck-hermes-sid');
+  const lane = chatPane.mode, opening = chatPane.openRequest;
+  const current = () => chatPane.mode === lane && chatPane.openRequest === opening;
+  const hermes = lane === 'hermes';
+  const isCurrent = sid === (hermes ? chatPane.hermesStoredSid : chatPane.sid);
+  const pending = lane + ':' + sid;
+  if (!chatPane.deleting) chatPane.deleting = new Set();
+  if (chatPane.deleting.has(pending)) return;
+  chatPane.deleting.add(pending);
+  try {
+    const r = await fetch(`/api/${hermes ? 'hermes' : 'ody'}/session/${encodeURIComponent(sid)}/delete`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(hermes ? {live_id: isCurrent ? (chatPane.hermesSid || '') : ''} : {})});
+    const j = await r.json();
+    if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || 'delete refused');
+    if (!current()) return;
+    if (isCurrent) {
+      stopConv('chat deleted'); stopAuto('chat deleted'); stopTalk(true); stopSpeaking();
+      if (chatPane.busy) await detachTurnNow('chat deleted');
+      if (!current()) return;
+      if (hermes) {
+        chatPane.hermesStoredSid = null; chatPane.hermesSid = null;
+        try { localStorage.removeItem('motdeck-hermes-stored'); localStorage.removeItem('motdeck-hermes-sid'); } catch (_) {}
+      } else {
+        chatPane.sid = null;
+        try { localStorage.removeItem('motdeck-chat-sid'); } catch (_) {}
+      }
       document.getElementById('chat-msgs').innerHTML = '';
-      // No auto-create: Hermes mints a session lazily on the next Send.
     }
     await loadSessions();
-    return;
-  }
-  await fetch(`/api/ody/session/${sid}/delete`, {method:'POST'});
-  await loadSessions();
-  if (sid === chatPane.sid){
-    if (chatPane.sessions.length) await selectSession(chatPane.sessions[0].id);
-    else { chatPane.sid = null; document.getElementById('chat-msgs').innerHTML = ''; await newSession(); }
-  }
+    if (!current()) return;
+    if (!hermes && isCurrent) {
+      if (chatPane.sessions.length) await selectSession(chatPane.sessions[0].id);
+      else await newSession();
+    }
+  } catch (error) {
+    if (current()) chatNotice('could not delete this chat — ' + String(error.message || error).slice(0,120));
+  } finally { chatPane.deleting.delete(pending); renderSessions(); }
 }
 
 /* ---------- models pane (M2 slice 1) ---------- */
@@ -10405,13 +10591,13 @@ async function getStarterVoices(){
     // Per-clip honesty: a partial run says exactly how partial it was, and why. The
     // REASON is the whole value of these lines — "2 added, 11 failed" with no reason is
     // what left the 2026-08-14 bug undiagnosable from the panel alone.
-    for (const f of failed) feed('voice', 'starter voice ' + esc(f.slot) + ' ('
-                                 + esc(f.speaker) + ') failed — ' + esc(f.reason));
+    for (const f of failed) feed('voice', 'starter voice ' + f.slot + ' ('
+                                 + f.speaker + ') failed — ' + f.reason);
     // ⚠️ A substitution keeps the ACCENT SLOT and changes the speaker, so it is said
     // out loud rather than quietly filled in.
-    for (const s of subbed) feed('voice', 'starter voice ' + esc(s.slot) + ': '
-                                 + esc(s.wanted) + ' is not in the mirror — used '
-                                 + esc(s.used) + ' for the same accent slot');
+    for (const s of subbed) feed('voice', 'starter voice ' + s.slot + ': '
+                                 + s.wanted + ' is not in the mirror — used '
+                                 + s.used + ' for the same accent slot');
     starterMsg = saved.length + ' added'
       + (skipped.length ? ', ' + skipped.length + ' already there' : '')
       + (subbed.length ? ', ' + subbed.length + ' substituted' : '')
@@ -10811,7 +10997,7 @@ function renderVoiceClips(a, box){
        'Random voice per render — pin a clip for a consistent voice',
        () => setEntryRef(a.id, ''));
   for (const c of voiceLib){
-    const on = c.name === cur;
+    const on = c.name === cur || c.path === cur;
     // A STARTER clip pins by ABSOLUTE PATH (it lives one level down, and the by-name
     // route is basename-flat by design) and carries its own ground-truth transcript,
     // so the pin sets ref_text with no transcription anywhere. It also gets NO ✕:
@@ -11004,7 +11190,7 @@ function renderClipFolders(a, box, cur){
     }
     for (const c of clips){
       const b = document.createElement('button');
-      b.className = 'mp-act' + (c.name === cur ? ' on' : '');
+      b.className = 'mp-act' + (c.name === cur || c.path === cur ? ' on' : '');
       b.textContent = c.stem;
       b.title = 'Always speak with the voice in ' + c.path;
       b.onclick = () => setEntryRef(a.id, c.path);   // absolute → sent as `path`
@@ -11140,7 +11326,8 @@ async function finishClipRec(chunks, fmt){
 
 async function saveClip(id, name){
   const p = pendingClip;
-  if (!p || !String(name || '').trim()) return;
+  if (!p || p.saving || p.id !== id || !String(name || '').trim()) return;
+  p.saving = true;
   voiceErr = '';
   let saved = '';
   try {
@@ -11152,7 +11339,8 @@ async function saveClip(id, name){
     if (!res.ok || !j.ok) voiceErr = (j && j.error) || ('the bridge refused (' + res.status + ')');
     else saved = j.name;
   } catch (e){ voiceErr = 'could not reach the bridge'; }
-  pendingClip = null;
+  p.saving = false;
+  if (saved && pendingClip === p) pendingClip = null;
   await loadVoiceLib(true);
   if (saved) await setEntryRef(id, saved);   // a clip you just recorded is the one you want
   else renderAudioDetail();
@@ -11181,7 +11369,7 @@ async function setEntryRef(id, name, text){
   if (text !== undefined) body.ref_text = String(text || '');
   else {
     const a = ((lastModels || {}).audio || []).find(x => x.id === id);
-    if (a && a.ref_text && name) body.ref_text = a.ref_text;   // keep the transcript on a re-pin
+    if (a && a.ref_text && name && name === a.ref_audio) body.ref_text = a.ref_text;
   }
   try {
     const res = await fetch('/api/voice/entry-ref', {method:'POST',
@@ -11191,10 +11379,10 @@ async function setEntryRef(id, name, text){
     // The bridge says so when it trimmed (or could not trim) a long clip. Silently
     // pinning a DIFFERENT file than the one that was clicked would be the wrong kind
     // of helpful, so the swap is announced.
-    else if (j && j.note) feed('voice', esc(j.note));
+    else if (j && j.note) feed('voice', j.note);
     // A refusal is the length guard doing its job — put the reason where errors go AND
     // in the feed, because the picker's error line is easy to miss mid-scroll.
-    if (voiceErr && /clip is/.test(voiceErr)) feed('voice', esc(voiceErr));
+    if (voiceErr && /clip is/.test(voiceErr)) feed('voice', voiceErr);
   } catch { voiceErr = 'could not reach the bridge'; }
   stopSpeaking();          // a clip rendered with the old voice must not outlive it
   await initModels();      // re-read /api/models → the entry's new ref_audio
@@ -11277,8 +11465,8 @@ const VOICE_STARTERS = [
     lic: 'CC BY 4.0 — © NVIDIA · huggingface.co/nvidia/parakeet-tdt-0.6b-v3' },
   { title: 'Whisper base · MLX (speech-to-text)', repo: 'mlx-community/whisper-base-mlx',
     file: '', fmt: 'stt-mlx', size: '~137 MB',
-    desc: 'Small, fast transcription. Listening is not wired into the UI yet (Phase D) — '
-        + 'downloading now just puts it in the library.',
+    desc: 'Small, fast transcription. Set it as default STT to use dictation and '
+        + 'hands-free listening in Chat.',
     lic: 'MIT (upstream Whisper)' },
   { title: 'Whisper large-v3-turbo · MLX (speech-to-text)',
     repo: 'mlx-community/whisper-large-v3-turbo',
@@ -11379,7 +11567,7 @@ function audioGetState(p){
   return { disabled:false, label:'Get', reason:'' };
 }
 
-let asOpen = false, asSel = '';
+let asOpen = false, asSel = '', audioSearchRequest = 0, audioProbeRequest = 0;
 function toggleAudioSearch(){
   asOpen = !asOpen;
   const body = document.getElementById('as-body');
@@ -11391,15 +11579,19 @@ function toggleAudioSearch(){
 async function audioSearch(){
   const res = document.getElementById('as-results');
   if (!res) return;
+  const request = ++audioSearchRequest; audioProbeRequest++;
   const q = (document.getElementById('as-q').value || '').trim();
   const kind = document.getElementById('as-kind').value;
   asSel = '';
   res.innerHTML = '<div class="cs-empty">Searching HuggingFace…</div>';
   let list;
   try {
-    list = await (await fetch('/api/models/hf/audio?kind=' + encodeURIComponent(kind)
-                              + '&q=' + encodeURIComponent(q))).json();
-  } catch { res.innerHTML = '<div class="cs-empty">Search failed.</div>'; return; }
+    const r = await fetch('/api/models/hf/audio?kind=' + encodeURIComponent(kind)
+                              + '&q=' + encodeURIComponent(q));
+    list = await r.json();
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+  } catch { if (request === audioSearchRequest) res.innerHTML = '<div class="cs-empty">Search failed.</div>'; return; }
+  if (request !== audioSearchRequest) return;
   if (!Array.isArray(list)){
     res.innerHTML = '<div class="cs-empty">HF error: '
       + esc((list && list.error) || 'unknown') + '</div>'; return;
@@ -11410,6 +11602,7 @@ async function audioSearch(){
   res.innerHTML = '';
   const have = new Set(((lastModels || {}).audio || []).map(a => a.id));
   for (const m of list){
+    if (!m || typeof m.repo !== 'string') continue;
     const wrap = document.createElement('div');
     const row = document.createElement('div'); row.className = 'mrow'; row.dataset.arepo = m.repo;
     const badges = [`<span class="msize">▼ ${(m.downloads || 0).toLocaleString()}</span>`,
@@ -11428,6 +11621,7 @@ async function audioSearch(){
   }
 }
 async function audioProbe(m, row, card){
+  const request = ++audioProbeRequest;
   // Click again = collapse; only one card open at a time (the list stays readable).
   if (asSel === m.repo){ asSel = ''; card.hidden = true; markAudioHfRows(); return; }
   asSel = m.repo; markAudioHfRows();
@@ -11435,9 +11629,13 @@ async function audioProbe(m, row, card){
   card.hidden = false;
   card.innerHTML = '<div class="cs-empty">Reading this model’s config…</div>';
   let p;
-  try { p = await (await fetch('/api/models/hf/audio/probe?repo='
-                               + encodeURIComponent(m.repo))).json(); }
-  catch { card.innerHTML = '<div class="cs-empty">Could not reach the bridge.</div>'; return; }
+  try {
+    const r = await fetch('/api/models/hf/audio/probe?repo=' + encodeURIComponent(m.repo));
+    p = await r.json();
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+  } catch { if (request === audioProbeRequest) card.innerHTML = '<div class="cs-empty">Could not reach the bridge.</div>'; return; }
+  if (request !== audioProbeRequest || asSel !== m.repo) return;
+  if (p && !p.error && p.repo !== m.repo) p = {error:'the bridge returned a different model'};
   if (!p || p.error){
     card.innerHTML = '<div class="cs-empty">Probe failed: '
       + esc((p && p.error) || 'unknown') + '</div>'; return;
@@ -11547,10 +11745,10 @@ function renderSampling(m){
           value="${ov ? escAttr(String(f.value)) : ''}"
           placeholder="${escAttr(String(f.default))}"
           title="${escAttr(tip)}"
-          onchange="samplingSet('${escAttr(f.key)}', this.value, this)">
+          onchange="samplingSet(${apiArg(f.key)}, this.value, this)">
         ${ov ? `<button class="cap-btn" style="margin-left:6px"
              title="Reset to MOT Deck default (${escAttr(String(f.default))})"
-             onclick="samplingSet('${escAttr(f.key)}', '', this)">↺</button>` : ''}
+             onclick="samplingSet(${apiArg(f.key)}, '', this)">↺</button>` : ''}
       </div></div>`;
   }).join('');
   return `<button onclick="toggleSampling(this)" aria-expanded="${samplingOpen ? 'true' : 'false'}"
@@ -11611,7 +11809,11 @@ async function modelSettingsRequest(id, path, body){
   const pending = previous.catch(() => {}).then(async () => {
     const response = await fetch(path, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload });
-    return response.json();
+    const result = await response.json();
+    if (!response.ok || !result || result.ok !== true || result.id !== id) {
+      throw new Error((result && result.error) || 'the bridge did not confirm these model settings');
+    }
+    return result;
   });
   modelSettingsWrites.set(id, pending);
   try { return await pending; }
@@ -11647,7 +11849,7 @@ async function samplingPost(body, el){
       if (lhost) lhost.innerHTML = renderLaunch(m);
     }
   }
-  feed('models', 'sampling · ' + esc(r.id) + ' → '
+  feed('models', 'sampling · ' + r.id + ' → '
        + ((r.sampling && r.sampling.changed) ? (r.sampling.changed + ' overridden')
                                             : 'motdeck defaults'));
 }
@@ -11688,8 +11890,8 @@ function renderLoad(m){
           value="${ov ? escAttr(String(f.value)) : ''}"
           placeholder="${escAttr(String(f.default))}"
           title="${escAttr(tip)}"
-          oninput="loadSyncSlider('${escAttr(f.key)}')"
-          onchange="loadSet('${escAttr(f.key)}', this.value, this)">`;
+          oninput="loadSyncSlider(${apiArg(f.key)})"
+          onchange="loadSet(${apiArg(f.key)}, this.value, this)">`;
       // FABLE-SANCTIONED CSS EXCEPTION: .cap-range is the one new rule in v2.1.
       // The slider is an ADDITION beside the box, never a replacement — the box
       // stays the thing that posts, so an exact value is always typeable.
@@ -11699,15 +11901,15 @@ function renderLoad(m){
              step="${escAttr(String(f.slider))}"
              value="${escAttr(String(sliderPos(ov ? f.value : '', f.min, f.max)))}"
              title="${escAttr(tip)}"
-             oninput="loadSyncBox('${escAttr(f.key)}')"
-             onchange="loadSet('${escAttr(f.key)}', this.value, this)">${box}`
+             oninput="loadSyncBox(${apiArg(f.key)})"
+             onchange="loadSet(${apiArg(f.key)}, this.value, this)">${box}`
         : box;
     } else {
       const opts = (f.kind === 'bool' ? ['on', 'off'] : (f.choices || []));
       const cur = ov ? (f.kind === 'bool' ? (f.value ? 'on' : 'off') : String(f.value)) : '';
       ctl = `<select class="cap-inp" style="width:96px"
           title="${escAttr(tip)}"
-          onchange="loadSet('${escAttr(f.key)}', this.value, this)">
+          onchange="loadSet(${apiArg(f.key)}, this.value, this)">
           <option value=""${cur ? '' : ' selected'}>default</option>
           ${opts.map(o => `<option value="${escAttr(o)}"${
               cur === o ? ' selected' : ''}>${esc(o)}</option>`).join('')}
@@ -11720,7 +11922,7 @@ function renderLoad(m){
       </div><div class="cap-ctl">${ctl}
         ${ov ? `<button class="cap-btn" style="margin-left:6px"
              title="Reset to the engine default (${escAttr(String(f.default))})"
-             onclick="loadSet('${escAttr(f.key)}', '', this)">↺</button>` : ''}
+             onclick="loadSet(${apiArg(f.key)}, '', this)">↺</button>` : ''}
       </div></div>`;
   }).join('');
   return `<button onclick="toggleLoad(this)" aria-expanded="${loadOpen ? 'true' : 'false'}"
@@ -11811,14 +12013,27 @@ function loadSyncBox(key){
   if (b && r) b.value = r.value;
 }
 
-/* Apply = the EXISTING model-switch path on the same id. start_component.sh kills
-   whatever holds the port and relaunches, so a same-id switch is a real reload. */
-function loadApply(btn){
+/* Apply waits for the same model's queued edits before requesting its relaunch. */
+let loadApplying = false;
+async function loadApply(btn){
   const id = (mSel && mSel.kind === 'installed') ? mSel.id : '';
-  if (!id || modelsBusy) return;
-  const m = ((lastModels || {}).installed || []).find(x => x.id === id);
-  feed('models', 'load · reloading ' + esc(id) + ' to apply load settings');
-  switchModel(id, (m && (m.name || m.id)) || id);
+  if (!id || modelsBusy || loadApplying) return;
+  loadApplying = true;
+  if (btn) btn.disabled = true;
+  try {
+    let pending;
+    while ((pending = modelSettingsWrites.get(id))) await pending;
+    if (!mSel || mSel.kind !== 'installed' || mSel.id !== id || modelsBusy) return;
+    const m = ((lastModels || {}).installed || []).find(x => x.id === id);
+    feed('models', 'load · reloading ' + id + ' to apply load settings');
+    await switchModel(id, (m && (m.name || m.id)) || id);
+  } catch (e) {
+    if (mSel && mSel.kind === 'installed' && mSel.id === id)
+      loadErr('Not reloaded: ' + ((e && e.message) || e));
+  } finally {
+    loadApplying = false;
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function loadPost(body, el){
@@ -11848,7 +12063,7 @@ async function loadPost(body, el){
       if (lhost) lhost.innerHTML = renderLaunch(m);
     }
   }
-  feed('models', 'load · ' + esc(r.id) + ' → '
+  feed('models', 'load · ' + r.id + ' → '
        + ((r.loadview && r.loadview.changed) ? (r.loadview.changed + ' overridden')
                                              : 'engine defaults'));
 }
@@ -12064,7 +12279,9 @@ async function auxStop(){
 }
 
 // ---- HuggingFace browser (slice 2) ----
+let hfSearchRequest = 0;
 async function hfSearch(){
+  const request = ++hfSearchRequest;
   const q = document.getElementById('mb-q').value.trim();
   const res = document.getElementById('mb-results');
   if (!q){ res.innerHTML = ''; return; }
@@ -12073,11 +12290,14 @@ async function hfSearch(){
   res.innerHTML = '<div class="cs-empty">Searching HuggingFace…</div>';
   try {
     const url = '/api/models/hf?q=' + encodeURIComponent(q) + '&fmt=' + fmt + '&sort=' + sort;
-    const list = await (await fetch(url)).json();
+    const r = await fetch(url), list = await r.json();
+    if (request !== hfSearchRequest) return;
+    if (!r.ok || !Array.isArray(list)) throw new Error('invalid search response');
     if (list.error){ res.innerHTML = '<div class="cs-empty">HF error: ' + esc(list.error) + '</div>'; return; }
     if (!list.length){ res.innerHTML = '<div class="cs-empty">No ' + fmt.toUpperCase() + ' models found.</div>'; return; }
     res.innerHTML = '';
     for (const m of list){
+      if (!m || typeof m.repo !== 'string') continue;
       const row = document.createElement('div'); row.className = 'mrow'; row.dataset.repo = m.repo;
       const badges = [`<span class="msize">▼ ${(m.downloads || 0).toLocaleString()}</span>`,
                       `<span class="msize">♥ ${m.likes || 0}</span>`];
@@ -12089,7 +12309,7 @@ async function hfSearch(){
       res.appendChild(row);
     }
     markSelRows();
-  } catch { res.innerHTML = '<div class="cs-empty">Search failed.</div>'; }
+  } catch { if (request === hfSearchRequest) res.innerHTML = '<div class="cs-empty">Search failed.</div>'; }
 }
 
 // Light, safe markdown for the in-app model card. HF READMEs mix markdown + raw HTML,
@@ -12176,7 +12396,7 @@ async function renderHfFiles(repo, box){
     box.innerHTML = '';
     const head = document.createElement('div'); head.className = 'hffile';
     head.innerHTML = `${fitPillSize(d.total_size)} <span>MLX · ${d.files.length} file(s) · whole repo loads together</span> `
-      + `<button class="hfget" onclick="dlStart('${escAttr(repo)}', '')">Get</button>`;
+      + `<button class="hfget" onclick="dlStart(${apiArg(repo)}, '')">Get</button>`;
     box.appendChild(head);
     paintHfFits(repo, box);
     // Also route the detail-panel primary button through the download manager
@@ -12198,7 +12418,7 @@ async function renderHfFiles(repo, box){
   for (const f of d.files){
     const line = document.createElement('div'); line.className = 'hffile';
     line.innerHTML = `${fitPillSize(f.size_bytes)} <span>${esc(f.filename)} · ${fmtGB(f.size_bytes)} to download</span> `
-      + `<button class="hfget" onclick="dlStart('${escAttr(repo)}', '${escAttr(f.filename)}')">Get</button>`;
+      + `<button class="hfget" onclick="dlStart(${apiArg(repo)}, ${apiArg(f.filename)})">Get</button>`;
     const chip = line.querySelector('.hffit');
     if (chip) chip.dataset.hffile = f.filename;
     box.appendChild(line);
@@ -12758,26 +12978,18 @@ function stripAttachMarker(s){
 }
 
 function lastAttachmentId(hist, userText){
-  // PURE: the sidecar image id of the LAST user row whose text matches `userText`
-  // (marker-normalised, the same way stampLiveTurn matches). Falls back to the
-  // newest user row that carries an attachment at all, so a turn whose text was
-  // rewritten server-side still resolves. null when nothing has one yet — the
-  // caller reads that as "the row is not written yet, retry".
-  // NOTE: no apostrophes in this body — the test extracts it with a naive
-  // string-aware brace matcher that would treat one as an open quote.
-  // Unit-tested by bridge/tests/test_attach_marker.js.
+  // Match the sent question only. An unrelated newer image never authorizes
+  // deletion; a missing row is retried after persistence finishes.
   const norm = s => stripAttachMarker(s).trim();
   const want = norm(userText);
-  let newest = null;
   for (let i = (hist || []).length - 1; i >= 0; i--){
     const m = (hist || [])[i];
     if (!m || m.role !== 'user') continue;
     const a = m.attachment;
     if (!a || a.id === undefined || a.id === null) continue;
-    if (newest === null) newest = a.id;
     if (norm(m.content) === want) return a.id;
   }
-  return newest;
+  return null;
 }
 
 function attachLineEl(src, name, onRemove, removeTitle, kind){
@@ -12827,19 +13039,21 @@ function attachLineEl(src, name, onRemove, removeTitle, kind){
    POST /api/attachment/{id}/delete — which touches the sidecar row only, never
    the user's file on disk. The restored-line ✕ is unchanged. */
 
-function liveAttachDrop(wrap, text){
-  if (chatPane.busy){ chatPane.pendingAttachDrop = {wrap: wrap, text: text}; return; }
-  dropSidecarAttachment(text);
+function liveAttachDrop(wrap, text, sid){
+  if (chatPane.busy){ chatPane.pendingAttachDrop = {wrap: wrap, text: text, sid: sid}; return; }
+  dropSidecarAttachment(text, sid);
 }
 
-async function dropSidecarAttachment(userText){
+async function dropSidecarAttachment(userText, sid = chatPane.sid){
   // Two attempts: at [DONE] the inject + sidecar write have normally landed, but
   // the refetch can still beat them. Never throws into the send path.
   try {
-    if (!chatPane.sid) return;
+    if (!sid) return;
     for (let attempt = 0; attempt < 2; attempt++){
       if (attempt) await new Promise(r => setTimeout(r, 900));
-      const h = await (await fetch(`/api/ody/history/${chatPane.sid}`)).json();
+      const r = await fetch(`/api/ody/history/${encodeURIComponent(sid)}`);
+      const h = await r.json();
+      if (!r.ok || !h || !Array.isArray(h.history)) return;
       const id = lastAttachmentId((h && h.history) || [], userText);
       if (id === null || id === undefined) continue;
       await fetch('/api/attachment/' + encodeURIComponent(id) + '/delete', {method:'POST'});
@@ -13379,7 +13593,7 @@ function forceEndTurn(reason){
   // DIAGNOSTIC: name the stage the turn died in — console for a log capture,
   // feed for Debi. Without this, "it just hung" is undiagnosable from a report.
   try { console.warn('[turn] force-end · lane=' + t.lane + ' · stage=' + where + ' · ' + why); } catch (_) {}
-  try { feed('chat', 'turn force-ended at ' + esc(where) + ' — ' + esc(why)); } catch (_) {}
+  try { feed('chat', 'turn force-ended at ' + where + ' — ' + why); } catch (_) {}
   if (t.holder){ try { chatStatus(t.holder, '✓', 'interrupted (forced) · ' + where); } catch (_) {} }
   try { t.ctl.abort(); } catch (_) {}
   setTimeout(() => turnHardRelease(t), 400);
@@ -13394,7 +13608,10 @@ async function hermesStop(reason){
   const t = chatPane.curTurn;
   if (t && !t.ended && !t.stopArmed){
     t.stopArmed = true;
-    setTimeout(() => forceEndTurn((reason || 'stop') + ' — no clean end within 3s'), TURN_FORCE_MS);
+    setTimeout(() => {
+      if (chatPane.curTurn === t)
+        forceEndTurn((reason || 'stop') + ' — no clean end within 3s');
+    }, TURN_FORCE_MS);
   }
   // No sid yet = the bridge has not announced hermes_session, i.e. we are in the
   // pre-first-event phase. Nothing to interrupt upstream — the force-end above is
@@ -13409,6 +13626,7 @@ async function hermesStop(reason){
 }
 
 async function sendChat() {
+  if (chatPane.preparingSend) return;
   // Hermes mode needs no Odysseus session (works with Odysseus down) — the bridge
   // creates a gateway session on first send and announces it via hermes_session.
   if (chatPane.busy){
@@ -13467,14 +13685,23 @@ async function sendChat() {
   // before clearing the composer or POSTing the prompt, so a response abort before
   // the old hermes_session frame can never leave a running turn with no return path.
   if (chatPane.mode === 'hermes' && !chatPane.hermesSid) {
+    const opening = chatPane.openRequest, draft = inp.value, attachment = chatPane.attachedImage;
+    const pending = {}; chatPane.preparingSend = pending;
+    const current = () => chatPane.mode === 'hermes' && chatPane.openRequest === opening;
     try {
       await streamApi.prepareHermesSession();
+      if (!current()) return;
+      if (inp.value !== draft || chatPane.attachedImage !== attachment) {
+        chatNotice('Message changed while Hermes was opening — press Send when ready.');
+        return;
+      }
     } catch (error) {
+      if (!current()) return;
       const why = 'message not sent — could not create a Hermes session: '
         + String(error && error.message || error);
       attachNote(why); try { feed('chat', why); } catch (_) {}
       return;
-    }
+    } finally { if (chatPane.preparingSend === pending) chatPane.preparingSend = null; }
   }
   if (chatPane.mode === 'chat' && chatPane.attachedImage
       && chatPane.attachedImage.kind === 'file') {
@@ -13506,10 +13733,10 @@ async function sendChat() {
     // bridge's image sidecar, so reopening this session rehydrates the same line.
     // ✕ here removes it from this view AND (once the sidecar row exists, which is
     // after the turn completes) deletes that row — it never touches the source file.
-    const _lane = chatPane.mode;
+    const _lane = chatPane.mode, attachmentSid = chatPane.sid;
     userWrap.querySelector('.body').appendChild(
       (_lane === 'chat' && img.kind !== 'file')
-        ? attachLineEl(img.data, img.name, () => liveAttachDrop(userWrap, text))
+        ? attachLineEl(img.data, img.name, () => liveAttachDrop(userWrap, text, attachmentSid))
         : attachLineEl(img.data, img.name, null,
             'Remove from this view — the copy kept by '
             + (_lane === 'hermes' ? 'Hermes' : 'Odysseus') + ' stays', img.kind));
@@ -13619,7 +13846,7 @@ async function sendChat() {
     // the sidecar row only exists now, so the delete is issued here (once).
     if (chatPane.pendingAttachDrop && chatPane.pendingAttachDrop.wrap === userWrap){
       const p = chatPane.pendingAttachDrop; chatPane.pendingAttachDrop = null;
-      dropSidecarAttachment(p.text);
+      dropSidecarAttachment(p.text, p.sid);
     }
     // CONVERSATION MODE: THE turn ended — any lane, any outcome, including a
     // user-clicked Stop (this finally always runs). Speak the reply, then listen.
@@ -13760,9 +13987,9 @@ function prepReact(src){
   } else if (/export\s+default\s+class\b/.test(s)){                 // anonymous class default
     defaultName = '__ArtifactRoot__';
     s = s.replace(/export\s+default\s+class\b/, 'class __ArtifactRoot__');
-  } else if ((m = s.match(/export\s+default\s+([A-Za-z_$][\w$]*)\s*;?/))){  // `export default App`
+  } else if ((m = s.match(/export\s+default\s+([A-Za-z_$][\w$]*)(?=\s*(?:;|$))(?!\s*=>)\s*;?/))){  // `export default App`
     defaultName = m[1];
-    s = s.replace(/export\s+default\s+[A-Za-z_$][\w$]*\s*;?/, '');
+    s = s.replace(/export\s+default\s+[A-Za-z_$][\w$]*(?=\s*(?:;|$))(?!\s*=>)\s*;?/, '');
   } else if (/export\s+default\s+/.test(s)){                        // expression (arrow/JSX/obj)
     defaultName = '__ArtifactRoot__';
     s = s.replace(/export\s+default\s+/, 'const __ArtifactRoot__ = ');
@@ -13860,10 +14087,27 @@ function cspScripted(){
 }
 
 function injectIntoDoc(html, headExtra){
-  // Insert our CSP + console shim into an artifact that is already a full HTML document.
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, m => m + headExtra);
-  if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, m => m + '<head>' + headExtra + '</head>');
-  return '<!doctype html><html><head>' + headExtra + '</head><body>' + html + '</body></html>';
+  // Scan only the document prologue. A <head> written in a comment, quoted
+  // attribute, script or template is not the document head. Insert before any
+  // executable content without parsing untrusted markup in the host document.
+  const text = String(html == null ? '' : html);
+  let at = 0;
+  function skipPrologue(){
+    while (at < text.length){
+      const rest = text.slice(at);
+      const token = /^(?:\s+|<!--[\s\S]*?-->|<!doctype\b(?:[^"'<>]|"[^"]*"|'[^']*')*>)/i.exec(rest);
+      if (!token) break;
+      at += token[0].length;
+    }
+  }
+  skipPrologue();
+  const root = /^<html(?=[\s>])(?:[^"'<>]|"[^"]*"|'[^']*')*>/i.exec(text.slice(at));
+  if (root) { at += root[0].length; skipPrologue(); }
+  const head = /^<head(?=[\s>])(?:[^"'<>]|"[^"]*"|'[^']*')*>/i.exec(text.slice(at));
+  if (head) at += head[0].length;
+  const extra = head ? headExtra : '<head>' + headExtra + '</head>';
+  if (root || head) return text.slice(0, at) + extra + text.slice(at);
+  return '<!doctype html><html><head>' + headExtra + '</head><body>' + text + '</body></html>';
 }
 
 function buildPlainSrcdoc(content){
@@ -13971,7 +14215,7 @@ function buildMermaidSrcdoc(content){
 // "" escapes, embedded delimiters + newlines inside quotes, CRLF and lone-CR endings.
 function parseCsv(text, delim){
   delim = delim || ',';
-  const s = String(text == null ? '' : text);
+  const s = String(text == null ? '' : text).replace(/^\uFEFF/, '');
   const rows = []; let row = [], field = '', inQ = false;
   for (let i = 0; i < s.length; i++){
     const ch = s[i];
@@ -13987,9 +14231,19 @@ function parseCsv(text, delim){
   if (field !== '' || row.length){ row.push(field); rows.push(row); }
   return rows;
 }
-function csvDelim(text){   // PURE: tab wins when the first line is tab-dominated
-  const first = String(text == null ? '' : text).split(/\r?\n/, 1)[0] || '';
-  const tabs = (first.match(/\t/g) || []).length, commas = (first.match(/,/g) || []).length;
+function csvDelim(text){   // Count separators outside quotes in the first record.
+  const s = String(text == null ? '' : text).replace(/^\uFEFF/, '');
+  let tabs = 0, commas = 0, quoted = false, fieldStart = true;
+  for (let i = 0; i < s.length; i++){
+    const ch = s[i];
+    if (quoted){
+      if (ch === '"') { if (s[i + 1] === '"') i++; else quoted = false; }
+    } else if (ch === '"' && fieldStart) { quoted = true; fieldStart = false; }
+    else if (ch === '\r' || ch === '\n') break;
+    else if (ch === '\t') { tabs++; fieldStart = true; }
+    else if (ch === ',') { commas++; fieldStart = true; }
+    else fieldStart = false;
+  }
   return (tabs > 0 && tabs >= commas) ? '\t' : ',';
 }
 function csvColNumeric(rows, ci){   // PURE: every non-empty cell parses as a finite number
@@ -14023,7 +14277,9 @@ function renderArtCsv(container, content){
     const n = document.createElement('div'); n.className = 'cs-empty';
     n.textContent = 'Empty CSV.'; container.appendChild(n); return;
   }
-  const header = rows[0], data = rows.slice(1);
+  const header = rows[0].slice(), data = rows.slice(1);
+  const columns = rows.reduce((n, row) => Math.max(n, row.length), header.length);
+  while (header.length < columns) header.push('Column ' + (header.length + 1));
   const wrap = document.createElement('div'); wrap.className = 'art-table-wrap';  // FABLE: style pass
   const table = document.createElement('table'); table.className = 'art-table';
   const thead = document.createElement('thead'), tbody = document.createElement('tbody');
@@ -14104,9 +14360,15 @@ function buildJsonTree(key, v, depth){
   sum.appendChild(close);
   det.appendChild(sum);
   const kids = document.createElement('div'); kids.className = 'jt-children';
-  const entries = Array.isArray(v) ? v.map((x, i) => [String(i), x]) : Object.entries(v);
-  for (const [ck, cv] of entries) kids.appendChild(buildJsonTree(ck, cv, depth + 1));
+  let built = false;
+  function populate(){
+    if (built || !det.open) return;
+    built = true;
+    for (const ck of Object.keys(v)) kids.appendChild(buildJsonTree(ck, v[ck], depth + 1));
+  }
   det.appendChild(kids);
+  det.addEventListener('toggle', populate);
+  populate();
   return det;
 }
 function renderArtJson(container, content, filename){
@@ -14187,7 +14449,7 @@ function closeArtifact(){
   document.body.classList.remove('artifact-open', 'artifact-expanded');
   artifactState.open = false; artifactState.expanded = false;
   clearArtConsole();
-  const b = document.getElementById('art-body'); if (b) b.innerHTML = '';
+  const b = document.getElementById('art-body'); if (b) { b._renderToken = Symbol(); b.innerHTML = ''; }
   const btn = document.getElementById('art-expand'); if (btn){ btn.textContent = '⇱'; btn.title = 'Expand'; }
 }
 function toggleArtifactExpand(){
@@ -14320,6 +14582,7 @@ function canvasNote(msg){
 async function toggleArtifactEdit(){
   if (_canvas.on){ exitCanvas(true); return; }
   if (!artifactState.open || _artKind === 'image' || _artKind === 'pdf') return;
+  const generation = _canvas.generation = (_canvas.generation || 0) + 1;
   _canvas.on = true;
   _canvas.orig = _artContent;
   _canvas.savedPath = '';
@@ -14330,7 +14593,7 @@ async function toggleArtifactEdit(){
   loadCanvasSplit();
   const host = document.getElementById('art-editor'); host.innerHTML = '';
   const hasCM = await ensureCodeMirror();
-  if (!_canvas.on) return;             // toggled off while the lib was loading
+  if (!_canvas.on || generation !== _canvas.generation) return;
   if (hasCM && window.CodeMirror){
     _canvas.cm = window.CodeMirror(host, {
       value: _artContent, mode: cmModeFor(_artKind, _artFilename),
@@ -14350,6 +14613,7 @@ function exitCanvas(rerender){
   // (session-local; dropped when the artifact closes).
   if (_canvas.timer){ clearTimeout(_canvas.timer); _canvas.timer = null; }
   const buf = _canvas.on ? canvasBuffer() : null;
+  _canvas.generation = (_canvas.generation || 0) + 1;
   _canvas.on = false; _canvas.cm = null; _canvas.ta = null;
   document.body.classList.remove('artifact-edit');
   const eb = document.getElementById('art-edit'); if (eb) eb.classList.remove('on');
@@ -14371,21 +14635,28 @@ function canvasRevert(){
   canvasNote('reverted to original');
 }
 async function canvasSave(){
-  if (!_canvas.on) return;
+  if (!_canvas.on || _canvas.saving) return;
+  const generation = _canvas.generation, content = canvasBuffer();
+  const request = {}; _canvas.saving = request;
   canvasNote('saving…');
   try {
     const r = await fetch('/api/artifact/save', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: canvasSaveName(_artFilename, _artKind), content: canvasBuffer() }),
+      body: JSON.stringify({ filename: canvasSaveName(_artFilename, _artKind), content }),
     });
     const j = await r.json().catch(() => ({}));
-    if (r.ok && j.path){
+    if (!_canvas.on || generation !== _canvas.generation) return;
+    if (r.ok && j && j.path){
       _canvas.savedPath = j.path;
-      canvasNote('saved → ' + j.path.split('/').slice(-2).join('/'));
+      canvasNote('saved → ' + j.path.split('/').slice(-2).join('/')
+        + (canvasBuffer() !== content ? ' · newer edits unsaved' : ''));
       const rv = document.getElementById('canvas-reveal'); if (rv) rv.hidden = false;
-    } else canvasNote('save failed: ' + (j.log || ('HTTP ' + r.status)));
-  } catch (e){ canvasNote('save failed: bridge unreachable'); }
+    } else canvasNote('save failed: ' + ((j && (j.error || j.log)) || ('HTTP ' + r.status)));
+  } catch (e){
+    if (_canvas.on && generation === _canvas.generation) canvasNote('save failed: bridge unreachable');
+  } finally { if (_canvas.saving === request) _canvas.saving = null; }
 }
+
 function canvasReveal(){
   if (!_canvas.savedPath) return;
   fetch('/api/open', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -14422,6 +14693,7 @@ function attachArtConsole(iframe){
 // ---- dispatch: type → renderer ----
 function renderArtifact(kind, content, filename){
   const body = document.getElementById('art-body');
+  body._renderToken = Symbol();
   body.innerHTML = ''; clearArtConsole();
   _artContent = content || '';
   _artKind = kind; _artFilename = filename || '';   // CANVAS: remembered for edit re-renders
@@ -14455,7 +14727,9 @@ function renderArtIframe(container, srcdoc, pipeConsole){
 }
 
 async function renderArtMarkdown(container, content){
+  const token = container._renderToken;
   await ensureHostVendor();
+  if (container._renderToken !== token) return;
   const div = document.createElement('div'); div.className = 'art-md';
   if (typeof window.markdownit === 'function' && window.DOMPurify){
     const md = window.markdownit({ html:false, linkify:true, breaks:false });
@@ -14471,7 +14745,9 @@ async function renderArtMarkdown(container, content){
 }
 
 async function renderArtCode(container, content, filename){
+  const token = container._renderToken;
   await ensureHostVendor();
+  if (container._renderToken !== token) return;
   const pre = document.createElement('pre'); pre.className = 'art-code';
   const code = document.createElement('code');
   code.className = 'language-' + prismLang(filename);
@@ -14554,6 +14830,7 @@ let musicLib = [];         // last /api/music/library
 let musicEngine = null;    // the engine the Create form is aimed at
 let musicPollT = null;
 let musicTick = 0;
+let musicStatusRequest = 0, musicLibraryRequest = 0;
 let musicPlay = '';        // the ONE track that currently has an <audio> element
 let musicErr = '';         // inline error under Generate (the bridge's own words)
 let musicWarn = '';        // the RAM warning, waiting for an explicit override
@@ -14661,10 +14938,12 @@ async function initMusic(){
 }
 
 async function loadMusicStatus(){
+  const request = ++musicStatusRequest;
   try {
     const r = await fetch('/api/music/status');
     const j = await r.json();
-    if (j && j.ok) musicSnap = j;
+    if (request !== musicStatusRequest) return;
+    if (r.ok && j && j.ok === true && Array.isArray(j.engines)) musicSnap = j;
   } catch (e) { /* a transient bridge blip must not blank the page */ }
   // auto-pick: with exactly one engine installed there is no choice to make
   const inst = musicInstalled();
@@ -14674,10 +14953,12 @@ async function loadMusicStatus(){
 }
 
 async function loadMusicLibrary(){
+  const request = ++musicLibraryRequest, dir = (musicSnap || {}).dir;
   try {
     const r = await fetch('/api/music/library');
     const j = await r.json();
-    if (j && j.ok) musicLib = j.tracks || [];
+    if (request !== musicLibraryRequest || dir !== (musicSnap || {}).dir) return;
+    if (r.ok && j && j.ok === true && Array.isArray(j.tracks)) musicLib = j.tracks;
   } catch (e) {}
   renderMusicLibrary();
   renderMusicHero();        // the hero counts tracks
@@ -14841,7 +15122,7 @@ function renderMusicTemplates(){
 function musicTplRow(t){
   const gist = String(t.prompt || '').slice(0, 90).replace(/\s+/g, ' ');
   const del = t.builtin ? ''
-    : `<button class="cap-btn" onclick="musicDelTemplate('${escAttr(t.id)}', this)"
+    : `<button class="cap-btn" onclick="musicDelTemplate(${apiArg(t.id)}, this)"
                title="Forget this template">✕</button>`;
   return `<div class="cap-row">
     <div class="cap-txt">
@@ -14851,8 +15132,8 @@ function musicTplRow(t){
       <div class="cap-desc" style="white-space:normal">${esc(gist)}…</div>
     </div>
     <div class="cap-ctl">
-      <button class="cap-btn" onclick="musicUseTemplate('${escAttr(t.id)}', false)">Use</button>
-      <button class="cap-btn" onclick="musicUseTemplate('${escAttr(t.id)}', true)"
+      <button class="cap-btn" onclick="musicUseTemplate(${apiArg(t.id)}, false)">Use</button>
+      <button class="cap-btn" onclick="musicUseTemplate(${apiArg(t.id)}, true)"
               title="Prefill and start rendering">use &amp; generate</button>
       ${del}
     </div></div>`;
@@ -14866,11 +15147,10 @@ function musicTplCard(t){
   const bars = musicWaveBars(t.id)
     .map(h => `<span class="mv-bar" style="height:${h}px"></span>`).join('');
   const del = t.builtin ? ''
-    : `<button class="cap-btn" onclick="event.stopPropagation();musicDelTemplate('${
-         escAttr(t.id)}', this)" title="Forget this template">✕</button>`;
+    : `<button class="cap-btn" onclick="event.stopPropagation();musicDelTemplate(${apiArg(t.id)}, this)" title="Forget this template">✕</button>`;
   return `<div class="mv-card" style="--mv-accent:${escAttr(acc)};--mv-tint:${
       escAttr(musicTint(acc, 0.18))}"
-      onclick="musicUseTemplate('${escAttr(t.id)}', false)">
+      onclick="musicUseTemplate(${apiArg(t.id)}, false)">
     <div class="mv-top">
       <span class="mv-tile">${esc(musicGlyph(t))}</span>
       <span><span class="mv-name">${esc(t.name)}</span>
@@ -14879,8 +15159,7 @@ function musicTplCard(t){
     <div class="mv-gist">${esc(gist)}</div>
     <div class="mv-wave">${bars}</div>
     <div class="mv-acts">
-      <button class="cap-btn" onclick="event.stopPropagation();musicUseTemplate('${
-        escAttr(t.id)}', true)" title="Prefill and start rendering">use &amp; generate</button>
+      <button class="cap-btn" onclick="event.stopPropagation();musicUseTemplate(${apiArg(t.id)}, true)" title="Prefill and start rendering">use &amp; generate</button>
       ${del}
     </div></div>`;
 }
@@ -14907,7 +15186,7 @@ function musicUseTemplate(id, andGo){
   renderMusicCreate();                       // make sure the fields exist
   musicFill({prompt: t.prompt || '', lyrics: t.lyrics || '', seconds: t.seconds,
              steps: t.steps});
-  feed('music', `loaded the "${esc(t.name)}" template`);
+  feed('music', `loaded the "${t.name}" template`);
   if (andGo) musicGenerate(); else musicScrollToCreate();
 }
 
@@ -14947,7 +15226,7 @@ async function musicSaveTemplate(){
                         musicPaintState(musicJob(), musicRunning()); return; }
   if (musicSnap) musicSnap.templates = res.templates || musicTpls();
   musicSaveTpl = false;
-  feed('music', `saved the "${esc(name)}" template`);
+  feed('music', `saved the "${name}" template`);
   renderMusicTemplates(); renderMusicCreate();
 }
 
@@ -14971,7 +15250,8 @@ async function musicDelTemplate(id, btn){
    Always visible, because "where did my song go" should never need a support
    answer. A typed path, not a picker: WKWebView has no folder picker (the recorded
    ⊕-attach class of silent no-op), which is why the voice lane types paths too. */
-function renderMusicOutDir(){
+function renderMusicOutDir(force){
+  if (!force && document.getElementById('mus-dir')) return;
   const el = document.getElementById('music-outdir');
   if (!el) return;
   const dir = (musicSnap || {}).dir || '';
@@ -14989,7 +15269,7 @@ function musicEditOutDir(){
   el.innerHTML = `<input class="cap-inp" id="mus-dir" style="width:60%"
       value="${escAttr(dir)}" placeholder="~/Music/MOT Deck">
     <button class="cap-btn go" onclick="musicSetOutDir()">Set</button>
-    <button class="cap-btn" onclick="renderMusicOutDir()">cancel</button>
+    <button class="cap-btn" onclick="renderMusicOutDir(true)">cancel</button>
     <div class="cap-desc">Empty = back to the default. Tracks already in the old
       folder stay there and reappear if you set it back.</div>
     <div class="cap-err" id="mus-dir-err"></div>`;
@@ -15009,7 +15289,8 @@ async function musicSetOutDir(){
     if (e2) e2.textContent = (res && res.error) || 'could not set that folder';
     return;
   }
-  feed('music', `saving tracks to ${esc(res.output_dir || '')}`);
+  renderMusicOutDir(true);
+  feed('music', `saving tracks to ${res.output_dir || ''}`);
   await loadMusicStatus();
   await loadMusicLibrary();
 }
@@ -15020,10 +15301,20 @@ function musicClock(s){
   return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 }
 
+function musicRememberDraft(box){
+  const draft = box._draft || {};
+  for (const id of ['mus-prompt', 'mus-lyrics', 'mus-secs', 'mus-steps', 'mus-seed', 'mus-fmt', 'mus-tplname']) {
+    const field = box.querySelector('#' + id);
+    if (field) draft[id] = field.value;
+  }
+  box._draft = draft;
+  return draft;
+}
 function renderMusicCreate(){
   const wrap = document.getElementById('music-create-wrap');
   const box = document.getElementById('music-create');
   if (!wrap || !box) return;
+  const draft = musicRememberDraft(box);
   const inst = musicInstalled();
   wrap.hidden = false;
   if (!inst.length){
@@ -15059,7 +15350,7 @@ function renderMusicCreate(){
   const engCard = (id) => {
     const e = musicEngines().find(x => x.engine === id) || {};
     return `<div class="mv-eng${id === musicEngine ? ' on' : ''}"
-       onclick="musicPick('${esc(id)}')">
+       onclick="musicPick(${apiArg(id)})">
       <div class="mv-en">${esc(e.label || id)}${id === musicEngine ? ' ✓' : ''}</div>
       <div class="mv-ed">${esc(e.note || '')}<br>needs about ${
         esc(String(e.ram_gb || ''))} GB of the model-RAM budget while it renders</div>
@@ -15076,7 +15367,7 @@ function renderMusicCreate(){
            </div><div class="cap-ctl">${inst.map(id => {
              const e = musicEngines().find(x => x.engine === id) || {};
              return `<button class="chip${id === musicEngine ? ' on' : ''}"
-                       onclick="musicPick('${esc(id)}')" title="${escAttr(e.note || '')}"
+                       onclick="musicPick(${apiArg(id)})" title="${escAttr(e.note || '')}"
                        >${esc(e.label || id)}</button>`; }).join(' ')}</div></div>`)
     : '';
   const smin = (musicSnap || {}).seconds_min || 10, smax = (musicSnap || {}).seconds_max || 300;
@@ -15169,9 +15460,15 @@ function renderMusicCreate(){
                >Save as template</button>`}
       </div>
     </div>`;
+  for (const [id, value] of Object.entries(draft)) {
+    const field = box.querySelector('#' + id);
+    if (field && (field.tagName !== 'SELECT' || Array.from(field.options).some(o => o.value === value))) field.value = value;
+  }
   for (const id of ['mus-prompt', 'mus-lyrics']){
     const t = document.getElementById(id); if (t) growMusicInput(t);
   }
+  const seconds = box.querySelector('#mus-secs');
+  if (seconds) musicSyncSecs(seconds.value);
   musicPaintState(job, running);
 }
 
@@ -15333,7 +15630,7 @@ function musicReuse(name){
   renderMusicCreate();
   musicFill({prompt: t.prompt || '', lyrics: t.lyrics || '', seconds: t.seconds,
              steps: t.steps, seed: t.seed});
-  feed('music', `re-using the settings from ${esc(name)}`);
+  feed('music', `re-using the settings from ${name}`);
   musicScrollToCreate();
 }
 
@@ -15342,6 +15639,8 @@ function renderMusicLibrary(){
   const cnt = document.getElementById('music-libcount');
   if (!box) return;
   if (cnt) cnt.textContent = musicLib.length ? `${musicLib.length}` : '';
+  const player = box.querySelector('audio');
+  const resume = player && !player.paused;
   box.innerHTML = '';
   if (!musicLib.length){
     box.innerHTML = '<div class="cs-empty">No tracks yet — generate one above. '
@@ -15364,24 +15663,26 @@ function renderMusicLibrary(){
       + `</div>`
       + `<div class="cap-desc">${esc(musicTrackMeta(t))}`
       + (t.prompt || t.lyrics
-          ? ` <span class="cap-btn" style="cursor:pointer" onclick="musicTogglePrompt('${
-              escAttr(t.name)}')">${open ? '▾ prompt' : '▸ prompt'}</span>` : '')
+          ? ` <span class="cap-btn" style="cursor:pointer" onclick="musicTogglePrompt(${apiArg(t.name)})">${open ? '▾ prompt' : '▸ prompt'}</span>` : '')
       + `</div>`
       + (open
           ? `<div class="cap-desc" style="white-space:pre-wrap;margin-top:6px;max-height:220px;overflow:auto">${
                esc(t.prompt || '(no prompt recorded)')}${
                t.lyrics ? '\n\n' + esc(t.lyrics) : ''}</div>
              <div style="margin-top:6px"><button class="cap-btn go"
-               onclick="musicReuse('${escAttr(t.name)}')"
+               onclick="musicReuse(${apiArg(t.name)})"
                title="Load this track's prompt, lyrics, length, steps, seed and engine into the form"
                >re-use these settings</button></div>`
           : '');
     if (t.name === playing){
-      const a = document.createElement('audio');
+      const same = player && player.dataset.track === t.name && player.dataset.dir === ((musicSnap || {}).dir || '');
+      const a = same ? player : document.createElement('audio');
       a.controls = true; a.preload = 'none';
       a.style.width = '100%'; a.style.marginTop = '8px';
-      a.src = '/api/music/file/' + encodeURIComponent(t.name);
+      if (!same) a.src = '/api/music/file/' + encodeURIComponent(t.name);
+      a.dataset.track = t.name; a.dataset.dir = (musicSnap || {}).dir || '';
       txt.appendChild(a);
+      if (same && resume) a.play().catch(() => {});
     } else {
       const p = document.createElement('button'); p.className = 'cap-btn';
       p.textContent = 'Play'; p.onclick = () => { musicPlay = t.name; renderMusicLibrary(); };
@@ -15409,8 +15710,8 @@ function renderMusicLibrary(){
         } catch (e) {}
         if (!j || !j.ok){ cb.disabled = false; cb.textContent = f;
                           cb.title = (j && j.error) || 'the conversion failed';
-                          feed('music', esc((j && j.error) || 'conversion failed')); return; }
-        feed('music', `wrote ${esc(j.name || '')}`);
+                          feed('music', (j && j.error) || 'conversion failed'); return; }
+        feed('music', `wrote ${j.name || ''}`);
         await loadMusicLibrary();
       };
       ctl.appendChild(cb);
@@ -15519,10 +15820,10 @@ function openPalette() {
 }
 function renderPal(f) {
   const list = commands().filter(c=>c.t.toLowerCase().includes(f.toLowerCase()));
-  sel = Math.min(sel, Math.max(0, list.length-1));
+  sel = Math.min(Number.isFinite(sel) ? sel : 0, Math.max(0, list.length-1));
   document.getElementById('pal-list').innerHTML = list.map((c,i)=>
-    `<div class="item ${i===sel?'sel':''}" onclick="runPal(${i},'${f.replace(/'/g,"")}')">
-       <span>${c.t}</span><span class="k">${c.k}</span></div>`).join('');
+    `<div class="item ${i===sel?'sel':''}" onclick="runPal(${i},${apiArg(f)})">
+       <span>${esc(c.t)}</span><span class="k">${esc(c.k)}</span></div>`).join('');
 }
 function runPal(i, f) {
   const list = commands().filter(c=>c.t.toLowerCase().includes(f.toLowerCase()));
@@ -15539,10 +15840,11 @@ function runPal(i, f) {
 }
 document.getElementById('pal-q').addEventListener('input', e=>renderPal(e.target.value));
 document.getElementById('pal-q').addEventListener('keydown', e=>{
+  if (e.isComposing) return;
   const f = e.target.value;
   const n = commands().filter(c=>c.t.toLowerCase().includes(f.toLowerCase())).length;
-  if (e.key==='ArrowDown'){ sel=(sel+1)%n; renderPal(f); e.preventDefault(); }
-  if (e.key==='ArrowUp'){ sel=(sel-1+n)%n; renderPal(f); e.preventDefault(); }
+  if (e.key==='ArrowDown'){ sel=n ? (sel+1)%n : 0; renderPal(f); e.preventDefault(); }
+  if (e.key==='ArrowUp'){ sel=n ? (sel-1+n)%n : 0; renderPal(f); e.preventDefault(); }
   if (e.key==='Enter'){ runPal(sel, f); }
 });
 document.addEventListener('keydown', e=>{

@@ -600,9 +600,6 @@ def audio_probe_verdict(repo: object, cfg: object, files: object,
     # 1. The checkpoint says it is a TTS model (strongest possible evidence).
     if "tts_model_type" in cfgd or isinstance(cfgd.get("talker_config"), dict):
         return _out("tts-mlx")
-    # 2. mlx-audio's own tag.
-    if "mlx-audio" in tagset:
-        return _out("tts-mlx")
     # 3/4. The whisper lane — shape decides, name never does.
     if is_mlx_whisper_cfg(cfgd):
         return _out("stt-mlx")
@@ -614,6 +611,10 @@ def audio_probe_verdict(repo: object, cfg: object, files: object,
         return _out("stt-mlx-audio")
     if asr_lane and cfgd and any(k in cfgd for k in AUDIO_WHISPER_VETO):
         return _out("transformers")
+    # mlx-audio supports recognition as well as generation. Its shared library
+    # tag cannot override an STT checkpoint or turn an unknown ASR model into TTS.
+    if "mlx-audio" in tagset and not asr_lane:
+        return _out("tts-mlx")
     # 5. GGUF TTS pair (backbone + projector). A TTS token is required: every
     #    vision chat model is also a gguf+mmproj pair and must not land here.
     back, proj = gguf_tts_pair(pairs)
@@ -683,15 +684,18 @@ async def hf_audio_search(q: str = "", kind: str = "tts", limit: int = 25) -> JS
         return JSONResponse({"error": f"unknown kind {kind!r}"}, status_code=400)
     q = (q or "").strip()
     term = q or (AUDIO_GGUF_DEFAULT_TERM if kind == "tts-gguf" else "")
-    seen, out = set(), []
+    seen, out, answered = set(), [], False
     for base in AUDIO_SEARCH_QUERIES[kind]:
         params = dict(base, limit=limit, sort="downloads", direction="-1")
         if term:
             params["search"] = term
         rows = await _hf_json("/api/models", params)
-        if rows is None:
+        if not isinstance(rows, list):
             continue
+        answered = True
         for m in rows:
+            if not isinstance(m, dict):
+                continue
             repo = m.get("id") or m.get("modelId")
             if not repo or repo in seen:
                 continue
@@ -702,7 +706,7 @@ async def hf_audio_search(q: str = "", kind: str = "tts", limit: int = 25) -> JS
                         "pipeline": m.get("pipeline_tag"),
                         "updated": m.get("lastModified") or m.get("createdAt"),
                         **lic})
-    if not out and not seen:
+    if not answered:
         return JSONResponse({"error": "HuggingFace search failed"}, status_code=502)
     out.sort(key=lambda r: r.get("downloads") or 0, reverse=True)
     return JSONResponse(out[:limit * 2])

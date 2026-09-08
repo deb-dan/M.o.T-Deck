@@ -297,50 +297,58 @@ async def aider_pty(ws: WebSocket) -> None:
         await ws.close(code=_pty.CLOSE_ENDED, reason="reaped")
         return
     replay, eof = attached
-    sess.start_relay()               # idempotent: a reattach starts no second reader
-    if reattached:
-        _aider_log(f"session {'TAKEOVER' if verdict == 'takeover' else 'REATTACH'} "
-                   f"pid={sess.proc.pid} replay={len(replay)}B")
-        if replay:
-            await ws.send_bytes(replay)
-            await ws.send_bytes(
-                ("\r\n\x1b[2m— reattached · last "
-                 f"{int(_pty.SCROLLBACK_BYTES / 1024)}KB replayed —\x1b[0m\r\n")
-                .encode())
-        sess.resize(cols, rows)
-
-    async def _pump() -> None:
-        while True:
-            data = await outq.get()
-            if not data:
-                return
-            await ws.send_bytes(data)
-
-    async def _recv() -> None:
-        while True:
-            msg = await ws.receive()
-            if msg.get("type") == "websocket.disconnect":
-                return
-            raw = msg.get("bytes")
-            if raw is None and msg.get("text") is not None:
-                raw = msg["text"].encode()
-            clean, sizes = _pty.split_resize(raw or b"")
-            for c, r in sizes:
-                sess.resize(c, r)
-            if clean:
-                sess.write(clean)
-
-    pump = asyncio.create_task(_pump())
-    recv = asyncio.create_task(_recv())
-    if eof:                # the child died while nobody was attached
-        pump.cancel()
+    pump = recv = None
     try:
+        sess.start_relay()               # idempotent: a reattach starts no second reader
+        if reattached:
+            _aider_log(f"session {'TAKEOVER' if verdict == 'takeover' else 'REATTACH'} "
+                       f"pid={sess.proc.pid} replay={len(replay)}B")
+            if replay:
+                await ws.send_bytes(replay)
+                await ws.send_bytes(
+                    ("\r\n\x1b[2m— reattached · last "
+                     f"{int(_pty.SCROLLBACK_BYTES / 1024)}KB replayed —\x1b[0m\r\n")
+                    .encode())
+            sess.resize(cols, rows)
+
+        async def _pump() -> None:
+            while True:
+                data = await outq.get()
+                if not data:
+                    return
+                await ws.send_bytes(data)
+
+        async def _recv() -> None:
+            while True:
+                msg = await ws.receive()
+                if msg.get("type") == "websocket.disconnect":
+                    return
+                raw = msg.get("bytes")
+                if raw is None and msg.get("text") is not None:
+                    raw = msg["text"].encode()
+                clean, sizes = _pty.split_resize(raw or b"")
+                for c, r in sizes:
+                    sess.resize(c, r)
+                if clean:
+                    sess.write(clean)
+
+        pump = asyncio.create_task(_pump())
+        recv = asyncio.create_task(_recv())
+        if eof:                # the child died while nobody was attached
+            pump.cancel()
         await asyncio.wait({pump, recv}, return_when=asyncio.FIRST_COMPLETED)
     except Exception:                                            # noqa: BLE001
         pass
     finally:
-        for t in (pump, recv):
+        tasks = [t for t in (pump, recv) if t is not None]
+        for t in tasks:
             t.cancel()
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            # ASGI shutdown may cancel this join too. The subscription still has
+            # to be detached below, or its live child never gets a grace timer.
+            pass
         # DELIBERATE-VS-DROP, decided by the child and not by the wire — see the goose
         # router for the full note. End posts /api/aider/end (which kills the process);
         # `/exit` inside aider does the same from the other side.

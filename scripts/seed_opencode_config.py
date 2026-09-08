@@ -28,6 +28,8 @@ import json
 import os
 import sys
 import base64
+import stat
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
 try:
@@ -125,19 +127,40 @@ def provider_block(models, base, key):
 
 def load(path):
     try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-        return data if isinstance(data, dict) else {}
-    except Exception:                                          # noqa: BLE001
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
+    except FileNotFoundError:
         return {}
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("OpenCode configuration must be a regular file")
+        with os.fdopen(fd, encoding="utf-8") as fh:
+            fd = -1
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            raise ValueError("OpenCode configuration must contain an object")
+        return data
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def save(path, data):
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
-    os.replace(tmp, path)
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    if os.path.lexists(path) and load(path) == data:
+        os.chmod(path, 0o600)
+        return
+    fd, tmp = tempfile.mkstemp(prefix=".opencode-", suffix=".json", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 KEEP = "…keep the user's own choice…"   # sentinel: plan_default's third outcome
@@ -209,7 +232,17 @@ def main() -> int:
     # ── the GLOBAL config: provider + default model + the pin rule ────────────
     # MERGE, never overwrite: only the keys we own are replaced, so anything the user
     # adds in that file (permissions, themes, other providers) survives a restart.
-    cfg = load(cfg_path)
+    # Validate both destinations before modifying either configuration.
+    try:
+        cfg = load(cfg_path)
+        pcfg = load(pcfg_path) if pcfg_path else None
+        for document in (cfg, pcfg):
+            if document is not None and document.get("provider") is not None \
+                    and not isinstance(document["provider"], dict):
+                raise ValueError("provider must contain an object")
+    except (OSError, ValueError):
+        print("[motdeck] opencode config: unreadable or invalid configuration — left untouched")
+        return 1
     before = len(((cfg.get("provider") or {}).get(PID) or {}).get("models") or {})
     provider = cfg.get("provider")
     if not isinstance(provider, dict):
@@ -287,7 +320,6 @@ def main() -> int:
     # to the GLOBAL config (PATCH /global/config), and a project key merges last, so
     # seeding one here would stomp the user's own pick on every load.
     if pcfg_path:
-        pcfg = load(pcfg_path)
         pprovider = pcfg.get("provider")
         if not isinstance(pprovider, dict):
             pprovider = {}

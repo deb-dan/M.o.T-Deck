@@ -155,6 +155,7 @@ class _Spawned:
                 if c.connect_ex(("127.0.0.1", port)) == 0:
                     return
             time.sleep(0.1)
+        self.close()
         raise RuntimeError(f"scratch listener never came up on :{port}")
 
     def close(self):
@@ -207,7 +208,7 @@ def test_a_different_listener_is_never_adopted_or_signalled(tmp_path):
     pf = ROOT / "data" / f"{comp}.pid"
     listener = None
     recorded = None
-    stranger_py = next((p for p in ("/usr/bin/python3", "/usr/bin/perl")
+    stranger_py = next((p for p in ("/usr/bin/python3",)
                         if Path(p).exists()), None)
     if not stranger_py:
         pytest.skip("no interpreter outside the tree to stage a stranger with")

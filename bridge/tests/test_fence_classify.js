@@ -1,37 +1,17 @@
-// PHASE 3 unit test — pure fence→kind→worthy classification used by renderChatBody().
-// Mirrors the panel's LANG_EXT map + artifactKind() sniff + the "artifact-worthy" rule.
-// Run: node bridge/tests/test_fence_classify.js  (offline, no deps)
-
-function artifactKind(filename, content){
-  const fn=(filename||'').toLowerCase().trim();
-  const ext=(fn.match(/\.([a-z0-9]+)$/)||[])[1]||'';
-  const c=content||'';
-  const EXT={html:'html',htm:'html',svg:'svg',jsx:'react',tsx:'react',js:'js',mjs:'js',cjs:'js',
-    md:'markdown',markdown:'markdown',pdf:'pdf',py:'code',ts:'code',go:'code',rs:'code',sh:'code',
-    json:'code',yaml:'code',yml:'code',css:'code',sql:'code'};
-  let kind=EXT[ext]||'';
-  const importsReact=/import\s+[\s\S]*?from\s*['"]react(?:-dom)?(?:\/[\w-]+)?['"]/.test(c)||/\bReactDOM\b|\bReact\.(?:createElement|Component|useState|Fragment)\b/.test(c);
-  const hasJsxTag=/<[A-Z][A-Za-z0-9]*[\s/>]/.test(c);
-  if(!kind){const t=c.replace(/^\s+/,'');
-    if(/^<svg[\s>]/i.test(t))kind='svg';
-    else if(/^<!doctype html/i.test(t)||/^<html[\s>]/i.test(t)||/<\/(?:div|body|head|p|span|section|main|h[1-6])>/i.test(t))kind='html';
-    else if(importsReact||hasJsxTag)kind='react';
-    else if(/^#{1,6}\s|\n#{1,6}\s|```|^\s*[-*]\s+\S/m.test(t))kind='markdown';
-    else kind='code';}
-  if((kind==='js'||kind==='html')&&(importsReact||hasJsxTag))kind='react';
-  return kind;
-}
-const LANG_EXT={html:'html',htm:'html',svg:'svg',jsx:'jsx',tsx:'tsx',react:'jsx',javascript:'js',js:'js',
-  typescript:'ts',ts:'ts',python:'py',py:'py',bash:'sh',sh:'sh',json:'json',css:'css',go:'go',rust:'rs',md:'md'};
-function classify(lang,code){
-  const ext=LANG_EXT[lang]||'';
-  const synth='artifact.'+(ext||'txt');
-  const kind=artifactKind(ext?synth:'',code);
-  const lines=code.split('\n').length;
-  const big=lines>=8||code.length>=300;
-  const worthy=kind==='html'||kind==='svg'||kind==='react'||(kind==='js'&&big)||(kind==='code'&&big);
-  return {kind,worthy};
-}
+// Execute production detection and the production fenced-block classifier.
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+const {extractFunction}=require('./_panel_source');
+const source=fs.readFileSync(path.join(__dirname,'../panel/index.html'),'utf8');
+const context=vm.createContext({});
+vm.runInContext(source.match(/^const MERMAID_RE = .*;$/m)[0],context);
+vm.runInContext(source.match(/const LANG_EXT = \{[\s\S]*?\n\};/)[0],context);
+for(const name of ['sniffMermaid','sniffJson','sniffCsv','artifactKind'])
+  vm.runInContext(extractFunction(source,name),context);
+const block=extractFunction(source,'_appendCodeBlock');
+// The prefix calculates kind/worthy; only the subsequent DOM construction is omitted.
+vm.runInContext(block.slice(0,block.indexOf('  const box ='))+'return {kind,worthy};}',context);
+const artifactKind=context.artifactKind;
+const classify=(lang,code)=>context._appendCodeBlock(null,lang,code);
 
 const big='x\n'.repeat(10);
 const cases=[

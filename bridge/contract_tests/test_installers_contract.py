@@ -139,9 +139,13 @@ def test_stamp_dies_before_the_bundle_does():
     s = src(OO)
     assert s.index('rm -f "$STAMP"') < s.index('rm -rf "$DV"'), \
         "install_onlyoffice.sh: stamp must be invalidated before dist/v9 is removed"
+    # The plugin now preserves the installed assets until its entire candidate is
+    # ready. Its receipt moves out first and publishes last; the executable
+    # test_office_plugin_publication.py checks this at each actual rename, including
+    # rollback. Do not require the old destructive delete-before-unzip mechanism.
     s = src(PLUG)
-    assert s.index('rm -f "$STAMP"') < s.index('rm -rf "$AIDIR"'), \
-        "install_oo_ai_plugin.sh: stamp must be invalidated before ai/ is removed"
+    assert 'for item in INSTALLED ai v1 SOURCES.txt; do' in s
+    assert 'for item in ai v1 SOURCES.txt INSTALLED; do' in s
 
 
 # ── the DeepSeek lane (S34): a THIRD install shape — an npm dependency tree ──

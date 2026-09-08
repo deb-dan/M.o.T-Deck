@@ -372,8 +372,8 @@ check('…and an explicit press is treated as a request to TRY AGAIN after a fai
 // ── THE ONE PREDICATE. This is the fork the whole restructure rests on. ──
 const EA = grab('editorActive');
 check('there is ONE predicate for "is the editor the editor right now", and it is a '
-      + 'pure read of three flags',
-      /return !!\(ooInstalled && ooReady && !!current\);/.test(EA)
+      + 'pure read of readiness and document identity',
+      /return !!\(ooInstalled && ooReady && current && ooDoc === current\);/.test(EA)
       && !/document\.|\bel\(/.test(EA));
 eq('…defined exactly once',
    (html.match(/function editorActive\(\)/g) || []).length, 1);
@@ -434,7 +434,7 @@ check('closing a workbook stands the editor DOWN without tearing it down',
 // edits — the single worst thing this page could do.
 const SV = grab('save');
 check('save() branches to the editor FIRST when the editor owns the document',
-      /if \(editorActive\(\)\) \{ await ooSave\(false\); return; \}/.test(SV));
+      /if \(editorActive\(\)\) return await ooSave\(false\);/.test(SV));
 const SVC = SV.split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
 check('…before it reads the snapshot at all', SVC.indexOf('editorActive()') < SVC.indexOf('snapshotToSave'));
 const SS = grab('snapshotToSave');
@@ -1175,7 +1175,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
           html.indexOf('id="mi-start"') < html.indexOf('id="mi-home"'));
     check('going home with unsaved work offers to save rather than discarding it, and '
           + 'does not go if the save failed',
-          /Save & go home/.test(START) && /if \(dirty\) return;/.test(START));
+          /Save & go home/.test(START) && /await save\(\) !== true \|\| generation !== documentGen \|\| dirty/.test(START));
 
     /* ══ 10. THE START SCREEN ═══════════════════════════════════════════════════
        #empty stopped being one centred sentence and became LOffice's own home, on the
@@ -1358,7 +1358,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
     // replaced 7 when the bar said 6" is the kind of report that costs a day.
     check('Find scans the SHEET, not the DOM, so it can match a row that is not drawn '
           + 'yet', /cellAt\(sh, r, c\)/.test(grab('findScan'))
-          && /usedExtent\(sh\)/.test(grab('findScan')));
+          && /sh\.cellData/.test(grab('findScan')));
     check('…through ONE scanner, which Replace uses too, so the count in the bar and the '
           + 'count Replace all reports cannot disagree',
           /findHits = findScan\(sh, q\)/.test(grab('findRun'))
@@ -1369,7 +1369,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
           /while \(h\.r >= viewRows\)/.test(grab('findGo'))
           && /viewCols < TIER1_MAX_COLS/.test(grab('findGo')));
     check('…is capped, so a one-letter query on a huge sheet cannot hang the tab',
-          num('FIND_MAX') > 0 && /hits\.length < FIND_MAX/.test(grab('findScan')));
+          num('FIND_MAX') > 0 && /hits\.length >= FIND_MAX/.test(grab('findScan')));
     check('…says how many and where you are, and admits when a match sits under a merge',
           /' of ' \+ findHits\.length/.test(grab('findGo'))
           && /merged cell/.test(grab('findGo')));
@@ -1433,14 +1433,14 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
       eval(grab('colName')); eval(grab('sheetIds')); eval(grab('cellAt'));
       eval(grab('putCell')); eval(grab('valueText')); eval(grab('displayText'));
       eval(grab('parseInput')); eval(grab('usedExtent'));
-      eval(grab('histEntry')); eval(grab('histPush')); eval(grab('histClear'));
+      eval(grab('histSignature')); eval(grab('histEntry')); eval(grab('histPush')); eval(grab('histClear'));
       eval(grab('histCan')); eval(grab('histTop')); eval(grab('histRestore'));
       eval(grab('histGo')); eval(grab('histPaint'));
       eval(grab('findScan')); eval(grab('findReplaceText')); eval(grab('replaceWrite'));
-      eval(grab('gridRemap')); eval(grab('sheetFormulas')); eval(grab('sheetMerges'));
+      eval(grab('sortRemap')); eval(grab('gridRemap')); eval(grab('sheetFormulas')); eval(grab('sheetMerges'));
       eval(grab('sortKey')); eval(grab('sortOrder')); eval(grab('sortGo'));
       eval(grab('rcMerges')); eval(grab('rcApply')); eval(grab('rcGo'));
-      let histBack = [], histFwd = [];
+      let histBack = [], histFwd = [], histSaved = null, aiSel = null;
 
       // A sheet with one of everything the honest limits are about: a formula, a merge,
       // a number, blanks, and a cell nobody in these tests ever mentions (D9 = the
@@ -2628,7 +2628,7 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
         // busyWatchdog's own re-entrancy check, and the changeset CARD's own state
         // machine (`card._state === 'busy'` is the card's latch, not the page's, and its
         // buttons are `disabled` in exactly that state).
-        if (/busyGen|card\._state/.test(line)) continue;
+        if (/busyGen|generation !== documentGen|card\._state/.test(line)) continue;
         silent.push(line.trim());
       }
       eq('exactly ONE silent busy guard survives in office.html — the extCheck '
@@ -2658,9 +2658,9 @@ check('…and paint() keeps it truthful rather than leaving the placeholder up',
             /ooCall\('save'/.test(office) && /ooCall\('downloadPdf'/.test(office)
             && /ooCall\('open'/.test(office) && /ooCall\('reload'/.test(office));
       check('ooSave resets the latch in a `finally`, so a throw cannot strand it',
-            /finally \{ busyOff\(\); paint\(\); \}/.test(grab('ooSave')));
+            /finally \{ busyOff\(owner\); paint\(\); \}/.test(grab('ooSave')));
       check('…and so does ooDownloadPdf',
-            /finally \{ busyOff\(\); paint\(\); \}/.test(grab('ooDownloadPdf')));
+            /finally \{ busyOff\(owner\); paint\(\); \}/.test(grab('ooDownloadPdf')));
       // The download-first path is EXISTING behaviour and stays: downloading is not
       // answering the question, so the question comes back.
       check('“Download it first” still re-arms the delete question rather than answering it',

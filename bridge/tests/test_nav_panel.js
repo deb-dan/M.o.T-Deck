@@ -394,17 +394,17 @@ console.log('sidebar');
   const rs = html.slice(html.indexOf('function renderSidebar()'),
                         html.indexOf('function renderSidebar()') + 2600);
   ok(/const ids = navSideIds\(\)/.test(rs), 'it renders the model\'s pinned sidebar ids…');
-  ok(/navOpen\('\$\{escAttr\(e\.id\)\}'\)/.test(rs), '…each row going through navOpen');
+  ok(/navOpen\(\$\{apiArg\(e\.id\)\}\)/.test(rs), '…each row going through navOpen');
   ok(/id="nav-\$\{escAttr\(e\.id\)\}"/.test(rs),
      '…keeping the nav-<id> element ids showView and the tour depend on');
   ok(/e\.view === curView/.test(rs), 'the highlighted row survives a re-render');
-  ok(/openComponent\('\$\{escAttr\(name\)\}'\)/.test(rs),
+  ok(/openComponent\(\$\{apiArg\(name\)\}\)/.test(rs),
      'component rows still go through openComponent (running → its tab)');
   ok(/Object\.keys\(comps\)\.filter\(n => !known\[n\]\)/.test(rs),
      'a component the registry does not know (searxng, runner) is still listed');
   ok(/const cls = \(st === 'starting'/.test(rs), '…with its live status dot, as before');
   // refresh() must not keep a second copy of the component-row renderer
-  const refresh = html.slice(html.indexOf('async function refresh(manual)'),
+  const refresh = html.slice(html.indexOf('async function refreshStatusOnce(manual)'),
                              html.indexOf('function showProvLog('));
   ok(/renderSidebar\(\);/.test(refresh), 'refresh() redraws the rails through that one renderer');
   ok(!/side\.insertAdjacentHTML/.test(refresh), '…and holds no second copy of the markup');
@@ -435,6 +435,7 @@ console.log('render (executed)');
     document: doc,
     localStorage: { getItem: () => null, setItem: () => {} },
     esc: (s) => String(s), escAttr: (s) => String(s),
+    apiArg: new Function('escAttr', require('./_panel_source').extractFunction(html, 'apiArg') + ';return apiArg;')(s => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;')),
     curView: 'chat',
     lastStatus: { components: {
       hermes: { running: true, installed: true },
@@ -504,7 +505,7 @@ console.log('render (executed)');
   ok(!/class="[^"]*goose/.test(out.ws),
      '…and neither goose row carries a class of its own (nothing for a design to miss)');
   // ⧉ = open as an overlay (2026-08-21). It rides the eligible workspace rows only.
-  const peeks = [...out.ws.matchAll(/peekOpen\('([a-z]+)'/g)].map(m => m[1]).sort();
+  const peeks = [...out.ws.matchAll(/peekOpen\(&quot;([a-z]+)&quot;/g)].map(m => m[1]).sort();
   // ⚠️ `music` LEAVES THIS LIST AT THE CONSOLIDATION SLICE — not because peeking Music
   // stopped being useful, but because ⧉ rides a sidebar ROW and Classic no longer has
   // one. The Music row is now a LANE (its own page in its own tab), and no lane has ever
@@ -520,9 +521,9 @@ console.log('render (executed)');
   for (const no of ['chat', 'mc', 'logs', 'aider', 'loffice']) {
     ok(peeks.indexOf(no) < 0, no + ' has NO ⧉ trigger (it is not a peekable view)');
   }
-  ok(/onclick="peekOpen\('models', event, this\)"/.test(out.ws),
+  ok(/onclick="peekOpen\(&quot;models&quot;, event, this\)"/.test(out.ws),
      'the trigger passes the event (so it can stop the row navigating) and its own element');
-  const comps = [...out.comp.matchAll(/openComponent\('([a-z]+)'\)/g)].map(m => m[1]);
+  const comps = [...out.comp.matchAll(/openComponent\(&quot;([a-z]+)&quot;\)/g)].map(m => m[1]);
   ok(comps.join(',') === 'odysseus,hermes,searxng,runner',
      'the components group lists the registry ones in nav order, then the rest: ' + comps.join(','));
   ok(/title="open the Hermes tab"/.test(out.comp),
@@ -627,7 +628,7 @@ console.log('persistence');
   const save = html.slice(html.indexOf('async function navSave()'),
                           html.indexOf('const TAB_FOR_COMPONENT'));
   ok(/method:'POST'/.test(save) && /'\/api\/nav'/.test(save), 'navSave POSTs the model');
-  ok(/if \(!r\.ok \|\| !j\.ok\) return \(j && j\.error\)/.test(save),
+  ok(/if \(!r\.ok \|\| !j \|\| !j\.ok \|\| !j\.nav\) return \(j && j\.error\)/.test(save),
      '…and returns the bridge\'s own reason when it is refused');
   ok(/postMessage\(\{ cmd:'navChanged' \}\)/.test(save),
      '…then pushes the shell so the strip does not wait for its poll');
@@ -745,7 +746,7 @@ const css = html.split('<style>')[1].split('</style>')[0];
      'a change is VALIDATED before it is adopted');
   ok(/if \(err\) \{ renderNavDlg\(err\); return Promise\.resolve\(err\); \}/.test(apply),
      '…and a client-side refusal adopts nothing at all, it just says why');
-  ok(/const prev = navGet\(\);/.test(apply) && /navModel = prev; navSaveLocal\(\); renderSidebar\(\); renderNavDlg\(e2\);/.test(apply),
+  ok(/const prev = navGet\(\);/.test(apply) && /navModel = navConfirmed; navSaveLocal\(\); renderSidebar\(\); renderNavDlg\(e2\);/.test(apply),
      'a BRIDGE refusal rolls the whole model back (optimistic UI, honest rollback)');
   ok(/return navSave\(\)/.test(apply), 'every accepted change is saved immediately (no Save button)');
   const rend = html.slice(html.indexOf('function renderNavDlg(err)'),
@@ -778,6 +779,7 @@ console.log('overlay behaviour');
   const posted = [];
   const env = {
     esc: x => String(x), escAttr: x => String(x),
+    apiArg: new Function('escAttr', require('./_panel_source').extractFunction(html, 'apiArg') + ';return apiArg;')(s => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;')),
     navGet: () => model,
     navClone: () => ({ sidebar: model.sidebar.map(r => ({ ...r })),
                        topbar: model.topbar.map(r => ({ ...r })) }),

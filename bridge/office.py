@@ -563,16 +563,22 @@ def list_docs(root) -> list:
 def _any_backup(path) -> str:
     """The newest .bak beside a workbook, or ''. Cheap: one listdir of our own dir."""
     d, base = os.path.split(str(path))
-    stem = os.path.splitext(base)[0]
     best = ""
     try:
         for n in os.listdir(d):
-            if n.startswith(stem + ".") and is_backup_name(n):
+            if _backup_belongs_to(path, n):
                 if n > best:
                     best = n
     except OSError:
         return ""
     return best
+
+
+def _backup_belongs_to(path, name) -> bool:
+    """Daily copies belong to the exact stem AND extension, never a prefix."""
+    stem, ext = os.path.splitext(os.path.basename(str(path)))
+    return bool(re.fullmatch(re.escape(stem) + r"\.[0-9]{8}\.bak" +
+                             re.escape(ext.lower()), str(name)))
 
 
 # ── small total helpers ──────────────────────────────────────────────────────
@@ -862,7 +868,7 @@ def cell_snapshot(cell, cached=None) -> dict:
     """
     out = {}
     v = cell.value
-    if isinstance(v, str) and v.startswith("="):
+    if isinstance(v, str) and getattr(cell, "data_type", "") == "f":
         out["f"] = v
         cv = cached
         if isinstance(cv, (int, float)) and not isinstance(cv, bool):
@@ -906,27 +912,25 @@ def sheet_snapshot(ws, sheet_id: str, cached_ws=None) -> dict:
     """One worksheet → an IWorksheetData dict."""
     cell_data, used = {}, 0
     truncated = False
-    for row in ws.iter_rows():
-        if truncated:
+    # Normal openpyxl worksheets already store only instantiated cells. iter_rows()
+    # materializes every empty coordinate between them, so A1 + XFD1048576 can hang
+    # the entire bridge before the nonempty-cell cap ever helps.
+    for cell in sorted(ws._cells.values(), key=lambda c: (c.row, c.column)):
+        cached = None
+        if cached_ws is not None:
+            cached_cell = cached_ws._cells.get((cell.row, cell.column))
+            cached = cached_cell.value if cached_cell is not None else None
+        try:
+            c = cell_snapshot(cell, cached)
+        except Exception:                                        # noqa: BLE001
+            c = {}
+        if not c:
+            continue
+        if used >= MAX_CELLS:
+            truncated = True
             break
-        for cell in row:
-            if used >= MAX_CELLS:
-                truncated = True
-                break
-            cached = None
-            if cached_ws is not None:
-                try:
-                    cached = cached_ws.cell(row=cell.row, column=cell.column).value
-                except Exception:                                # noqa: BLE001
-                    cached = None
-            try:
-                c = cell_snapshot(cell, cached)
-            except Exception:                                    # noqa: BLE001
-                c = {}
-            if not c:
-                continue
-            cell_data.setdefault(str(cell.row - 1), {})[str(cell.column - 1)] = c
-            used += 1
+        cell_data.setdefault(str(cell.row - 1), {})[str(cell.column - 1)] = c
+        used += 1
 
     # ⚠️ hd (HIDDEN) IS READ FROM THE FILE NOW, NOT HARD-CODED TO 0 (finding F-27).
     # This block used to emit `hd: 0` on every entry — a value read from nothing and
@@ -1170,6 +1174,11 @@ def write_snapshot(snapshot, path) -> dict:
     pairs = _sheet_names(snapshot)
     if not pairs:
         raise OfficeError("refused: that snapshot has no sheets")
+    if any(isinstance(snapshot['sheets'].get(sid), dict) and
+           (snapshot['sheets'][sid].get('truncated') or
+            snapshot['sheets'][sid].get('unreadable')) for sid, _ in pairs):
+        raise OfficeError("refused: this snapshot is incomplete — open the complete "
+                          "workbook in the full editor before saving")
     styles = snapshot.get("styles")
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
@@ -1234,6 +1243,9 @@ def _write_cell(ws, row: int, col: int, cval: dict, styles) -> bool:
         elif isinstance(v, str):
             if v != "":
                 cell.value = v
+                # A formula is explicit in `f`. openpyxl otherwise guesses from
+                # '=' or an error-looking string and changes literal cell contents.
+                cell.data_type = 's'
                 wrote = True
         elif v is not None:
             cell.value = str(v)
@@ -1582,7 +1594,7 @@ def import_doc(root, name, data):
 # caller that forgets the fence gets a sentence, not an unfenced overwrite of somebody
 # else's work. (A workbook that does not exist yet is never fenced — there is no version
 # to be stale against, and a first save must not need one.)
-SAVE_FENCE_SLACK = 1.0
+SAVE_FENCE_SLACK = 0.000001
 SAVE_FENCE_REFUSAL = ("that workbook changed on disk since it was opened — saving now "
                       "would overwrite the newer version. Reload it, or save again with "
                       "force to overwrite.")
@@ -1639,13 +1651,8 @@ def save_doc(root, name, snapshot, expect_mtime=None, *, force=False, unfenced=F
                 return None, SAVE_UNFENCED_REFUSAL
         else:
             fenced = True
-            # ⚠️ THE SLACK BELONGS TO THE CALLER, and the default is the wide one. A PAGE
-            # compares an mtime it read seconds or minutes ago, over JSON and a filesystem
-            # whose timestamp resolution is not ours to assume — oo.writeback's one second.
-            # A caller inside the bridge that read the mtime off the file it is about to
-            # write passes office_ops.FENCE_EPS instead, on the undo fence's argument: for
-            # THAT window any real difference is somebody else's save, including one that
-            # landed in the same second.
+            # JSON preserves the float timestamp. Only floating-point round-off gets
+            # slack; a second save within the same second is still another edit.
             if not force and abs(want - disk_mtime) > max(0.0, float(slack)):
                 return None, SAVE_FENCE_REFUSAL
     backup = ""
@@ -1799,7 +1806,7 @@ def delete_doc(root, name, backups: bool = False):
     stem = os.path.splitext(base)[0]
     try:
         for n in os.listdir(d):
-            if n.startswith(stem + ".") and is_backup_name(n):
+            if _backup_belongs_to(target, n):
                 try:
                     os.remove(os.path.join(d, n))
                 except OSError:

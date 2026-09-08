@@ -536,9 +536,11 @@ async function loadSessions() {
   if (armed) return;
   let j;
   try { j = await jfetch('/api/goose/sessions'); }
-  catch (e) { el('s-empty').style.display = ''; el('s-empty').textContent =
+  catch (e) { if (armed) return; el('s-empty').style.display = ''; el('s-empty').textContent =
               'could not read the session list: ' + e.message; el('s-row').innerHTML = '';
               return; }
+  // A delete may have been armed while this request was in flight.
+  if (armed) return;
   sessions = (j && j.sessions) || [];
   liveId = (j && j.live_session) || '';
   const st = (j && j.store) || {};
@@ -562,6 +564,9 @@ function renderSessions(err) {
   const row = el('s-row'), empty = el('s-empty');
   row.innerHTML = '';
   if (!sessions.length) {
+    emptyIds = [];
+    pruneArmed = false;
+    el('s-prune').style.display = 'none';
     empty.style.display = '';
     // The honest empty state, and it says what will fill it rather than apologising.
     empty.textContent = err
@@ -579,9 +584,9 @@ function renderSessions(err) {
   // lie, so they are FOLDED behind a chip that counts them and opens on a click.
   // (The reload fix also stops the growth at the source: a ⌘R no longer starts one.)
   const shown = showEmpty ? sessions : sessions.filter(
-    s => s.messages > 0 || (liveId && s.id === liveId));
+    s => s.messages !== 0 || (liveId && s.id === liveId));
   const hidden = sessions.length - shown.length;
-  emptyIds = sessions.filter(s => !s.messages && (!liveId || s.id !== liveId))
+  emptyIds = sessions.filter(s => s.messages === 0 && (!liveId || s.id !== liveId))
                      .map(s => s.id).sort();
   const prune = el('s-prune');
   prune.style.display = emptyIds.length ? '' : 'none';
@@ -592,7 +597,8 @@ function renderSessions(err) {
     const chip = document.createElement('div');
     chip.className = 'schip' + (live ? ' live' : '');
     chip.dataset.id = s.id;
-    const meta = [s.when, s.messages + (s.messages === 1 ? ' msg' : ' msgs')]
+    const meta = [s.when, s.messages == null ? 'count unavailable' :
+      s.messages + (s.messages === 1 ? ' msg' : ' msgs')]
       .filter(Boolean).join(' · ');
     chip.innerHTML =
       '<button class="sopen" type="button">' +
@@ -784,12 +790,15 @@ el('btn-start').onclick = () => start();
 // stop an agent and instead leaves it running with the workspace. The POST kills the
 // process; the socket then closes because the child is gone.
 el('btn-stop').onclick = async () => {
-  const b = el('btn-stop');
+  const b = el('btn-stop'), connection = sock;
   b.disabled = true;
-  try { await jfetch('/api/goose/end', { method: 'POST' }); }
-  catch (e) { say('could not end the session: ' + e.message); }
-  b.disabled = false;
-  if (sock) sock.close();
+  try {
+    await jfetch('/api/goose/end', { method: 'POST' });
+    // The receipt belongs to the connection that requested End. A failed request
+    // keeps that terminal attached so the user can retry.
+    if (connection && sock === connection) connection.close();
+  } catch (e) { say('could not end the session: ' + e.message); }
+  finally { b.disabled = false; }
   await loadStatus();
   await loadSessions();
 };
@@ -805,15 +814,17 @@ function start(resumeId) {
   t.reset();
   let q = '?cols=' + (t.cols | 0) + '&rows=' + (t.rows | 0);
   if (resumeId) q += '&session=' + encodeURIComponent(resumeId);
-  sock = new WebSocket('ws://' + location.host + '/api/pty/goose' + q);
+  const connection = sock = new WebSocket('ws://' + location.host + '/api/pty/goose' + q);
   sock.binaryType = 'arraybuffer';
-  sock.onopen = () => { paint(); sendResize(); t.focus(); loadSessions(); };
+  sock.onopen = () => { if (sock !== connection) return; paint(); sendResize(); t.focus(); loadSessions(); };
   sock.onmessage = ev => {
+    if (sock !== connection) return;
     const d = ev.data;
     if (typeof d === 'string') t.write(d);
     else t.write(new Uint8Array(d));
   };
   sock.onclose = ev => {
+    if (sock !== connection) return;
     sock = null;
     paint();
     // 4409 now carries two different refusals; the terminal already received the
@@ -844,7 +855,7 @@ function start(resumeId) {
     loadStatus();
     loadSessions();
   };
-  sock.onerror = () => say('the terminal connection failed.');
+  sock.onerror = () => { if (sock === connection) say('the terminal connection failed.'); };
   paint();
 }
 

@@ -112,7 +112,7 @@ check("the guards explain that the deploy archive is what makes UNMODIFIED possi
       "UNMODIFIED" in SRC and "deploy" in SRC)
 check("the layout is <dest>/ai next to <dest>/v1, and the reason is written down",
       'PLUGIN_CONFIG_REL="ai/config.json"' in SRC
-      and 'AIDIR="$DEST/ai"' in SRC
+      and 'AIDIR="$CANDIDATE/ai"' in SRC
       and "ONE level above" in SRC)
 check("the guid the glue page autostarts on is verified against the vendored "
       "config.json rather than trusted", "got_guid" in SRC and "PLUGIN_GUID" in SRC)
@@ -264,10 +264,14 @@ check("the seed is PURE — calling it twice gives the same thing and mutates no
 eq("ctx 65536 → a 32k input cap (half the window, the plugin's own default)",
    ooai.max_input_tokens({"ctx_size": 65536}), 32768)
 eq("ctx 8192 → 4k", ooai.max_input_tokens({"ctx_size": 8192}), 4096)
+for ctx in (1024, 2048, 4096, 6000):
+    eq(f"ctx {ctx} leaves half for completion below the first bucket",
+       ooai.max_input_tokens({"ctx_size": ctx}), ctx // 2)
 eq("ctx 262144 → 131072", ooai.max_input_tokens({"ctx_size": 262144}), 131072)
 eq("an unknown ctx falls back to the plugin's own 32k default",
    ooai.max_input_tokens({}), 32768)
 eq("…and so does junk", ooai.max_input_tokens({"ctx_size": "banana"}), 32768)
+eq("…and nonfinite context", ooai.max_input_tokens({"ctx_size": float("inf")}), 32768)
 check("the input cap is never larger than the window it came from",
       all(ooai.max_input_tokens({"ctx_size": c}) <= c
           for c in (4096, 8192, 16384, 32768, 65536, 131072, 262144)))
@@ -289,6 +293,12 @@ for name, runner in (
 
 def cfg_ok():
     return {"runner": {"port": 6767, "api_key": "kk", "ctx_size": 65536}}
+
+for malformed in ([], "broken", {"port": float("inf")}, {"port": -1}, {"port": 65536}):
+    probes = []
+    state = ooai.runner_state(lambda: {"runner": malformed}, lambda p: probes.append(p))
+    check(f"malformed runner {malformed!r} is unavailable without a probe",
+          not state["ok"] and not probes)
 
 
 st = ooai.status(ROOT / "nowhere", cfg_ok, lambda p: "m1")
@@ -606,7 +616,7 @@ check("⚠️ a RENAME carries the conversation with the file — the key is the
       "function aiChatRename" in OO
       and OO.index("aiChatRename(from, want)") > OO.index("function renameTo(to)"))
 check("…and the hold is re-armed on the new name (the old one has just retired)",
-      "aiChatArm(want);          // the hold was watching the old name" in OO)
+      "aiChatRename(from, want); aiChatArm(want);" in OO.split("function renameTo(to)")[1])
 
 check("Help → About tells the user the conversation is kept per file",
       "kept per file" in PAGE)

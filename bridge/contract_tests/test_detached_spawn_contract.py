@@ -48,6 +48,8 @@ Run: data/bridge-venv/bin/python -m pytest \
 import os
 import re
 import signal
+import select
+import shlex
 import subprocess
 import sys
 import time
@@ -184,6 +186,16 @@ def test_app_launches_the_bridge_with_a_graceful_shutdown_deadline():
 
 # ══ B. THE BEHAVIOUR — the incident, re-staged, live ══════════════════════════
 
+def _require_process_table():
+    # Refuse before spawning anything if the test cannot verify its own children.
+    try:
+        result = subprocess.run(["ps", "-p", str(os.getpid()), "-o", "pid="],
+                                capture_output=True, text=True, timeout=5)
+    except PermissionError:
+        pytest.skip("process-table access is sandboxed; rerun with ps access")
+    assert result.returncode == 0 and result.stdout.strip() == str(os.getpid())
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="the incident is macOS-specific")
 def test_live_detached_process_survives_a_group_kill(tmp_path):
     """Re-stage the incident in miniature: a CONTROL process launched the old way
@@ -202,6 +214,7 @@ def test_live_detached_process_survives_a_group_kill(tmp_path):
     developer's shell is not a test. `start_new_session=True` on the launcher gives us
     a group whose entire membership we put there ourselves.
     """
+    _require_process_table()
     marker = f"motdeck-detach-selftest-{os.getpid()}"
     pidfile = tmp_path / "pids.txt"
     errfile = tmp_path / "selftest.err"
@@ -223,11 +236,11 @@ def test_live_detached_process_survives_a_group_kill(tmp_path):
     # of hanging.
     body = f"""
       set -e
-      nohup /bin/sh -c ': {marker}-control ; while : ; do sleep 1 ; done' >/dev/null 2>&1 &
+      nohup /bin/sh -c ': {marker}-control ; for i in 1 2 3 4 5 6; do sleep 5; done' >/dev/null 2>&1 &
       echo $!
-      bash '{START!s}' --detach-selftest \
-        /bin/sh -c ': {marker}-detached ; while : ; do sleep 1 ; done'
-      while : ; do sleep 1 ; done
+      bash {shlex.quote(str(START))} --detach-selftest \
+        /bin/sh -c ': {marker}-detached ; for i in 1 2 3 4 5 6; do sleep 5; done'
+      for i in 1 2 3 4 5 6; do sleep 5; done
     """
     with errfile.open("w") as eh:
         launcher = subprocess.Popen(
@@ -237,8 +250,21 @@ def test_live_detached_process_survives_a_group_kill(tmp_path):
 
     control = detached = 0
     try:
+        pid_bytes = b""
+
         def _pid_line(what: str) -> int:
-            ln = launcher.stdout.readline().strip()
+            nonlocal pid_bytes
+            deadline = time.monotonic() + 15
+            while b"\n" not in pid_bytes:
+                remaining = deadline - time.monotonic()
+                assert remaining > 0, f"timed out waiting for {what} pid: {errfile.read_text()}"
+                readable, _, _ = select.select([launcher.stdout], [], [], remaining)
+                assert readable, f"timed out waiting for {what} pid: {errfile.read_text()}"
+                chunk = os.read(launcher.stdout.fileno(), 4096)
+                assert chunk, f"launcher exited before {what} pid: {errfile.read_text()}"
+                pid_bytes += chunk
+            line, pid_bytes = pid_bytes.split(b"\n", 1)
+            ln = line.decode().strip()
             assert ln.isdigit(), (
                 f"the launcher printed no {what} pid (got {ln!r}); its stderr was: "
                 f"{errfile.read_text()!r}")
@@ -326,6 +352,7 @@ def test_missing_perl_and_failed_setsid_refuse_unsafe_launches():
 @pytest.mark.skipif(sys.platform != "darwin", reason="the incident is macOS-specific")
 def test_a_missing_perl_refuses_instead_of_recreating_the_unsafe_group(tmp_path):
     """Executed missing-dependency path: no requested component may survive."""
+    _require_process_table()
     binp = tmp_path / "bin"
     binp.mkdir()
     needed = ["bash", "dirname", "mkdir", "ps", "tr", "cat", "sleep",
@@ -345,7 +372,7 @@ def test_a_missing_perl_refuses_instead_of_recreating_the_unsafe_group(tmp_path)
     with errfile.open("w") as eh:
         out = subprocess.run(
             ["/bin/bash", str(START), "--detach-selftest",
-             "/bin/sh", "-c", f": {marker} ; while : ; do sleep 1 ; done"],
+             "/bin/sh", "-c", f": {marker} ; for i in 1 2 3 4 5 6; do sleep 5; done"],
             cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=eh, text=True, timeout=30)
     pid = int(out.stdout.strip())
 

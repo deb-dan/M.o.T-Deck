@@ -1044,7 +1044,9 @@ async function api(path, opts) {
   const r = await fetch(path, Object.assign({ headers:{'Content-Type':'application/json'} }, opts || {}));
   let j = null;
   try { j = await r.json(); } catch (e) { j = { ok:false, error:'bridge returned no JSON (HTTP ' + r.status + ')' }; }
-  if (!r.ok && j && j.ok === undefined) j.ok = false;
+  if (!j || typeof j !== 'object' || Array.isArray(j))
+    j = { ok:false, error:'bridge returned an invalid response (HTTP ' + r.status + ')' };
+  if (!r.ok) j.ok = false;
   return j;
 }
 
@@ -1055,7 +1057,7 @@ async function api(path, opts) {
    installed), and on Refresh. Everything else on the page keeps its own cadence. */
 function dlSig() {
   return ((S.state && S.state.downloads) || [])
-    .map(d => d.id + ':' + d.state + ':' + Math.round(d.pct || 0)).join('|');
+    .map(d => d.id + ':' + d.state).sort().join('|');
 }
 let _lastDlSig = null;
 async function loadCatalog(force) {
@@ -1068,23 +1070,42 @@ async function loadSources() {
   S.sources = (r && r.ok) ? r.sources : [];
 }
 
-async function load() {
-  try {
-    S.state = await api('/api/comfy/state');
-    if (S.state && S.state.ok) S.submitUnknown = false;
-    S.gallery = await api('/api/comfy/gallery');
-    const sig = dlSig();
-    if (S.catalog === null || sig !== _lastDlSig) {
-      _lastDlSig = sig;
-      await loadCatalog(S.catalog !== null);
-    }
-    S.err = null;
-  } catch (e) {
-    /* The bridge itself is unreachable. Say that, and do not blank the page: whatever
-       was last rendered is still the truth about the last moment we could see. */
-    S.err = 'the bridge is not answering (' + e + ')';
-  }
-  render();
+let _loadPromise = null, _loadAgain = false, _refreshCatalog = false;
+function load(force) {
+  if (force === true) _refreshCatalog = true;
+  // SSE and the timer can fire together. Keep one reader and coalesce their next
+  // refresh, so an older response cannot replace newer state or duplicate scans.
+  if (_loadPromise) { _loadAgain = true; return _loadPromise; }
+  _loadPromise = (async () => {
+    do {
+      _loadAgain = false;
+      const refresh = _refreshCatalog;
+      _refreshCatalog = false;
+      try {
+        const state = await api('/api/comfy/state');
+        if (!state.ok) throw new Error(state.error || 'state could not be read');
+        const gallery = await api('/api/comfy/gallery');
+        if (!gallery.ok) throw new Error(gallery.error || 'results could not be read');
+        const sourceSig = g => JSON.stringify(((g || {}).items || []).map(
+          it => [it.subfolder || '', it.filename, it.state]));
+        if (refresh || sourceSig(gallery) !== sourceSig(S.gallery)) S.sources = null;
+        S.state = state;
+        S.gallery = gallery;
+        S.submitUnknown = false;
+        const sig = dlSig();
+        if (refresh || S.catalog === null || sig !== _lastDlSig) {
+          await loadCatalog(refresh || S.catalog !== null);
+          if (!S.catErr) _lastDlSig = sig;
+        }
+        S.err = S.catErr;
+      } catch (e) {
+        // Keep the last successful snapshot visibly accompanied by the read error.
+        S.err = 'could not refresh: ' + String(e.message || e);
+      }
+      render();
+    } while (_loadAgain);
+  })().finally(() => { _loadPromise = null; });
+  return _loadPromise;
 }
 
 /* ══ TOOLTIPS — the v1.5.34 tipBind grammar, mirrored ══════════════════════════
@@ -1144,6 +1165,7 @@ function tipBind(el, html, plain) {
   el.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault(); e.stopPropagation();
+      if (el.dataset && el.dataset.act) { el.click(); return; }
       if (_tipFor === el) tipHide(); else tipShow(el, el._tipHtml);
     }
   });
@@ -1198,7 +1220,7 @@ function chipHtml(v, extra) {
 function paint(id, html) {
   const el = $(id);
   if (!el) return;
-  if (el._last === html) return;
+  if (el._last === html) { el._pending = null; return; }
   /* ⚠️ THE GUARD IS ABOUT A CARET, NOT ABOUT FOCUS (walked 2026-08-29). The first
      draft deferred any repaint whose container held the focused element — and a pane
      is a focusable button, so clicking one froze the stage: four panes were assigned
@@ -1219,14 +1241,17 @@ function paint(id, html) {
   }
 }
 function flushPending() {
+  let changed = false;
   ['railbody', 'picker', 'keyrow', 'caps', 'statusline', 'stage-body', 'thumbs', 'rmeta',
    'mlegend', 'refusal'].forEach(id => {
     const el = $(id);
     if (el && el._pending != null) {
-      el.innerHTML = el._pending; el._last = el._pending; el._pending = null;
-      wireTips(el);
+      el._pending = null;
+      changed = true;
     }
   });
+  // Rebuild from the current form, not markup captured before the latest keystrokes.
+  if (changed) render();
 }
 
 /* ══ THE OVERFLOW MENU — where the power exits live ════════════════════════════
@@ -1641,7 +1666,8 @@ function renderStage() {
 
   /* FIRST RUN (Debi's fork answer 4): the composer stays the product's face and the
      stage hosts the invitation with the two sized Get buttons. */
-  if (!usablePicks().length && !job) {
+  if (!items().length && !usablePicks().length && !job &&
+      !catModels().some(m => (m.workflows || []).some(w => w.runnable))) {
     /* image first: the still is the shorter, cheaper, more certain first success, and
        it is the one the video model was measured to be bad at. */
     const st = picks().filter(c => c.starter)
@@ -2057,15 +2083,13 @@ function renderPicker() {
         hedge:'Make one with an image model first, or drop a file into ComfyUI’s '
             + 'input folder — anything in the results rail can be used.' });
     } else {
-      const held = (S.form.source || {}).filename;
+      const sourceKey = s => JSON.stringify([s.origin, s.subfolder || '', s.filename]);
+      const held = list.find(s => S.form.source && sourceKey(s) === sourceKey(S.form.source)) || list[0];
+      S.form.source = { origin:held.origin, subfolder:held.subfolder, filename:held.filename };
       h += '<select id="p-src" aria-label="Source">' + list.map(s =>
-        '<option value="' + esc(s.origin + '|' + s.subfolder + '|' + s.filename) + '"' +
-        (held === s.filename ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') +
+        '<option value="' + esc(sourceKey(s)) + '"' +
+        (held === s ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') +
         '</select>';
-      if (!S.form.source) {
-        const s = list[0];
-        S.form.source = { origin:s.origin, subfolder:s.subfolder, filename:s.filename };
-      }
     }
   }
   h += '<span class="grow"></span>' +
@@ -2393,7 +2417,7 @@ try {
   const sse = new EventSource('/api/events');
   sse.onmessage = (m) => {
     let j = null; try { j = JSON.parse(m.data); } catch (e) { return; }
-    if (j.type === 'comfy') load();
+    if (j && j.type === 'comfy') load();
   };
 } catch (e) { /* no EventSource: the timer above is the whole mechanism */ }
 
@@ -2432,10 +2456,15 @@ document.addEventListener('change', (e) => {
     readForm();
     S.form.workflow = e.target.value;
     S.form.source = null; S.sources = null;
-    resetUntouched(); S.validation = null; saveView(); render();
+    resetUntouched(); S.validation = null; saveView();
+    if (e.target.blur) e.target.blur();
+    render();
   } else if (id === 'p-src') {
-    const p = String(e.target.value || '').split('|');
-    S.form.source = { origin:p[0], subfolder:p[1], filename:p.slice(2).join('|') };
+    try {
+      const p = JSON.parse(e.target.value);
+      if (Array.isArray(p) && p.length === 3 && p.every(x => typeof x === 'string'))
+        S.form.source = { origin:p[0], subfolder:p[1], filename:p[2] };
+    } catch (e) { /* a removed option cannot replace the selected source */ }
   }
 });
 /* ⚠️ SWITCHING MODE OR MODEL RE-READS THAT TEMPLATE'S OWN DEFAULTS — unless you typed.
@@ -2706,7 +2735,7 @@ document.addEventListener('click', async (e) => {
   const b = e.target.closest && e.target.closest('[data-act]');
   if (!b) return;
   const act = b.dataset.act;
-
+  try {
   if (act === 'sheet')        { S.sheet = true; render(); }
   else if (act === 'close-sheet') { S.sheet = false; render(); }
   else if (act === 'verb')    { readForm(); S.adv = b.dataset.v === '1'; saveView(); render(); }
@@ -2718,7 +2747,7 @@ document.addEventListener('click', async (e) => {
                                    against an inline rule */
                                 syncPeek(); }
   else if (act === 'split')   { setSplit(Number(b.dataset.n)); }
-  else if (act === 'refresh') { await load(); }
+  else if (act === 'refresh') { await load(true); }
   else if (act === 'select')  { assign(b.dataset.fn); render(); }
   else if (act === 'pane') {
     const i = Number(b.dataset.i);
@@ -2740,9 +2769,15 @@ document.addEventListener('click', async (e) => {
     if (p) {
       const moved = S.form.pick !== p.id;
       S.form.pick = p.id;
+      const model = catModels().find(m => (m.workflows || []).some(w => w.curated_pick === p.id));
+      if (model) {
+        S.form.model = model.id;
+        S.form.workflow = model.workflows.find(w => w.curated_pick === p.id).id;
+        S.form.source = null; S.sources = null;
+      }
       if (!p.modes.includes(S.form.mode)) S.form.mode = p.modes[0];
       if (moved) resetUntouched();
-      S.sheet = false; S.validation = null; render();
+      S.sheet = false; S.validation = null; saveView(); render();
     }
   }
   else if (act === 'reuse-seed') {
@@ -2808,7 +2843,10 @@ document.addEventListener('click', async (e) => {
   }
   else if (act === 'stop') {
     const j = liveJob();
-    if (j) await api('/api/comfy/jobs/' + j.id + '/cancel', { method:'POST' });
+    if (j) {
+      const r = await api('/api/comfy/jobs/' + j.id + '/cancel', { method:'POST' });
+      if (!r.ok) toast(r.error || 'ComfyUI did not confirm the stop', true);
+    }
     await load();
   }
   else if (act === 'reveal') {
@@ -2874,6 +2912,7 @@ document.addEventListener('click', async (e) => {
     } else toast(r.error, true);
   }
   else if (act === 'go') {
+    if (S.busy) return;
     readForm();
     if (S.submitUnknown) {
       toast('The last submission has an unknown outcome. Check Queue or refresh before retrying.', true);
@@ -2932,6 +2971,11 @@ document.addEventListener('click', async (e) => {
       S.form.seed = null; S.sel = null; S.panes[S.pane] = null; saveView();
     }
     await load();
+  }
+  } catch (error) {
+    toast(String(error.message || error), true);
+  } finally {
+    if (act !== 'go' && act !== 'go-anyway') b.disabled = false;
   }
 });
 /* the panes are real buttons for the keyboard too */

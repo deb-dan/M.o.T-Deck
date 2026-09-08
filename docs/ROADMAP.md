@@ -12,7 +12,7 @@ Current shipped release: **v1.5.92** (see `VERSION`). Written 2026-09-08.
 <!-- current-status:start
 in-progress: U170
 next: P6 P3 P5 S4 S7 U3
-later: U2 U9 U14 U26 U28 U29 U44 U45 U47 U57 U58 U168 U169
+later: U2 U9 U14 U26 U28 U29 U44 U45 U47 U57 U58 U168 U169 U171
 someday: S2 U4 U5 U6 U8 U43 U46 U68
 blocked-later: P1 U1 U34 U72 U91 U139 U142 U144
 blocked-someday: P2
@@ -231,7 +231,12 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 U170 tracks the remaining exhaustive review and acceptance coverage after the v1.5.91
 chat, download, storage and model-settings reliability release. The v1.5.92 session
 corrections and installed evidence are in `docs/RELEASE-v1.5.92-RELIABILITY.md`; this work does not implement the
-pending feature queue below. Two narrower follow-ups are intentionally
+pending feature queue below. The retained post-v1.5.92 review batch is approved for
+commit but remains unshipped and not release-accepted at this document revision; its
+RAM/ledger/fit experiments were reverted to the exact v1.5.92 implementation and are
+not continuation work. The approved panel-source ceiling exception is tracked separately
+as U171: 877,700 bytes previously, 885,000 bytes now, with the current page at 880,942
+bytes and a future investigation required. Two narrower follow-ups are intentionally
 not hidden beneath U167. U168 covers
 integration-specific deletion of data in shared or third-party stores (for example the
 standalone Hermes home); it requires one supported owner adapter per store, never a

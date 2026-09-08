@@ -14,6 +14,7 @@ upstream seams that Odysseus does NOT promise to keep:
 
 Purely static: greps the vendored source. Run: pytest bridge/contract_tests/
 """
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,7 +39,7 @@ def _read(p: Path) -> str:
 
 def test_per_message_routes_still_exist():
     if not ODY.exists():
-        return  # submodule not checked out — nothing to gate
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(HIST)
     for route in ('@router.post("/api/session/{session_id}/delete-messages")',
                   '@router.post("/api/session/{session_id}/edit-message")',
@@ -51,7 +52,7 @@ def test_per_message_routes_still_exist():
 
 def test_delete_messages_payload_shape():
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(HIST)
     assert 'body.get("msg_ids", [])' in src, (
         "delete-messages no longer reads {msg_ids: [...]} — the bridge sends "
@@ -65,7 +66,7 @@ def test_delete_messages_payload_shape():
 
 def test_edit_message_payload_shape():
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(HIST)
     assert 'body.get("msg_id")' in src and 'body.get("content")' in src, (
         "edit-message no longer reads {msg_id, content}")
@@ -81,7 +82,7 @@ def test_edit_message_payload_shape():
 
 def test_fork_keep_count_semantics():
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(HIST)
     body = src.split('/fork")')[1].split("@router")[0]
     assert 'body.get("keep_count", 0)' in body, (
@@ -118,7 +119,7 @@ def test_unpaged_history_returns_metadata():
         OWN attachment sidecar, see `attach_images`).
     """
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     h = _read(HIST)
     assert '@router.get("/api/history/{session_id}")' in h, (
         "the canonical GET /api/history/{session_id} handler is gone — the panel's "
@@ -183,7 +184,7 @@ def test_bridge_never_pages_history():
 
 def test_db_id_is_stamped_on_persisted_messages():
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     sm = _read(ODY / "core" / "session_manager.py")
     assert "_db_id" in sm, (
         "session_manager no longer stamps metadata._db_id on messages — every "
@@ -192,7 +193,7 @@ def test_db_id_is_stamped_on_persisted_messages():
 
 def test_inject_messages_accepts_per_message_metadata():
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(SESS)
     assert '@router.post("/session/{sid}/inject_messages")' in src, (
         "inject_messages is gone — the direct lane persists through it")

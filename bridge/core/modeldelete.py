@@ -96,7 +96,7 @@ def _require_regular(path: Path, *, absent_ok: bool = False) -> None:
 
 
 def _read_journal(path: Path) -> dict | None:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(path, flags)
     except FileNotFoundError:
@@ -285,106 +285,111 @@ def delete_owned_model_transaction(*, root: Path, mid: str, expected_target: str
     crash_hook = crash_hook or (lambda _stage: None)
     try:
         with registry_lock(str(registry_path)):
+            # Keep the preimage restoration inside the same transaction as removal.
+            # Releasing this lock before rollback could erase a concurrent writer.
             try:
-                registry_before = json.loads(registry_path.read_text())
-            except Exception as exc:
-                raise RuntimeError(f"model registry cannot be read: {exc}") from exc
-            if (not isinstance(registry_before, dict)
-                    or not isinstance(registry_before.get("models"), list)):
-                raise RuntimeError("model registry has an invalid shape")
-            entry = next((row for row in registry_before["models"]
-                          if isinstance(row, dict) and row.get("id") == mid), None)
-            if entry is None:
-                raise RuntimeError(f"model '{mid}' changed or disappeared during deletion")
-            target, reason = deletable_target(entry, models_root)
-            if target != expected_target:
-                raise RuntimeError(reason or "model path changed during deletion")
-            collisions = delete_target_collisions(registry_before["models"], mid, target)
-            if collisions:
-                raise RuntimeError("filesystem target became shared by: "
-                                   + ", ".join(collisions))
+                try:
+                    registry_before = json.loads(registry_path.read_text())
+                except Exception as exc:
+                    raise RuntimeError(f"model registry cannot be read: {exc}") from exc
+                if (not isinstance(registry_before, dict)
+                        or not isinstance(registry_before.get("models"), list)):
+                    raise RuntimeError("model registry has an invalid shape")
+                entry = next((row for row in registry_before["models"]
+                              if isinstance(row, dict) and row.get("id") == mid), None)
+                if entry is None:
+                    raise RuntimeError(f"model '{mid}' changed or disappeared during deletion")
+                target, reason = deletable_target(entry, models_root)
+                if target != expected_target:
+                    raise RuntimeError(reason or "model path changed during deletion")
+                collisions = delete_target_collisions(registry_before["models"], mid, target)
+                if collisions:
+                    raise RuntimeError("filesystem target became shared by: "
+                                       + ", ".join(collisions))
 
-            if _read_journal(journal_path) is not None:
-                raise RuntimeError("a prior model deletion requires recovery before another can start")
-            artifact_existed = os.path.lexists(target)
-            safe_id = re.sub(r"[^A-Za-z0-9._-]", "-", mid)[:48] or "model"
-            quarantine = os.path.join(
-                real_root, f".deleting-{safe_id}-{uuid.uuid4().hex}")
-            journal = {
-                "version": 1,
-                "model_id": mid,
-                "registry_entry": entry,
-                "target": target,
-                "quarantine": quarantine,
-                "artifact_existed": artifact_existed,
-                "assignments": [{"label": label, "old": old}
-                                for label, old, _clear, _restore in assignments],
-            }
-            _write_journal(journal_path, journal)
-            journal_written = True
-            crash_hook("journal")
+                if _read_journal(journal_path) is not None:
+                    raise RuntimeError("a prior model deletion requires recovery before another can start")
+                artifact_existed = os.path.lexists(target)
+                safe_id = re.sub(r"[^A-Za-z0-9._-]", "-", mid)[:48] or "model"
+                quarantine = os.path.join(
+                    real_root, f".deleting-{safe_id}-{uuid.uuid4().hex}")
+                journal = {
+                    "version": 1,
+                    "model_id": mid,
+                    "registry_entry": entry,
+                    "target": target,
+                    "quarantine": quarantine,
+                    "artifact_existed": artifact_existed,
+                    "assignments": [{"label": label, "old": old}
+                                    for label, old, _clear, _restore in assignments],
+                }
+                _write_journal(journal_path, journal)
+                journal_written = True
+                crash_hook("journal")
 
-            if artifact_existed:
-                os.replace(target, quarantine)
-                _fsync_directory(real_root)
-            crash_hook("quarantine")
+                if artifact_existed:
+                    os.replace(target, quarantine)
+                    _fsync_directory(real_root)
+                crash_hook("quarantine")
 
-            registry_after = dict(registry_before)
-            registry_after["models"] = [row for row in registry_before["models"]
-                                        if not (isinstance(row, dict)
-                                                and row.get("id") == mid)]
-            write_registry(str(registry_path), registry_after)
-            registry_changed = True
-            crash_hook("registry")
+                registry_after = dict(registry_before)
+                registry_after["models"] = [row for row in registry_before["models"]
+                                            if not (isinstance(row, dict)
+                                                    and row.get("id") == mid)]
+                write_registry(str(registry_path), registry_after)
+                registry_changed = True
+                crash_hook("registry")
 
-            for assignment in assignments:
-                # Record before invoking so rollback is attempted even if a writer
-                # replaces its file and then raises during a durability barrier.
-                changed_assignments.append(assignment)
-                assignment[2]()
-            crash_hook("assignments")
+                for assignment in assignments:
+                    # Record before invoking so rollback is attempted even if a writer
+                    # replaces its file and then raises during a durability barrier.
+                    changed_assignments.append(assignment)
+                    assignment[2]()
+                crash_hook("assignments")
 
-            if quarantine:
-                cleanup_started = True
-                if os.path.isdir(quarantine) and not os.path.islink(quarantine):
-                    shutil.rmtree(quarantine)
-                else:
-                    os.unlink(quarantine)
-                quarantine = ""
-                _fsync_directory(real_root)
-            crash_hook("cleanup")
-            _remove_journal(journal_path)
-            journal_written = False
-    except Exception as exc:  # noqa: BLE001 - persistence failures must rollback/report
-        rollback_errors = []
-        if quarantine and os.path.lexists(quarantine) and not os.path.lexists(expected_target):
-            try:
-                os.replace(quarantine, expected_target)
-                quarantine = ""
-                _fsync_directory(real_root)
-            except Exception as rollback_exc:  # noqa: BLE001
-                rollback_errors.append(f"artifact restore failed: {rollback_exc}")
-        if registry_changed and registry_before is not None:
-            try:
-                write_registry(str(registry_path), registry_before)
-            except Exception as rollback_exc:  # noqa: BLE001
-                rollback_errors.append(f"registry restore failed: {rollback_exc}")
-        for label, _old, _clear, restore in reversed(changed_assignments):
-            try:
-                restore()
-            except Exception as rollback_exc:  # noqa: BLE001
-                rollback_errors.append(f"{label} restore failed: {rollback_exc}")
-        if journal_written and not rollback_errors:
-            try:
+                if artifact_existed and quarantine:
+                    cleanup_started = True
+                    if os.path.isdir(quarantine) and not os.path.islink(quarantine):
+                        shutil.rmtree(quarantine)
+                    else:
+                        os.unlink(quarantine)
+                    quarantine = ""
+                    _fsync_directory(real_root)
+                crash_hook("cleanup")
                 _remove_journal(journal_path)
                 journal_written = False
-            except Exception as rollback_exc:  # noqa: BLE001
-                rollback_errors.append(f"journal retirement failed: {rollback_exc}")
-        detail = f"delete failed; registry and saved assignments were restored: {exc}"
-        if cleanup_started:
-            detail += ("; physical cleanup had begun, so the restored artifact path "
-                       "must be revalidated before loading")
-        if rollback_errors:
-            detail += "; ATTENTION — " + "; ".join(rollback_errors)
-        return detail
+            except Exception as exc:  # noqa: BLE001 - persistence failures must rollback/report
+                rollback_errors = []
+                if quarantine and os.path.lexists(quarantine) and not os.path.lexists(expected_target):
+                    try:
+                        os.replace(quarantine, expected_target)
+                        quarantine = ""
+                        _fsync_directory(real_root)
+                    except Exception as rollback_exc:  # noqa: BLE001
+                        rollback_errors.append(f"artifact restore failed: {rollback_exc}")
+                if registry_changed and registry_before is not None:
+                    try:
+                        write_registry(str(registry_path), registry_before)
+                    except Exception as rollback_exc:  # noqa: BLE001
+                        rollback_errors.append(f"registry restore failed: {rollback_exc}")
+                for label, _old, _clear, restore in reversed(changed_assignments):
+                    try:
+                        restore()
+                    except Exception as rollback_exc:  # noqa: BLE001
+                        rollback_errors.append(f"{label} restore failed: {rollback_exc}")
+                if journal_written and not rollback_errors:
+                    try:
+                        _remove_journal(journal_path)
+                        journal_written = False
+                    except Exception as rollback_exc:  # noqa: BLE001
+                        rollback_errors.append(f"journal retirement failed: {rollback_exc}")
+                detail = f"delete failed; registry and saved assignments were restored: {exc}"
+                if cleanup_started:
+                    detail += ("; physical cleanup had begun, so the restored artifact path "
+                               "must be revalidated before loading")
+                if rollback_errors:
+                    detail += "; ATTENTION — " + "; ".join(rollback_errors)
+                return detail
+    except Exception as exc:  # lock acquisition failed before any state was changed
+        return f"delete could not acquire the model registry transaction: {exc}"
     return None

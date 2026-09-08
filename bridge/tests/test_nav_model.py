@@ -455,9 +455,10 @@ def test_reorder_migration():
     new = [i for i, p in nav.DEFAULT_TOPBAR]
     old = [i for i, p in nav.DEFAULT_TOPBAR_V1]
     ok(new != old, "the reorder actually reorders something")
-    ok(sorted(new) == sorted(old),
-       "…and it moves the SAME ids — no entry gained or lost a home, so `validate` has "
-       "nothing new to say and nothing can become unreachable")
+    old_current = {"compose" if i == "music" else i for i in old}
+    ok(old_current <= set(new)
+       and set(new) - old_current == {"goose", "comfy", "gooseui", "deepseek"},
+       "every historical entry survives Music consolidation; later lanes are additive")
     ok([i for i, p in nav.DEFAULT_TOPBAR if p][:5]
        == ["mc", "hermes", "unsloth", "opencode", "odysseus"],
        "Debi's order leads with the deck and the three agent/model lanes")
@@ -489,7 +490,7 @@ def test_reorder_migration():
     # (c) TOTALITY + the stamp
     ok(nav.migrate(None) == (None, False) and nav.migrate("junk") == ("junk", False),
        "migrate is TOTAL — junk in, junk back, never a throw on boot")
-    ok(nav.migrate({"v": "banana", **v1_file()})[1] is True,
+    ok(nav.migrate({**v1_file(), "v": "banana"})[1] is True,
        "…and an unparseable version reads as OLD, so the migration still runs")
     ok(nav.migrate({**v1_file(), "v": nav.MODEL_V})[1] is False,
        "a layout already stamped v%d is never migrated again" % nav.MODEL_V)
@@ -514,8 +515,12 @@ def test_reorder_migration_on_disk_runs_exactly_once():
         # now the user arranges their strip back into the old order. It must survive.
         m2 = nav.normalize({"sidebar": [{"id": i, "pinned": q} for i, q in nav.DEFAULT_SIDEBAR],
                             "topbar": [{"id": i, "pinned": q} for i, q in nav.DEFAULT_TOPBAR_V1]})
-        nav.write(td, m2)
-        ok(nav.visible(nav.read(td), "topbar") == [i for i, q in nav.DEFAULT_TOPBAR_V1 if q],
+        # The later 9+3 rule moves excess pins into the window; Music now uses
+        # compose's id. Neither later rule is a second reorder migration.
+        nav.write(td, nav.repair(m2))
+        expected_pins = ["mc", "odysseus", "hermes", "voicestudio", "voicebox",
+                         "comfyui", "unsloth", "compose", "aider"]
+        ok(nav.visible(nav.read(td), "topbar") == expected_pins,
            "a user who LATER chooses the old order keeps it — the stamp, not the shape, "
            "is what says 'already considered'")
 
@@ -903,7 +908,8 @@ def test_window_route_live():
 
 
 for fn in (test_registry, test_normalize, test_validate, test_repair,
-           test_persistence, test_wiring, test_help_entry,
+           test_persistence, test_reorder_migration,
+           test_reorder_migration_on_disk_runs_exactly_once, test_wiring, test_help_entry,
            test_the_window_swaps, test_music_is_one_door, test_window_route_live,
            test_routes_live):
     fn()

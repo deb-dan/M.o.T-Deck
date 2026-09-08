@@ -96,7 +96,7 @@ def open_image(token: str) -> tuple[bytes, str, str] | None:
         return None
     path, expected_dev, expected_ino, expected_size, expected_mtime = record
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
         try:
             info = os.fstat(fd)
             if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1

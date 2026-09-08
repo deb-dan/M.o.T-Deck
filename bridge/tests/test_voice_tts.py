@@ -316,7 +316,7 @@ check("ship.sh copies every bridge/*.py (voice.py must reach the snapshot)",
 from bridge.yamlfile import transform_file as _yaml_transform_file  # noqa: E402
 _ns = {"ROOT": None, "transform_file": _yaml_transform_file}
 for _node in ast.parse(asrc).body:
-    if isinstance(_node, ast.FunctionDef) and _node.name == "_set_yaml_scalar":
+    if isinstance(_node, ast.FunctionDef) and _node.name in {"_set_yaml_scalar", "_set_yaml_scalars"}:
         exec(compile(ast.Module(body=[_node], type_ignores=[]), "<app>", "exec"), _ns)
 set_scalar = _ns["_set_yaml_scalar"]
 _YD = Path(tempfile.mkdtemp(prefix="motdeck-yaml-test-"))

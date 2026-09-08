@@ -154,7 +154,13 @@ def _optional_worker(job_id: str, queue: list[str]) -> None:
                 return
             _OPTIONAL_JOB["current"] = key
         publish("storage", operation="install-optional", target=key, state="running")
-        receipt = _install_one(key)
+        try:
+            receipt = _install_one(key)
+        except Exception as exc:
+            # Even a failing disk probe must leave a receipt and release the queue.
+            receipt = {"id": key, "label": OPTIONAL_INSTALLS[key]["label"],
+                       "ok": False, "returncode": None, "seconds": 0,
+                       "installed": None, "tail": str(exc)[-4000:]}
         with _OPTIONAL_LOCK:
             if _OPTIONAL_JOB.get("id") != job_id:
                 return
@@ -221,7 +227,13 @@ async def storage_optional_install(req: Request) -> JSONResponse:
                                   "started_at": time.time(), "finished_at": None})
         thread = threading.Thread(target=_optional_worker, args=(job_id, queue),
                                   name="motdeck-optional-install", daemon=True)
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            with _OPTIONAL_LOCK:
+                if _OPTIONAL_JOB.get("id") == job_id:
+                    _OPTIONAL_JOB.update(running=False, current="", finished_at=time.time())
+            raise
         return JSONResponse({"ok": True, "started": True, "job": _optional_snapshot()})
     except StorageRefusal as exc:
         return _refusal(exc)
@@ -310,14 +322,14 @@ async def storage_runtime_apply(req: Request) -> JSONResponse:
         plan = _take_plan(str((body or {}).get("token") or ""), "uninstall-runtime")
         # Refuse stale evidence before even stopping a healthy component. The apply
         # transaction verifies again after the stop and immediately before the moves.
-        verify_runtime_plan(ROOT, plan)
-        stopped = _stop_for_runtime(plan["target"], str(plan.get("stop_component") or ""))
+        await run_in_threadpool(verify_runtime_plan, ROOT, plan)
+        stopped = await run_in_threadpool(_stop_for_runtime, plan["target"], str(plan.get("stop_component") or ""))
         if stopped is not None and int(getattr(stopped, "status_code", 500)) >= 400:
             detail = _response_data(stopped)
             raise StorageRefusal(str((detail or {}).get("log") or
                                      (detail or {}).get("error") or
                                      "the owned process could not be stopped"))
-        result = apply_runtime_plan(ROOT, plan)
+        result = await run_in_threadpool(apply_runtime_plan, ROOT, plan)
         publish("storage", operation="uninstall-runtime", target=plan["target"],
                 state="done")
         return JSONResponse(result)
@@ -493,12 +505,15 @@ async def storage_generate_apply(req: Request) -> JSONResponse:
             raise StorageRefusal("Generate became busy after preview; review the removal again")
         # Refuse changed files before stopping ComfyUI; apply_artifact_plan repeats
         # this immediately before the recoverable rename transaction.
-        verify_artifact_plan(plan)
-        stopped = _stop_for_runtime("comfyui", "comfyui")
+        await run_in_threadpool(verify_artifact_plan, plan)
+        stopped = await run_in_threadpool(_stop_for_runtime, "comfyui", "comfyui")
         if stopped is not None and int(getattr(stopped, "status_code", 500)) >= 400:
             detail = _response_data(stopped)
             raise StorageRefusal(str((detail or {}).get("log") or
                                      "ComfyUI could not be stopped by its ownership record"))
+        if any(row.get("state") in ("downloading", "verifying") for row in CDL.values()) \
+                or any(row.get("state") in ("running", "finishing") for row in JOBS.values()):
+            raise StorageRefusal("Generate became busy while stopping; review the removal again")
         result = apply_artifact_plan(plan)
         catalog_invalidate()
         publish("storage", operation="remove-generate-assets", target=plan["target"], state="done")

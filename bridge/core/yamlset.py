@@ -36,9 +36,14 @@ def _set_yaml_scalar(block: str, key: str, value: str) -> None:
     An empty value writes a bare `key:` (= null = off). If the block or the key is
     missing (e.g. an older snapshot manifest that ship.sh's merge hasn't touched yet)
     they are appended rather than silently dropped."""
+    _set_yaml_scalars(block, {key: value})
+
+
+def _set_yaml_scalars(block: str, values: dict[str, str]) -> None:
+    """Commit related scalar edits together, preserving comments and raw YAML values."""
     import re
     p = ROOT / "motdeck.yaml"
-    def edit(text):
+    def edit_one(text, key, value):
         lines = text.split("\n")
         inside, block_at, last_in_block = False, -1, -1
         for i, ln in enumerate(lines):
@@ -64,4 +69,8 @@ def _set_yaml_scalar(block: str, key: str, value: str) -> None:
         else:
             lines.insert((last_in_block if last_in_block >= 0 else block_at) + 1, new_line)
         return "\n".join(lines)
+    def edit(text):
+        for key, value in values.items():
+            text = edit_one(text, key, value)
+        return text
     transform_file(p, edit)

@@ -38,7 +38,7 @@ async function exercise(name, failed, typing = false) {
   const pending = context[name]({}, input);
   await Promise.resolve(); await Promise.resolve();
   if (!typing) context.mSel = {kind: 'installed', id: 'B'};
-  resolve({json: async () => failed ? {ok: false, error: 'A was refused'} : {
+  resolve({ok:true,json: async () => failed ? {ok: false, error: 'A was refused'} : {
     ok: true, id: 'A', settings: {temperature: 0.3}, sampling: {changed: 1},
     load: {ctx: 2048}, loadview: {changed: 1}, launch: {changed: 1},
   }});
@@ -69,12 +69,12 @@ async function orderedEdits(firstFails, name = 'samplingPost') {
   await Promise.resolve(); await Promise.resolve();
   assert.equal(requests.length, 1, 'Reset must not overtake the earlier save at the server');
   if (firstFails) requests[0].reject(new Error('connection lost'));
-  else requests[0].resolve({json:async () => ({ok:true,id:'A',settings:{temperature:0.2},sampling:{changed:1},load:{ctx:2048},loadview:{changed:1}})});
+  else requests[0].resolve({ok:true,json:async () => ({ok:true,id:'A',settings:{temperature:0.2},sampling:{changed:1},load:{ctx:2048},loadview:{changed:1}})});
   await edit;
   await Promise.resolve(); await Promise.resolve();
   assert.equal(requests.length, 2, 'the queue must progress even after a failed save');
   assert.equal(requests[1].body.reset, true);
-  requests[1].resolve({json:async () => ({ok:true,id:'A',settings:{},sampling:{changed:0},load:{},loadview:{changed:0}})});
+  requests[1].resolve({ok:true,json:async () => ({ok:true,id:'A',settings:{},sampling:{changed:0},load:{},loadview:{changed:0}})});
   await reset;
   assert.equal(context.lastModels.installed[0][name === 'samplingPost' ? 'settings' : 'load'], null, 'the final reset remains authoritative');
 }

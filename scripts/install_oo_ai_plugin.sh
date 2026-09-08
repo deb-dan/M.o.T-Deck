@@ -166,15 +166,37 @@ fetch_verified() {   # fetch_verified <url> <path> <expected-sha256> <label>
 PZ="$CACHE/ai.plugin"
 fetch_verified "${RAW}/${PLUGIN_REL}" "$PZ" "$PLUGIN_SHA256" "${REPO}@${COMMIT:0:7} ${PLUGIN_REL}"
 
-AIDIR="$DEST/ai"
-# ⚠️ INVALIDATE THE STAMP BEFORE THE FIRST DESTRUCTIVE OP (2026-08-29 install-path
-# audit, same rule as install_onlyoffice.sh): between the `rm -rf` below and the new
-# stamp's rename, a stamp claiming the pinned hashes over a half-unzipped plugin would
-# be a lie an interrupted run leaves behind.
-rm -f "$STAMP"
-say "unzipping the plugin into data/onlyoffice-plugins/ai/"
-rm -rf "$AIDIR"
-mkdir -p "$AIDIR"
+# Prepare the entire plugin and SDK before touching the served installation.
+# A short-lived publication journal restores the previous files if a rename fails.
+LOCKDIR="$DEST/.install-lock"
+mkdir "$LOCKDIR" 2>/dev/null || die "another plugin install is active (${LOCKDIR})"
+STAGE=""
+PUBLISHING=0
+NEW_ITEMS=()
+cleanup_install() {
+  local result=$? item
+  trap - EXIT
+  if [[ "$PUBLISHING" == 1 ]]; then
+    for item in "${NEW_ITEMS[@]}"; do rm -rf "$DEST/$item"; done
+    # Restore the stamp last, after every previous asset has been restored.
+    for item in ai v1 SOURCES.txt INSTALLED; do
+      if [[ -e "$STAGE/old/$item" || -L "$STAGE/old/$item" ]]; then
+        mv "$STAGE/old/$item" "$DEST/$item" || { warn "restore failed for $item; retained at $STAGE/old"; exit 1; }
+      fi
+    done
+  fi
+  [[ -z "$STAGE" ]] || rm -rf "$STAGE"
+  rmdir "$LOCKDIR" || true
+  exit "$result"
+}
+trap cleanup_install EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+STAGE="$(mktemp -d "$DEST/.plugin-install.XXXXXX")"
+CANDIDATE="$STAGE/new"
+AIDIR="$CANDIDATE/ai"
+mkdir -p "$AIDIR" "$STAGE/old"
+say "unzipping the plugin into a private candidate"
 unzip -q -o "$PZ" -d "$AIDIR" || die "unzip of ai.plugin failed"
 
 # Some deploy zips wrap everything in one folder; flatten so config.json is at the
@@ -188,11 +210,13 @@ if [[ ! -f "$AIDIR/config.json" ]]; then
 fi
 
 # ── the shared SDK ───────────────────────────────────────────────────────────
-mkdir -p "$DEST/v1"
+mkdir -p "$CANDIDATE/v1"
 for f in "${SDK_FILES[@]}"; do
   want="$(sdk_sha_for "$f")"
   [[ -n "$want" ]] || die "no pinned hash for SDK file ${f} — refusing to fetch it"
-  fetch_verified "${RAW}/v1/${f}" "$DEST/v1/$f" "$want" "${REPO}@${COMMIT:0:7} v1/${f}"
+  # Reuse installed SDK bytes offline, but verify them against the requested pin.
+  [[ ! -f "$DEST/v1/$f" ]] || cp "$DEST/v1/$f" "$CANDIDATE/v1/$f"
+  fetch_verified "${RAW}/v1/${f}" "$CANDIDATE/v1/$f" "$want" "${REPO}@${COMMIT:0:7} v1/${f}"
 done
 
 # ── verify the landing ───────────────────────────────────────────────────────
@@ -200,7 +224,7 @@ for rel in "$PLUGIN_CONFIG_REL" "$PLUGIN_INDEX_REL" \
            "ai/scripts/engine/providers/provider.js" \
            "ai/scripts/engine/local_storage.js" \
            "v1/plugins.js" "v1/plugins-ui.js" "v1/plugins.css"; do
-  [[ -f "$DEST/$rel" ]] || die "the unzip landed but ${rel} is missing — the deploy
+  [[ -f "$CANDIDATE/$rel" ]] || die "the unzip landed but ${rel} is missing — the deploy
        layout changed. Look at ${DEST} and do not ship this."
 done
 
@@ -208,40 +232,40 @@ done
 # onlyoffice.github.io again, the plugin would need the network AND would be blocked
 # by COEP — and the only fixes are editing it (breaks "unmodified") or shipping a
 # dead ribbon tab. Fail here instead, loudly, while a human is watching.
-if grep -q "onlyoffice\.github\.io" "$DEST/$PLUGIN_INDEX_REL"; then
+if grep -q "onlyoffice\.github\.io" "$CANDIDATE/$PLUGIN_INDEX_REL"; then
   die "this pin's index.html loads the plugin SDK from onlyoffice.github.io (absolute).
        A cross-origin-isolated page cannot load that, and an offline machine cannot
        reach it. The vendored deploy zip is supposed to use ./../v1/ RELATIVE paths.
        Do not ship this pin — record the finding and pick a pin that deploys relatively."
 fi
-grep -q "\./\.\./v1/plugins\.js" "$DEST/$PLUGIN_INDEX_REL" \
+grep -q "\./\.\./v1/plugins\.js" "$CANDIDATE/$PLUGIN_INDEX_REL" \
   || die "index.html does not reference ./../v1/plugins.js — the layout this
        installer serves no longer matches the plugin.
 
-⚠️ THE LAYOUT IS `<dest>/ai/` NEXT TO `<dest>/v1/`, AND THAT IS FORCED, NOT CHOSEN.
-   index.html loads the SDK as `./../v1/plugins.js`, which resolves ONE level above the
-   plugin folder. Unzipping into `<dest>/content/ai/` (mirroring the repository path)
-   therefore made the editor ask for `/ooplug/content/v1/plugins.js`, which 404s — and
-   the only symptom was `window.Asc.plugin` undefined inside the plugin frame and no AI
+⚠️ THE LAYOUT IS <dest>/ai/ NEXT TO <dest>/v1/, AND THAT IS FORCED, NOT CHOSEN.
+   index.html loads the SDK as ./../v1/plugins.js, which resolves ONE level above the
+   plugin folder. Unzipping into <dest>/content/ai/ (mirroring the repository path)
+   therefore made the editor ask for /ooplug/content/v1/plugins.js, which 404s — and
+   the only symptom was window.Asc.plugin undefined inside the plugin frame and no AI
    tab. Measured live, 2026-08-28. So the plugin folder must sit DIRECTLY under the
-   served root, exactly as ONLYOFFICE installs a .plugin into `sdkjs-plugins/<name>/`.
+   served root, exactly as ONLYOFFICE installs a .plugin into sdkjs-plugins/<name>/.
 "
 
 got_guid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("guid",""))' \
-            "$DEST/$PLUGIN_CONFIG_REL" 2>/dev/null || echo "")"
+            "$CANDIDATE/$PLUGIN_CONFIG_REL" 2>/dev/null || echo "")"
 [[ "$got_guid" == "$PLUGIN_GUID" ]] \
   || die "config.json guid is ${got_guid:-<unreadable>}, expected ${PLUGIN_GUID}.
        The autostart list in bridge/panel/oo.html is keyed on that guid."
 got_ver="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' \
-           "$DEST/$PLUGIN_CONFIG_REL" 2>/dev/null || echo "")"
+           "$CANDIDATE/$PLUGIN_CONFIG_REL" 2>/dev/null || echo "")"
 [[ "$got_ver" == "$PLUGIN_VERSION" ]] \
   || warn "config.json version is ${got_ver}, the pin recorded ${PLUGIN_VERSION}"
 
-files=$(find "$DEST/ai" "$DEST/v1" -type f | wc -l | tr -d ' ')
-size=$(du -sh "$DEST" 2>/dev/null | awk '{print $1}')
+files=$(find "$CANDIDATE/ai" "$CANDIDATE/v1" -type f | wc -l | tr -d ' ')
+size=$(du -sh "$CANDIDATE" 2>/dev/null | awk '{print $1}')
 say "landed: ${files} files, ${size}"
 
-cat > "${SOURCES}.tmp" <<SRC
+cat > "$CANDIDATE/SOURCES.txt" <<SRC
 ONLYOFFICE AI plugin — vendored for the LOffice ribbon.
 
 LICENCE: AGPL-3.0 (GUI elements and documentation: CC-BY-SA-4.0), (c) Ascensio
@@ -272,9 +296,9 @@ If this MOT Deck build is ever distributed to anyone else, the About surface mus
 ONLYOFFICE + AGPL-3.0 and link these exact pins, and any modification made to the
 plugin must be published. See docs/handoff/ONLYOFFICE-PROBE-RUNBOOK.md, AGPL ruling.
 SRC
-mv -f "${SOURCES}.tmp" "$SOURCES"
 
-cat > "${STAMP}.tmp" <<EOF
+
+cat > "$CANDIDATE/INSTALLED" <<EOF
 schema 1
 date $(date -u '+%Y-%m-%dT%H:%M:%SZ')
 repo ${REPO}
@@ -287,7 +311,18 @@ sdk_files ${SDK_FILES[*]}
 files ${files}
 licence AGPL-3.0
 EOF
-mv -f "${STAMP}.tmp" "$STAMP"
+# Invalidate the served receipt before replacing any files; publish its successor last.
+PUBLISHING=1
+for item in INSTALLED ai v1 SOURCES.txt; do
+  if [[ -e "$DEST/$item" || -L "$DEST/$item" ]]; then
+    mv "$DEST/$item" "$STAGE/old/$item"
+  fi
+done
+for item in ai v1 SOURCES.txt INSTALLED; do
+  mv "$CANDIDATE/$item" "$DEST/$item"
+  NEW_ITEMS+=("$item")
+done
+PUBLISHING=0
 
 say "done. The bridge picks this up with no restart (bridge/ooai.py reads the stamp"
 say "per request); ship.sh is still the way to push code changes."

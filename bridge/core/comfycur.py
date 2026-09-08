@@ -282,7 +282,7 @@ def disk_verdict(need: int, free: "int | None") -> dict:
     """ADVISORY, always. Numbers + a recommendation; never a veto.
 
     Pure (no I/O) so bridge/tests/test_comfy_lane.py can pin every branch."""
-    if not free:
+    if free is None:
         return {"level": "unknown", "text": "free space could not be read on this volume"}
     leaves = free - need
     if need > free:
@@ -536,8 +536,8 @@ LOADER_DIRS = {
 }
 
 # The classes whose widget value is a MODEL FILE. Any class in LOADER_DIRS qualifies;
-# this set is the answer to "which widget", and it is always the first string widget
-# that looks like a weight file, which is how ComfyUI's own loaders are shaped.
+# this set selects weight-valued widgets. Dual/Triple/QuadrupleCLIPLoader require
+# every named encoder, so stopping at the first would mark incomplete workflows ready.
 WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".sft", ".pt", ".pth", ".bin", ".gguf",
                    ".onnx", ".gguf")
 
@@ -615,10 +615,10 @@ def graph_weight_files(g: dict) -> list:
         cls = n.get("type")
         if cls not in LOADER_DIRS:
             continue
-        for w in (n.get("widgets_values") or []):
+        values = n.get("widgets_values") or []
+        for w in (values.values() if isinstance(values, dict) else values):
             if isinstance(w, str) and w.lower().endswith(WEIGHT_SUFFIXES):
                 out.append((n.get("id"), cls, w))
-                break
     return out
 
 

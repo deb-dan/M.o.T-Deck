@@ -227,9 +227,12 @@ if [[ $FAT -eq 1 ]]; then
   # firstrun_fat.sh install. Unpinned here would bundle whatever is newest while the
   # installers ask for the pinned version → OFFLINE first-run fails on a fresh Mac.
   MLXLM="$(yaml_build mlx_lm_pin)"; MLXVLM="$(yaml_build mlx_vlm_pin)"
-  [[ -n "$MLXLM" && -n "$MLXVLM" ]] || { echo "ERROR (fat): build.mlx_lm_pin / build.mlx_vlm_pin missing in motdeck.yaml"; exit 1; }
-  echo "[motdeck] mlx pins: mlx-lm==$MLXLM  mlx-vlm==$MLXVLM"
-  "${DL[@]}" "mlx-lm==$MLXLM" "mlx-vlm==$MLXVLM" || { echo "ERROR (fat): mlx deps download failed."; exit 1; }
+  MLXAUDIO="$(yaml_build mlx_audio_pin)"; MLXWHISPER="$(yaml_build mlx_whisper_pin)"
+  [[ -n "$MLXLM" && -n "$MLXVLM" && -n "$MLXAUDIO" && -n "$MLXWHISPER" ]] || {
+    echo "ERROR (fat): an MLX engine pin is missing in motdeck.yaml"; exit 1; }
+  echo "[motdeck] mlx pins: mlx-lm==$MLXLM  mlx-vlm==$MLXVLM  mlx-audio==$MLXAUDIO  mlx-whisper==$MLXWHISPER"
+  "${DL[@]}" "mlx-lm==$MLXLM" "mlx-vlm==$MLXVLM" "mlx-audio==$MLXAUDIO" "mlx-whisper==$MLXWHISPER" \
+    || { echo "ERROR (fat): mlx deps download failed."; exit 1; }
 
   echo "[motdeck] wheelhouse: $(ls "$WHEELS" | wc -l | tr -d ' ') files, $(du -sh "$WHEELS" | cut -f1)"
 

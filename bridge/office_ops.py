@@ -66,6 +66,7 @@ import os
 import re
 import secrets
 import shutil
+import tempfile
 import time
 
 try:                                                             # pragma: no cover
@@ -488,14 +489,12 @@ def act_style_set(v):
     if not isinstance(v, dict):
         return None
     out = {}
-    if v.get("bl"):
-        out["bl"] = 1
-    if v.get("it"):
-        out["it"] = 1
-    if v.get("ul"):
-        out["ul"] = {"s": 1}
-    if v.get("st"):
-        out["st"] = {"s": 1}
+    for key in ("bl", "it", "ul", "st"):
+        flag = v.get(key)
+        if key in ("ul", "st") and isinstance(flag, dict):
+            flag = flag.get("s")
+        if isinstance(flag, (bool, int, float)) and flag in (0, 1):
+            out[key] = {"s": int(bool(flag))} if key in ("ul", "st") else int(bool(flag))
     ff = v.get("ff")
     if isinstance(ff, str) and ff.strip() and len(ff) <= 64:
         out["ff"] = ff.strip()
@@ -1135,6 +1134,9 @@ _CO_LEADING_ZERO = re.compile(r"^0\d")
 def _co_num(digits: str):
     """The digits of an accepted shape → a float, or None. Commas are separators here
     and nothing else, which is exactly why no other locale is accepted above."""
+    significant = re.sub(r"[^0-9]", "", digits).strip("0")
+    if len(significant) > 15:
+        return None  # preserve text that Excel/JavaScript would round
     return _fin(digits.replace(",", ""))
 
 
@@ -1195,7 +1197,7 @@ def coerce_numeric(text):
         return {"v": _numeric(-f if m.group("sign") else f),
                 "n": _co_pattern("#,##0", dp), "shape": "thousands"}
     if _CO_PLAIN.match(s) and not re.match(r"^-?0\d", s):
-        f = _fin(s)
+        f = _co_num(s)
         if f is not None:
             return {"v": _numeric(f), "n": None, "shape": "plain"}
     return None
@@ -1857,7 +1859,7 @@ def run_ops(snapshot, sid, ops):
                     # ⚠️ THE STYLED CELLS ARE RECORDED BY REFERENCE (finding F-06), so the
                     # dry run can DIFF them and the receipt can RE-READ them. Without this
                     # a formatting-only changeset previewed as nothing at all.
-                    if len(done["styled_refs"]) < PREVIEW_MAX_CELLS:
+                    if len(done["styled_refs"]) < ACT_MAX_CELLS:
                         done["styled_refs"].append(
                             {"sheet": sh.get("name") or "?", "ref": a1(r, c)})
         elif kind == "sheet":
@@ -2290,8 +2292,9 @@ def op_read(root, name, sheet=None, cell_range=None):
     if dates:
         notes.append(f"{dates} cell(s) are DATES: the file stores a serial number and the "
                      "cell's number format renders it, so 'value' is the serial and "
-                     "'text' is the date. Write a date back as text in the same format "
-                     "('2026-01-15'), never as the serial.")
+                     "'text' is the date. Preserve a real date as its numeric serial "
+                     "with the date number format; writing '2026-01-15' as a string "
+                     "makes it text and breaks date arithmetic.")
     if merges:
         # F-26: there has been no `office_sort` tool since the changeset ruling. The real
         # behaviour is that a `sort` op INSIDE a changeset is skipped, with its own
@@ -2530,6 +2533,20 @@ def cell_face(cell) -> str:
     return display_text(cell)
 
 
+def cell_signature(cell) -> list:
+    """The value AND type, excluding a formula's potentially stale cached result."""
+    if not isinstance(cell, dict):
+        return ['blank']
+    if isinstance(cell.get('f'), str) and cell['f']:
+        return ['formula', cell['f']]
+    value = cell.get('v')
+    if value is None or value == '':
+        return ['blank']
+    kind = ('boolean' if isinstance(value, bool) else
+            'number' if isinstance(value, (int, float)) else 'text')
+    return [kind, value]
+
+
 def face_display(cell, styles=None) -> str:
     """What a cell says, WITH ITS TYPE VISIBLE — the card's own column, and the second
     half of the incident's fix.
@@ -2639,13 +2656,19 @@ def snapshot_diff(before, after, limit=PREVIEW_MAX_CELLS):
         for r, c in sorted(coords):
             cb, ca = cell_at(b, r, c), cell_at(a, r, c)
             fb, fa = cell_face(cb), cell_face(ca)
-            if fb == fa:
+            signature_before, signature_after = cell_signature(cb), cell_signature(ca)
+            if signature_before == signature_after:
                 continue
             total += 1
             if len(rows) < max(int(limit or 0), 0):
+                before_display, after_display = face_display(cb, sb), face_display(ca, sa)
+                if fb == fa:
+                    before_display += ' (' + signature_before[0] + ')'
+                    after_display += ' (' + signature_after[0] + ')'
                 rows.append({"sheet": nm, "ref": a1(r, c), "before": fb, "after": fa,
-                             "before_display": face_display(cb, sb),
-                             "after_display": face_display(ca, sa),
+                             "after_signature": signature_after,
+                             "before_display": before_display,
+                             "after_display": after_display,
                              "coerced": False})
     return rows, total
 
@@ -2864,9 +2887,15 @@ def aggregate_warnings(after, sid, ops):
                     if rect is None:
                         continue
                     bad = []
-                    for rr in range(rect[0], rect[2] + 1):
-                        for cc in range(rect[1], rect[3] + 1):
-                            if text_numeric(cell_at(sh, rr, cc)) is not None:
+                    # A formula can name the entire Excel grid. Empty coordinates
+                    # cannot contain numeric text; inspect only the stored cells.
+                    for rk, cells in (sh.get('cellData') or {}).items():
+                        rr = office._idx(rk)
+                        if rr is None or not rect[0] <= rr <= rect[2] or not isinstance(cells, dict):
+                            continue
+                        for ck, cell in cells.items():
+                            cc = office._idx(ck)
+                            if cc is not None and rect[1] <= cc <= rect[3] and text_numeric(cell) is not None:
                                 bad.append(a1(rr, cc))
                     if not bad:
                         continue
@@ -3065,9 +3094,10 @@ def stage_changes(root, session, name, sheet=None, ops=None, now=None):
             return None, (f"{base!r} already exists, so there is nothing to create and "
                           "the change asked for nothing else.")
     try:
+        file_mtime = os.path.getmtime(target) if exists else 0.0
         snap = (office.snapshot_from_path(target) if exists
                 else office.empty_snapshot(os.path.splitext(base)[0]))
-    except office.OfficeError as e:
+    except (office.OfficeError, OSError) as e:
         return None, str(e)
     sid = target_sid(snap, sheet)
     if not sid:
@@ -3205,7 +3235,7 @@ def stage_changes(root, session, name, sheet=None, ops=None, now=None):
         "kept_text": list(done["kept_text"]),
         "text_in_date": list(done["text_in_date"]),
         "creates_workbook": not exists,
-        "file_mtime": (os.path.getmtime(target) if exists else 0.0),
+        "file_mtime": file_mtime,
     }
     _PENDING[key] = cid
     # BUG-ECHO of the U47 class, third site: a staging result's `preview` rows carry the
@@ -3373,18 +3403,32 @@ def restore_checkpoint(root, name, cid, applied_mtime=None, now=None):
     # The file about to be replaced is itself worth keeping: an undo is a change too,
     # and "undo the undo" must not be a question with no answer.
     pre = pre_agent_for(target)
+    tmp = ''
     try:
         shutil.copy2(target, pre)
-        shutil.copy2(src, target)
+        fd, tmp = tempfile.mkstemp(prefix='.office-undo-', suffix=office.DOC_EXT,
+                                   dir=os.path.dirname(target))
+        os.close(fd)
+        shutil.copy2(src, tmp)
         # ⚠️ AND THE CLOCK IS PUSHED FORWARD, WHICH IS NOT COSMETIC. copy2 preserves the
         # checkpoint's OWN mtime, which is older than the file it just replaced — and
         # every "did this file change under me?" check on this bridge (the page's
         # extPlan, the editor's writeback fence) reads a strictly NEWER mtime as the
         # change. Restoring an old copy with an old timestamp is a change nobody can
         # see. So the restored file is stamped NOW.
-        os.utime(target, None)
+        os.utime(tmp, None)
+        with open(tmp, 'rb') as completed:
+            os.fsync(completed.fileno())
+        os.replace(tmp, target)
+        tmp = ''
     except OSError as e:
         return None, f"could not restore that checkpoint: {e}"
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     return {"ok": True, "name": os.path.basename(target),
             "restored_from": os.path.basename(src),
             "changeset_id": str(cid), "fenced": fenced,
@@ -3444,6 +3488,9 @@ def _apply_gate(root, cs):
     if not target:
         return reason
     exists = os.path.isfile(target)
+    if creating and exists:
+        return (f'"{name}" was created after this proposal was previewed. Nothing '
+                'was applied; preview the change again against the existing workbook.')
     if not exists and not creating:
         return APPLY_GONE_REFUSAL.format(name=name)          # F-32
     st = open_state(name)
@@ -3578,8 +3625,10 @@ def _verify(root, name, cs):
     for p in cs["preview"]:
         sh = by_sheet.get(p["sheet"])
         rg = act_range(p["ref"])
-        got = cell_face(cell_at(sh, rg[0], rg[1])) if (sh and rg) else ""
-        ok = got == p["after"]
+        cell = cell_at(sh, rg[0], rg[1]) if (sh and rg) else None
+        got = cell_face(cell)
+        ok = got == p["after"] and (
+            'after_signature' not in p or cell_signature(cell) == p['after_signature'])
         matched += 1 if ok else 0
         rows.append({"kind": "cell", "sheet": p["sheet"], "ref": p["ref"],
                      "expected": p["after"], "found": got, "match": ok})

@@ -32,6 +32,28 @@ func terminateExactSpawnedChild(_ process: Process) {
     process.waitUntilExit()
 }
 
+// Finder drops are read on the UI thread: bound the read before allocating, and
+// refuse special files before a FIFO or device can wait for an external writer.
+enum NativeDropReadError: Error { case tooLarge, unreadable }
+func readNativeDrop(_ url: URL, limit: Int) throws -> Data {
+    let fd = Darwin.open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+    guard fd >= 0 else { throw NativeDropReadError.unreadable }
+    let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    defer { try? handle.close() }
+    var info = stat()
+    guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else {
+        throw NativeDropReadError.unreadable
+    }
+    guard info.st_size <= limit else { throw NativeDropReadError.tooLarge }
+    var data = Data()
+    while data.count <= limit {
+        let chunk = try handle.read(upToCount: min(256 * 1024, limit + 1 - data.count)) ?? Data()
+        if chunk.isEmpty { return data }
+        data.append(chunk)
+    }
+    throw NativeDropReadError.tooLarge
+}
+
 // ONE table: the tab strip's labels AND the URL each tab loads. It feeds the single
 // NSSegmentedControl (v2 deleted the right pane's mini strip), `urlForTab`, the
 // id-keyed webview table and the ghost table — so none of them can drift from each
@@ -552,16 +574,18 @@ final class DropWebView: WKWebView {
             dragLog("perform: rejected ext=\(url.pathExtension)")
             note("choose a supported image, voice clip, text/code file, or PDF"); return true
         }
-        guard let data = try? Data(contentsOf: url) else {
+        let cap = isAudio ? 15 * 1024 * 1024 : (isFile ? 10 * 1024 * 1024 : 8 * 1024 * 1024)
+        let data: Data
+        do {
+            data = try readNativeDrop(url, limit: cap)
+        } catch NativeDropReadError.tooLarge {
+            dragLog("perform: too large")
+            note(isAudio ? "audio too large (max 15 MB)"
+                         : (isFile ? "file too large (max 10 MB)" : "image too large (max 8 MB)")); return true
+        } catch {
             dragLog("perform: unreadable file")
             note(isAudio ? "could not read that audio file"
                          : (isFile ? "could not read that file" : "could not read that image")); return true
-        }
-        let cap = isAudio ? 15 * 1024 * 1024 : (isFile ? 10 * 1024 * 1024 : 8 * 1024 * 1024)
-        guard data.count <= cap else {
-            dragLog("perform: too large (\(data.count) bytes)")
-            note(isAudio ? "audio too large (max 15 MB)"
-                         : (isFile ? "file too large (max 10 MB)" : "image too large (max 8 MB)")); return true
         }
         // Serialize strings as JSON fragments instead of hand-escaping two characters:
         // Finder permits control characters and Unicode line separators that can break
@@ -2338,7 +2362,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         setSegmentWidths()
         currentTab = tabs.firstIndex(where: { $0.id == keepLeft }) ?? 0
         rightTab = tabs.firstIndex(where: { $0.id == keepRight }) ?? ((currentTab + 1) % max(1, tabs.count))
-        if rightTab == currentTab && tabs.count > 1 { rightTab = (currentTab + 1) % tabs.count }
+        // A navigation refresh must preserve a live duplicate and its in-page state.
+        // Equal indices are legitimate while one pane owns that duplicate.
+        if rightTab == currentTab && tabs.count > 1 && !(splitOn && (leftIsGhost || rightIsGhost)) {
+            rightTab = (currentTab + 1) % tabs.count
+        }
         persistTabs()
         updateOverflowButton()
         applyPanes()
@@ -2909,6 +2937,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         g.navigationDelegate = nil
         g.uiDelegate = nil
         failedLoads.remove(ObjectIdentifier(g))
+        crashedOnce.remove(ObjectIdentifier(g))
         g.removeFromSuperview()   // last strong reference goes with the dictionary entry
         slog("ghost -> destroyed \(id)")
     }
@@ -3309,7 +3338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // The pane ⌘R acts on: the last one clicked (left when split is off). A pane showing a
     // SECOND INSTANCE reloads that copy, not the primary in the other pane.
     func visibleWebView() -> WKWebView? {
-        if focusedPane == 1 && splitOn && (rightTab != currentTab || rightIsGhost) {
+        if focusedPane == 1 && splitOn && (rightTab != currentTab || rightIsGhost || leftIsGhost) {
             return rightIsGhost ? secondInstances[tabId(rightTab)] : webViewFor(rightTab)
         }
         if leftIsGhost { return secondInstances[tabId(currentTab)] }
@@ -3339,16 +3368,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     // Failed navigation → dark editorial placeholder (never a white void) + retry paths.
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        // WebKit cancels the previous navigation during reload/redirect/download.
+        // Its cancellation must not replace the page that is now loading.
+        let failure = error as NSError
+        if failure.domain == NSURLErrorDomain && failure.code == NSURLErrorCancelled { return }
         showUnreachable(webView)
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        // WebKit cancels the previous navigation during reload/redirect/download.
+        // Its cancellation must not replace the page that is now loading.
+        let failure = error as NSError
+        if failure.domain == NSURLErrorDomain && failure.code == NSURLErrorCancelled { return }
         showUnreachable(webView)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if let u = webView.url, u.scheme == "http" { failedLoads.remove(ObjectIdentifier(webView)) }
-        // A load that actually landed clears the crash memory: the next termination on
-        // this tab is a NEW incident and gets its own automatic retry.
-        crashedOnce.remove(ObjectIdentifier(webView))
+        // Only a real page load proves recovery; finishing our about:blank notice
+        // must not reset the guard that prevents an endless crash/reload loop.
+        if let scheme = webView.url?.scheme, scheme == "http" || scheme == "https" {
+            failedLoads.remove(ObjectIdentifier(webView))
+            crashedOnce.remove(ObjectIdentifier(webView))
+        }
     }
 
     // ── the web content process died ────────────────────────────────────────

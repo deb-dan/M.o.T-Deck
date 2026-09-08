@@ -39,6 +39,7 @@ scripts/install_llamacpp.sh). Part 2 needs no binary at all.
 Run: pytest bridge/contract_tests/
 """
 import re
+import pytest
 import subprocess
 from pathlib import Path
 
@@ -69,12 +70,16 @@ def _help():
     """--help text, or None when it cannot be obtained — absent, not executable, or
     (in a Linux build sandbox) a Mach-O we cannot exec. Same shape as the tts test."""
     if not BIN.is_file():
-        return None
+        pytest.skip("llama-server binary is not installed")
     try:
         r = subprocess.run([str(BIN), "--help"], capture_output=True, text=True,
                            timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return None
+    except OSError as exc:
+        import errno
+        if exc.errno in (errno.ENOENT, errno.ENOEXEC):
+            pytest.skip(f"llama-server cannot execute on this host: {exc}")
+        raise
+    assert r.returncode == 0, (r.stdout or "") + (r.stderr or "")
     return (r.stdout or "") + (r.stderr or "")
 
 
@@ -203,14 +208,17 @@ def test_a_missing_key_file_is_fatal_so_the_launch_arm_must_guard_it():
     model. `--api-key-file <absent>` must be rejected at argument-parse time — that is
     precisely why scripts/start_component.sh tests the file before passing the flag."""
     if not BIN.is_file():
-        return
+        pytest.skip("llama-server binary is not installed")
     try:
         r = subprocess.run([str(BIN), "--api-key-file",
                             "/motdeck-no-such-key-file.txt", "--model",
                             "/motdeck-no-such-model.gguf"],
                            capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return
+    except OSError as exc:
+        import errno
+        if exc.errno in (errno.ENOENT, errno.ENOEXEC):
+            pytest.skip(f"llama-server cannot execute on this host: {exc}")
+        raise
     out = (r.stdout or "") + (r.stderr or "")
     assert "--api-key-file" in out and "failed to open" in out, (
         "llama-server no longer refuses an unreadable --api-key-file. That is a "

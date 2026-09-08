@@ -21,6 +21,7 @@ mechanisms are UPSTREAM-INTERNAL surfaces neither project promises to keep:
 
 Purely static: greps the vendored sources. Run: pytest bridge/contract_tests/
 """
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,7 +36,7 @@ def _read(p: Path) -> str:
 # ── Odysseus ────────────────────────────────────────────────────────────────
 def test_odysseus_upload_route_shape():
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(ODY / "routes" / "upload_routes.py")
     assert 'APIRouter(prefix="/api/upload"' in src, (
         "Odysseus moved its upload router off /api/upload — the Agent lane's ⊕ "
@@ -55,7 +56,7 @@ def test_odysseus_upload_route_shape():
 
 def test_odysseus_chat_stream_reads_attachments():
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(ODY / "routes" / "chat_routes.py")
     assert 'attachments = form_data.get("attachments")' in src, (
         "/api/chat_stream no longer reads an `attachments` form field — the Agent "
@@ -69,7 +70,7 @@ def test_odysseus_chat_stream_reads_attachments():
 def test_odysseus_still_describes_images_for_text_only_models():
     """The Agent lane has NO vision gate, and this is why."""
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(ODY / "src" / "chat_handler.py")
     assert "main_is_vision" in src and "model_supports_vision" in src, (
         "Odysseus no longer forks on the main model's vision capability")
@@ -84,7 +85,7 @@ def test_odysseus_vision_cache_is_the_precaption_seam():
     Odysseus's own vision cache. Four upstream facts carry it, and every one of
     them is an internal detail upstream never promised."""
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     up = _read(ODY / "routes" / "upload_routes.py")
     assert '@router.put("/{file_id}/vision")' in up, (
         "PUT /api/upload/{id}/vision is gone — that is where the bridge stores the "
@@ -130,7 +131,7 @@ def test_odysseus_folds_our_caption_in_verbatim_so_the_trust_fence_survives():
         U47 row must reopen.
     """
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     ch = _read(ODY / "src" / "chat_handler.py")
     assert '"\n{vl_desc}"' in ch or "{vl_desc}" in ch, (
         "chat_handler no longer interpolates the cached/VL description into the "
@@ -154,7 +155,7 @@ def test_odysseus_name_keyword_vision_test_still_exists():
     """We MIRROR Odysseus's name test (ody_name_looks_vision) so we only step in
     where it misses. If upstream starts reading real capability, stop mirroring."""
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(ODY / "src" / "chat_helpers.py")
     assert "_VISION_MODEL_KEYWORDS" in src and "def is_vision_model" in src, (
         "Odysseus no longer classifies vision BY NAME — re-read "
@@ -172,7 +173,7 @@ def test_odysseus_name_keyword_vision_test_still_exists():
 def test_odysseus_settings_still_carries_the_vision_keys():
     """The fallback path (A) writes ONE key through Odysseus's own settings API."""
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(ODY / "src" / "settings.py")
     assert '"vision_model"' in src and '"vision_enabled"' in src, (
         "vision_model / vision_enabled left Odysseus's settings — the bridge's "
@@ -182,7 +183,7 @@ def test_odysseus_settings_still_carries_the_vision_keys():
 def test_odysseus_persists_multimodal_turns_as_parts():
     """Why the bridge flattens history (flatten_ody_content)."""
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(ODY / "src" / "document_processor.py")
     assert '"type": "image_url"' in src and "data:image/" in src, (
         "document_processor no longer builds inline image_url parts — re-check "
@@ -200,7 +201,7 @@ def test_odysseus_persists_multimodal_turns_as_parts():
 # ── Hermes ──────────────────────────────────────────────────────────────────
 def test_hermes_image_attach_bytes_rpc():
     if not HERMES.exists():
-        return
+        pytest.skip("optional upstream source is absent: not HERMES.exists()")
     src = _read(HERMES / "tui_gateway" / "methods_prompt.py")
     assert '@method("image.attach_bytes")' in src, (
         "the Hermes gateway lost image.attach_bytes — the panel has no host PATH to "
@@ -225,7 +226,7 @@ def test_hermes_image_attach_bytes_rpc():
 
 def test_hermes_prompt_submit_still_drains_attached_images():
     if not HERMES.exists():
-        return
+        pytest.skip("optional upstream source is absent: not HERMES.exists()")
     src = _read(HERMES / "tui_gateway" / "server.py")
     assert 'images = list(session.get("attached_images", []))' in src, (
         "prompt.submit no longer drains session['attached_images'] — an attached "
@@ -247,7 +248,7 @@ def test_odysseus_resolves_vision_model_through_its_endpoint_rows():
     """`vision_model` → (url, model, headers) via the ModelEndpoint table, with the
     `model@endpoint` form selecting one endpoint BY NAME. Both halves are ours."""
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     ai = _read(ODY / "src" / "ai_interaction.py")
     assert "def _resolve_model(" in ai, (
         "_resolve_model is gone — it is what turns our `vision_model` string into a "
@@ -277,7 +278,7 @@ def test_odysseus_url_classification_still_traps_api_and_v1_paths():
     /slots). The shim therefore lives at /odyvision/v1 — outside the bridge's usual
     /api namespace — and that choice is only correct while these two hold."""
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(ODY / "src" / "llm_core.py")
     assert 'path.startswith("/api/")' in src and "def _is_ollama_native_url" in src, (
         "_is_ollama_native_url changed. If '/api/…' is no longer read as Ollama, the "
@@ -294,7 +295,7 @@ def test_odysseus_derives_our_two_shim_urls_from_the_base():
     """The shim serves exactly <base>/models and <base>/chat/completions because
     that is what Odysseus builds from a path-carrying base."""
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(ODY / "src" / "endpoint_resolver.py")
     assert 'return _append_endpoint_path(base, "/chat/completions")' in src, (
         "build_chat_url no longer appends /chat/completions to a generic base")
@@ -313,7 +314,7 @@ def test_odysseus_vl_call_still_blocks_its_event_loop():
     to :7860 mid-call would deadlock until its own 120s timeout, which is why
     everything the shim needs is snapshotted by ody_vision_shim_ensure instead."""
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(ODY / "src" / "chat_handler.py")
     assert "vl_result = analyze_image_with_vl_result(file_info[\"path\"], owner=owner)" in src, (
         "the VL call moved. If it is now on a thread (asyncio.to_thread) the "
@@ -325,7 +326,7 @@ def test_odysseus_vl_failure_text_is_still_its_own_bracket_marker():
     """Our shim answers a failure the same way upstream does — a leading '[' — so
     Odysseus shows it and (chat_handler's rule) never caches it."""
     if not ODY.exists():
-        return
+        pytest.skip("optional upstream source is absent: not ODY.exists()")
     src = _read(ODY / "src" / "document_processor.py")
     assert '"[VL model unavailable - image not analyzed]"' in src, (
         "upstream's own VL failure marker changed — ody_shim_failure() deliberately "

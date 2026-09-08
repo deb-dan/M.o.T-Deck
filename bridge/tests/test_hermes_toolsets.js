@@ -78,6 +78,7 @@ var hermesToolsSummary = null;// the `check` card, null = closed
 var hermesSkillsSnap = null;
 var hermesSkillsOpen = false;
 var hermesSkillsFilter = '';
+eval(grab('apiArg'));
 eval(grab('hermesSkillMatch'));
 eval(grab('hermesSkillsShown'));
 eval(grab('hermesSkillCountNote'));

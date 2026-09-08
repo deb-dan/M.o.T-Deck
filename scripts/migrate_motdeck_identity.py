@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -100,7 +101,12 @@ def _rewrite_tokens(path: Path, migrations: dict[bytes, bytes],
     original = path.read_bytes()
     replacement = original
     for old, new in migrations.items():
-        replacement = replacement.replace(old, new)
+        # These are environment variable names, never substitutions inside values.
+        # A user-chosen credential can itself contain a legacy identifier.
+        replacement = re.sub(rb"(?m)^(\s*(?:export[ \t]+)?)" + re.escape(old)
+                             + rb"(_B64)?(?=[ \t]*=)",
+                             lambda match: match.group(1) + new + (match.group(2) or b""),
+                             replacement)
     if replacement == original:
         return
     mode = path.lstat().st_mode

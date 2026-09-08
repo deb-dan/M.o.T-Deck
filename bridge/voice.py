@@ -478,9 +478,11 @@ def unique_clip_path(dir_path: str, name: str) -> str:
     stem, _, sfx = str(name).rpartition(".")
     path = os.path.join(dir_path, name)
     n = 1
-    while os.path.exists(path) and n < 100:
+    while os.path.lexists(path) and n < 100:
         path = os.path.join(dir_path, f"{stem} ({n}).{sfx}")
         n += 1
+    if os.path.lexists(path):
+        raise FileExistsError("too many recordings with that name; choose another name")
     return path
 
 
@@ -1102,11 +1104,17 @@ def trimmed_dir(root: "str | Path | None" = None) -> str:
 
 
 def trimmed_clip_path(src: object, root: "str | Path | None" = None) -> str:
-    """PURE: the bounded copy's path for `src`. Always wav (we are re-encoding anyway,
-    and wav is the one container every engine reads with no external tool) and always a
-    BASENAME-derived name, so nothing from the source path can climb out of the dir."""
-    stem = os.path.splitext(os.path.basename(str(src or "clip")))[0] or "clip"
-    return os.path.join(trimmed_dir(root), f"{stem}-{REF_CLIP_TRIM_SECS}s.wav")
+    """A contained wav path tied to this source file and revision.
+
+    Different folders often contain the same recording basename. A derived pin
+    must never borrow that other clip, or change when the source is replaced.
+    """
+    import hashlib
+    source = os.path.realpath(str(src or "clip"))
+    stem = os.path.splitext(os.path.basename(source))[0][:100] or "clip"
+    identity = json.dumps([source, ref_stamp(source)], ensure_ascii=True)
+    digest = hashlib.sha256(identity.encode("ascii")).hexdigest()[:20]
+    return os.path.join(trimmed_dir(root), f"{stem}-{digest}-{REF_CLIP_TRIM_SECS}s.wav")
 
 
 def ffmpeg_trim_argv(ff_bin: str, src: object, dst: object,
@@ -1608,12 +1616,15 @@ def stt_read_output(out_dir: str, stem: str, stdout: str = "") -> str:
         pass
     raw = (stdout or "").strip()
     if raw:
-        # The library form prints exactly one json object; be forgiving about a
-        # leading warning line by scanning back to the last '{'.
-        start = raw.rfind("{")
-        if start >= 0:
+        # The library prints one complete JSON line, including nested segments.
+        # Looking for the last '{' selects a segment instead of the result.
+        candidates = list(reversed(raw.splitlines()))
+        candidates.append(raw[raw.find("{"):])  # also accept pretty-printed JSON
+        for candidate in candidates:
             try:
-                return stt_text_from_payload(json.loads(raw[start:]))
+                text = stt_text_from_payload(json.loads(candidate))
+                if text:
+                    return text
             except ValueError:
                 pass
     return ""
@@ -1897,10 +1908,13 @@ class VoiceWorker:
             self.stop()
             raise VoiceError(f"the voice worker stopped accepting input "
                              f"({str(e)[:120]})", _log_tail(worker_log_path(self.root)))
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         while True:
             try:
-                raw = self._q.get(timeout=max(0.05, deadline - time.time()))
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("voice reply deadline elapsed")
+                raw = self._q.get(timeout=remaining)
             except Exception:                                   # queue.Empty
                 self.stop()
                 raise VoiceError(
@@ -1994,10 +2008,12 @@ def worker_resident() -> "dict | None":
     return w.info()
 
 
-def worker_stop(reason: str = "") -> bool:
+def worker_stop(reason: str = "", *, model_id: "str | None" = None) -> bool:
     """Kill the resident worker if there is one. Idempotent; True when one died."""
     global _WORKER
     with _WORKER_MUTEX:
+        if model_id is not None and (_WORKER is None or _WORKER.model_id != model_id):
+            return False
         w, _WORKER = _WORKER, None
         if w is None:
             return False
@@ -2012,10 +2028,7 @@ def worker_stop(reason: str = "") -> bool:
 def worker_stop_if_model(model_id: str, reason: str = "") -> bool:
     """Kill only when the resident model IS `model_id`. Used by the callers that
     invalidate one model (default changed/cleared, model deleted)."""
-    w = _WORKER
-    if w is None or w.model_id != str(model_id or ""):
-        return False
-    return worker_stop(reason)
+    return worker_stop(reason, model_id=str(model_id or ""))
 
 
 def get_worker(entry: dict, root: "str | Path | None" = None,
@@ -2033,7 +2046,7 @@ def get_worker(entry: dict, root: "str | Path | None" = None,
     path = str(entry.get("path") or "")
     with _WORKER_MUTEX:
         w = _WORKER
-        if w is not None and (not w.alive() or w.model_id != mid):
+        if w is not None and (not w.alive() or w.model_id != mid or w.model_path != path):
             why = "model changed" if w.alive() else "process gone"
             w.stop()
             _WORKER = None
@@ -2117,7 +2130,7 @@ RENDER_CACHE_MAX_BYTES = 64 * 1024 * 1024
 
 
 def ref_stamp(path: object) -> str:
-    """'<size>:<mtime>' for a reference clip, '' when there is none / it is gone.
+    """Size, nanosecond timestamps and file identity, or '' when absent.
 
     This is what makes 'delete debi.wav, record a new debi.wav' a cache MISS. Without
     it the key would say "the same clip" about two different recordings at one path.
@@ -2127,7 +2140,7 @@ def ref_stamp(path: object) -> str:
         return ""
     try:
         st = os.stat(p)
-        return f"{st.st_size}:{int(st.st_mtime)}"
+        return f"{st.st_size}:{st.st_mtime_ns}:{st.st_ctime_ns}:{st.st_dev}:{st.st_ino}"
     except OSError:
         return ""
 
@@ -2136,14 +2149,12 @@ def render_cache_key(model_id: object, voice: object, ref_audio: object,
                      ref_text: object, text: object, stamp: object = "") -> str:
     """sha256 over everything that can change the rendered audio. PURE.
 
-    Fields are joined with '\\x00' rather than a printable separator so no field's
-    content can impersonate a boundary (a ref_text containing '|' must not be able to
-    collide with a different (ref_text, text) split).
+    JSON encodes field boundaries even when a field itself contains NUL characters.
     """
     import hashlib
     parts = [str(model_id or ""), str(voice or ""), str(ref_audio or ""),
              str(ref_text or ""), str(stamp or ""), str(text or "")]
-    return hashlib.sha256("\x00".join(parts).encode("utf-8", "replace")).hexdigest()
+    return hashlib.sha256(json.dumps(parts, ensure_ascii=True).encode("ascii")).hexdigest()
 
 
 class RenderCache:
@@ -2230,7 +2241,10 @@ def entry_cache_key(entry: "dict | None", text: object) -> str:
     explicit pin of that same default share one cache slot instead of two."""
     e = entry or {}
     ref = str(e.get("ref_audio") or "").strip()
-    return render_cache_key(e.get("id"), resolve_render_voice(e), ref,
+    model = json.dumps([str(e.get(k) or "") for k in
+                        ("id", "format", "path", "mmproj", "lang", "max_frames")],
+                       ensure_ascii=True)
+    return render_cache_key(model, resolve_render_voice(e), ref,
                             e.get("ref_text"), text, ref_stamp(ref))
 
 

@@ -334,7 +334,7 @@ const HOST = (function () {
 // that navigated away mid-flight) can never take the editor down with it.
 function tell(kind, data) {
   if (!HOST || typeof HOST.event !== 'function') return;
-  const ev = {kind: kind};
+  const ev = {kind: kind, doc: DOC};
   if (data) for (const k in data) ev[k] = data[k];
   try { HOST.event(ev); } catch (e) { console.log('[oo host] ' + e); }
 }
@@ -350,6 +350,7 @@ let ready = false;
 let dirtyNow = false;
 let editorTag = '';
 let openSeq = 0;             // guards a swap that a later swap superseded
+let cancelOpening = null;   // settles a superseded frame's pending ready promise
 // ⚠️ TWO COUNTERS FOR ONE FINDING (L1), AND THEY EXIST TO BE MEASURED. `extSaves` is how
 // many times the EDITOR'S own Save control was routed into our write-back; `heldClears` is
 // how many times a `dirty:false` that no write-back produced was REFUSED. A probe can read
@@ -450,6 +451,7 @@ function x2tConvert(data, inName, outFormat) {
   if (!M) throw new Error('the converter is not loaded');
   const inPath = '/working/' + inName;
   const outPath = inPath + '.' + outFormat;
+  try {
   try { M.FS.unlink(outPath); } catch (e) { /* first run */ }
   M.FS.writeFile(inPath, data);
   M.FS.writeFile('/working/params.xml',
@@ -464,8 +466,13 @@ function x2tConvert(data, inName, outFormat) {
   const rc = M.ccall('main1', 'number', ['string'], ['/working/params.xml']);
   if (rc !== 0) throw new Error('x2t returned ' + rc + ' converting to ' + outFormat);
   const out = M.FS.readFile(outPath);
-  try { M.FS.unlink(inPath); M.FS.unlink(outPath); } catch (e) { /* fine */ }
   return out;
+  } finally {
+    // Failed conversions retain large inputs too unless both exits clean them.
+    for (const path of [inPath, outPath]) {
+      try { M.FS.unlink(path); } catch (e) { /* absent */ }
+    }
+  }
 }
 
 // ══ DOWNLOAD AS PDF ═══════════════════════════════════════════════════════════
@@ -620,16 +627,20 @@ async function exportPdf() {
   }
   if (!ready) return {ok: false, error: 'the editor is not ready yet'};
   const api = innerEditor();
-  if (!api || typeof api.asc_nativePrint !== 'function') {
+  if (!api || typeof api.asc_nativeGetPDF !== 'function') {
     return {ok: false, error: 'this editor build cannot produce a print layout'};
   }
   const t0 = (window.performance && performance.now()) || Date.now();
+  const generation = openSeq, name = DOC;
   try {
     await mountFonts();
   } catch (e) {
     return {ok: false, error: String(e.message || e)};
   }
-  const ext = (DOC.split('.').pop() || 'xlsx').toLowerCase();
+  if (!ready || generation !== openSeq || name !== DOC || api !== innerEditor()) {
+    return {ok: false, error: 'the document changed while its PDF was being prepared'};
+  }
+  const ext = (name.split('.').pop() || 'xlsx').toLowerCase();
   const from = PDF_CANVAS_FORMAT[DOC_TYPES[ext] || 'cell'];
   if (!from) return {ok: false, error: 'there is no print layout for a .' + ext};
   const M = x2t;
@@ -682,6 +693,10 @@ async function exportPdf() {
     try { M.FS.unlink(inPath); M.FS.unlink(outPath); } catch (e) { /* fine */ }
   } catch (e) {
     return {ok: false, error: String(e.message || e)};
+  } finally {
+    for (const path of [inPath, outPath]) {
+      try { M.FS.unlink(path); } catch (e) { /* absent */ }
+    }
   }
   const pages = pdfPageCount(out);
   if (pages <= 0) {
@@ -967,10 +982,12 @@ async function save(force) {
                               + 'reopen this workbook.'};
   }
   const name = DOC;
+  const generation = openSeq;
   saving = true;
   el('btn-save').disabled = true;
   state('saving…');
   let out;
+  let submitted = false;
   try {
     // asc_nativeGetFile() is synchronous and returns the live document as the
     // `XLSY;v2;len;base64` text form of Editor.bin.
@@ -981,12 +998,17 @@ async function save(force) {
     const url = '/api/office/writeback/' + encodeURIComponent(name)
       + (openedMtime !== null ? '?mtime=' + encodeURIComponent(openedMtime) : '')
       + (force ? (openedMtime !== null ? '&' : '?') + 'force=1' : '');
+    submitted = true;
     const r = await fetch(url, {
       method: 'POST',
       headers: {'Content-Type': 'application/octet-stream'},
       body: bytes
     });
     const j = await r.json().catch(() => ({}));
+    if (generation !== openSeq || name !== DOC || api !== innerEditor()) {
+      return {ok: !!(r.ok && j && j.ok), stale: true, name: name,
+              error: 'the editor changed while this save was finishing'};
+    }
     if (r.status === 409) {
       // THE MTIME FENCE FIRED. Nothing was written. The choice is the user's and it
       // is offered as two buttons, because a page that cannot ask is a page that
@@ -1005,25 +1027,36 @@ async function save(force) {
     }
     if (!r.ok || !j.ok) throw new Error(j.error || ('the bridge said ' + r.status));
     openedMtime = j.mtime;
-    dirtyNow = false;
+    // State-change events need not fire for every edit while already dirty.
+    // Compare the actual serialized document sent to disk with what is live now.
+    // If the second read fails, retain the unsaved flag conservatively.
+    let unchanged = false;
+    try { unchanged = api.asc_nativeGetFile() === bin; } catch (e) { /* stay dirty */ }
+    dirtyNow = !unchanged;
     noteClear();
     state('saved · ' + Math.round(j.bytes / 1024) + ' KB'
-          + (j.backup ? ' · safety copy ' + j.backup : ''));
+          + (j.backup ? ' · safety copy ' + j.backup : '')
+          + (dirtyNow ? ' · newer edits are still unsaved' : ''));
     out = {ok: true, bytes: j.bytes, backup: j.backup || '', mtime: j.mtime,
-           name: j.name};
+           name: j.name, dirty: dirtyNow};
     tell('saved', out);
-    tell('state', {dirty: false});
+    tell('state', {dirty: dirtyNow});
   } catch (e) {
+    if (generation !== openSeq || name !== DOC || api !== innerEditor()) {
+      return {ok: false, stale: true, uncertain: submitted, error: String(e.message || e)};
+    }
     state('not saved');
     const why = (e && e.message) ? e.message : String(e);
     note('Could not save: ' + why
-         + ' — the workbook on disk was not changed.', 'bad',
+         + (submitted ? ' — the save outcome is unknown; check the file before retrying.'
+                      : ' — the workbook on disk was not changed.'), 'bad',
          [{label: 'Try again', run: () => save(false)}]);
-    out = {ok: false, error: why};
+    out = {ok: false, error: why, uncertain: submitted};
     tell('error', {text: 'could not save: ' + why, fatal: false});
+  } finally {
+    saving = false;
+    el('btn-save').disabled = !ready;
   }
-  saving = false;
-  el('btn-save').disabled = false;
   return out;
 }
 el('btn-save').addEventListener('click', () => save(false));
@@ -1061,10 +1094,10 @@ function ooRange(ws, at) {
 // parent refuses to route a plan through this path if it holds a key that is not.
 function ooStyle(api, rg, set) {
   if (!set) return;
-  if (set.bl) rg.SetBold(true);
-  if (set.it) rg.SetItalic(true);
-  if (set.ul) rg.SetUnderline(OO_UNDERLINE);
-  if (set.st) rg.SetStrikeout(true);
+  if (Object.hasOwn(set, 'bl')) rg.SetBold(!!set.bl);
+  if (Object.hasOwn(set, 'it')) rg.SetItalic(!!set.it);
+  if (Object.hasOwn(set, 'ul')) rg.SetUnderline(set.ul ? OO_UNDERLINE : 'none');
+  if (Object.hasOwn(set, 'st')) rg.SetStrikeout(!!set.st);
   if (set.ff) rg.SetFontName(set.ff);
   if (set.fs) rg.SetFontSize(set.fs);
   if (set.cl && set.cl.rgb) rg.SetFontColor(ooColour(api, set.cl.rgb));
@@ -1159,8 +1192,8 @@ function applyOps(list, sheetName) {
   }
   let ws;
   try {
-    ws = (sheetName && typeof api.GetSheet === 'function' && api.GetSheet(sheetName))
-         || api.GetActiveSheet();
+    ws = sheetName ? (typeof api.GetSheet === 'function' && api.GetSheet(sheetName))
+                   : api.GetActiveSheet();
   } catch (e) { ws = null; }
   if (!ws) return {ok: false, error: 'the editor has no sheet to write into'};
   const done = {cells: 0, styled: 0, sheets: [], renamed: '', inserted: 0, deleted: 0,
@@ -1170,6 +1203,7 @@ function applyOps(list, sheetName) {
   // transaction and repaints. A `return` that skipped the end() would leave the editor
   // inside an open transaction, which is worse than the bug being fixed.
   const paint = ooPaintPair(api);
+  let attemptedWrite = false;
   done.painted = paint.painted;
   if (paint.note) {
     done.notes.push('The cells went in, but this editor build could not be asked to '
@@ -1180,6 +1214,8 @@ function applyOps(list, sheetName) {
   for (let i = 0; i < list.length; i++) {
     const o = list[i] || {};
     try {
+      if (['set', 'style', 'addSheet', 'renameSheet', 'insertRows', 'insertCols',
+           'deleteRows', 'deleteCols'].includes(o.k)) attemptedWrite = true;
       if (o.k === 'set') {
         /* ⚠️ THE RANGE THE PARENT SENDS IS THE WHOLE RECTANGLE, AND IT HAS TO BE — see the
            block in office.html::ooEditorOps for the measurement. ApiRange.SetValue writes
@@ -1199,7 +1235,8 @@ function applyOps(list, sheetName) {
         // was written for the sheet the user was LOOKING at. Point ws back at it.
         try { ws = api.GetSheet(o.at || ws.GetName()) || ws; } catch (e) { /* keep */ }
       } else if (o.k === 'renameSheet') {
-        const t = o.at ? (api.GetSheet(o.at) || ws) : ws;
+        const t = o.at ? api.GetSheet(o.at) : ws;
+        if (!t) throw new Error('the named sheet no longer exists');
         t.SetName(o.name);
         done.renamed = o.name;
       } else if (o.k === 'insertRows') {
@@ -1226,12 +1263,18 @@ function applyOps(list, sheetName) {
                    + ((e && e.message) || e)};
     }
   }
-  } finally { paint.end(); }
+  } finally {
+    paint.end();
+    // A builder call can write before a later call throws. It may emit no dirty
+    // event, so every exit after an attempted mutation must preserve unsaved work.
+    if (attemptedWrite) {
+      dirtyNow = true;
+      state('unsaved changes');
+      tell('state', {dirty: true});
+    }
+  }
   // The editor raises onDocumentStateChange for its own edits; a builder-API write
   // does not always, so the dirty flag is set here and reported the same way.
-  dirtyNow = true;
-  state('unsaved changes');
-  tell('state', {dirty: true});
   return {ok: true, done: done};
 }
 
@@ -1248,6 +1291,20 @@ function applyOps(list, sheetName) {
    TOTAL: one unreadable cell costs that cell's row, never the call — a receipt that
    throws would turn a successful apply into an error, which is the incident's shape
    inside out. */
+// Read the selection through the shipped builder API. No document mutation and
+// no vendor patch: these methods are exported by the pinned SDK.
+function selection() {
+  if (!ready || DOC_TYPES[String(DOC).split('.').pop().toLowerCase()] !== 'cell') return null;
+  try {
+    const api = innerEditor();
+    const ws = api && typeof api.GetActiveSheet === 'function' && api.GetActiveSheet();
+    if (!ws || typeof ws.GetName !== 'function') return null;
+    const range = typeof ws.GetSelection === 'function' && ws.GetSelection();
+    return {doc: DOC, sheet: String(ws.GetName()),
+      at: range && typeof range.GetAddress === 'function' ? String(range.GetAddress(false, false, 'xlA1', false)) : ''};
+  } catch (e) { return null; }
+}
+
 function readCells(refs, sheetName) {
   if (!ready) return {ok: false, error: 'the editor is not ready'};
   const api = innerEditor();
@@ -1259,8 +1316,8 @@ function readCells(refs, sheetName) {
   }
   let ws;
   try {
-    ws = (sheetName && typeof api.GetSheet === 'function' && api.GetSheet(sheetName))
-         || api.GetActiveSheet();
+    ws = sheetName ? (typeof api.GetSheet === 'function' && api.GetSheet(sheetName))
+                   : api.GetActiveSheet();
   } catch (e) { ws = null; }
   if (!ws) return {ok: false, error: 'the editor has no sheet to read from'};
   const out = [];
@@ -1962,7 +2019,13 @@ function aiStreamArm() {
 // 57 MB converter and api.js. Split out from openDoc precisely so a swap does not
 // repeat it — that split IS the "keep one editor instance alive" requirement.
 let onceDone = false;
-async function once() {
+let oncePending = null;
+function once() {
+  if (oncePending) return oncePending;
+  oncePending = prepareOnce().finally(() => { oncePending = null; });
+  return oncePending;
+}
+async function prepareOnce() {
   if (onceDone) return true;
   step('checking the editor bundle…', 4);
   let status;
@@ -2042,6 +2105,7 @@ function openDoc(name) {
     return Promise.resolve({ok: false, error: 'no workbook was named'});
   }
   const gen = ++openSeq;
+  if (cancelOpening) { cancelOpening(); cancelOpening = null; }
   const t0 = (window.performance && performance.now()) || Date.now();
   const swap = !!editor;
   return (async function () {
@@ -2055,17 +2119,17 @@ function openDoc(name) {
     el('btn-save').disabled = true;
     el('btn-pdf').disabled = true;
     ready = false;
-    dirtyNow = false;
     noteClear();
 
     // The mtime fence. Taken BEFORE the bytes, so a change between the two makes the
     // fence pessimistic (a refused save) rather than optimistic (a lost edit).
-    openedMtime = null;
+    let nextMtime = null;
     try {
       const files = await (await fetch('/api/office/files', {cache: 'no-store'})).json();
       const row = (files.files || []).find((f) => f.name === want);
-      if (row) openedMtime = row.modified;
+      if (row) nextMtime = row.modified;
     } catch (e) { /* the fence is a safety net, not a precondition */ }
+    if (gen !== openSeq) return {ok: false, error: 'superseded'};
 
     step('reading ' + want + '…', 56);
     let raw;
@@ -2074,6 +2138,7 @@ function openDoc(name) {
       if (!r.ok) throw new Error('the bridge said ' + r.status);
       raw = new Uint8Array(await r.arrayBuffer());
     } catch (e) {
+      if (gen !== openSeq) return {ok: false, error: 'superseded'};
       fail('Could not read that workbook', String(e.message || e));
       return {ok: false, error: String(e.message || e)};
     }
@@ -2100,6 +2165,7 @@ function openDoc(name) {
     const wasDoc = DOC;
     if (editor) {
       await aiChatHandover(wasDoc, '');
+      if (gen !== openSeq) return {ok: false, error: 'superseded'};
       try { editor.destroyEditor(); } catch (e) { console.log('[oo] destroy: ' + e); }
       editor = null;
     }
@@ -2107,7 +2173,10 @@ function openDoc(name) {
     // constructed, and then HELD there — the plugin's own init deletes the key (trap
     // five above), so a single plant is erased by the very editor it was planted for.
     await aiChatHandover('', want);
+    if (gen !== openSeq) return {ok: false, error: 'superseded'};
     DOC = want;
+    openedMtime = nextMtime;
+    dirtyNow = false;
     aiChatArm(want);
     // The ribbon-streaming shim dies with the plugin frame the destroy above took
     // out, so it is re-armed on every open — not once per page. A swap that quietly
@@ -2123,7 +2192,15 @@ function openDoc(name) {
 
     return await new Promise((resolve) => {
       let settled = false;
-      const finish = (r) => { if (!settled) { settled = true; resolve(r); } };
+      const finish = (r) => {
+        if (settled) return;
+        settled = true;
+        if (cancelOpening === cancel) cancelOpening = null;
+        try { URL.revokeObjectURL(blobUrl); } catch (e) { /* already released */ }
+        resolve(r);
+      };
+      const cancel = () => finish({ok: false, error: 'superseded'});
+      cancelOpening = cancel;
       editor = new DocsAPI.DocEditor('editor', {
         document: {
           fileType: ext,
@@ -2193,7 +2270,7 @@ function openDoc(name) {
           }
         }, aiPluginsConfig() ? {plugins: aiPluginsConfig()} : {}),
         events: {
-          onAppReady: () => { step('editor frame ready', 88); },
+          onAppReady: () => { if (gen === openSeq) step('editor frame ready', 88); },
           onDocumentReady: () => {
             if (gen !== openSeq) return;       // a later open superseded this one
             ready = true;
@@ -2210,6 +2287,7 @@ function openDoc(name) {
             finish({ok: true, ms: ms, swap: swap});
           },
           onError: (e) => {
+            if (gen !== openSeq) return;
             const d = e && e.data;
             fail('The editor reported an error',
                  '<code>' + JSON.stringify(d) + '</code>');
@@ -2220,7 +2298,7 @@ function openDoc(name) {
             // ⚠️ THIS IS THE PAGE'S DIRTY FLAG, AND NOW THE PARENT'S TOO. The LOffice
             // strip's dot, its "unsaved changes" line and the heartbeat the bridge
             // uses to refuse an agent write all hang off this one event.
-            if (!ready) return;
+            if (!ready || gen !== openSeq) return;
             const d = !!(e && e.data);
             /* ⚠️ THE FRESH-OPEN PHANTOM (roadmap §9.2). The block above innerEditor()
                carries the whole measurement: this is ONLYOFFICE's own AI plugin
@@ -2238,14 +2316,14 @@ function openDoc(name) {
                not "bytes reached the disk". Forwarding that cleared the parent's dirty
                flag with nothing on disk, and the next file switch binned the work with no
                warning at all.
-               A CLEAR IS ONLY BELIEVED WHEN A WRITE-BACK PRODUCED IT: either one is in
-               flight right now (`saving`), or we already know the document is clean
-               (dirtyNow false — the event is then consistent and a no-op). Anything else
+               A CLEAR IS ONLY BELIEVED WHEN A WRITE-BACK PRODUCED IT. A pending save
+               is not yet proof; save() verifies both the receipt and the current
+               serialized document. When dirtyNow is false this event is a no-op. Anything else
                is sdkjs's opinion about a save that did not happen, and the honest answer
                is to STAY DIRTY and say so. Never the other way round: a dirty:TRUE is
                always believed, because unsaved work is never something to be optimistic
                about. */
-            if (!d && dirtyNow && !saving) {
+            if (!d && dirtyNow) {
               heldClears++;
               state('unsaved changes — the editor thinks it saved, but nothing was '
                     + 'written to the file yet');
@@ -2296,8 +2374,9 @@ function renameTo(to) {
   // renamed file would open with an empty panel — the "another feature touched the same
   // data" journey, and a silent loss of the user's own words. It is a key move, not a
   // re-save: whatever was stored is exactly what the new name should hold.
-  aiChatRename(from, want);
-  aiChatArm(want);          // the hold was watching the old name and has just retired
+  // Retargeting the save destination must survive a storage/UI failure.
+  try { aiChatRename(from, want); aiChatArm(want); }
+  catch (e) { console.log('[oo rename chat] ' + e); }
   el('docname').textContent = want;
   document.title = want + ' — LOffice editor';
   // The note strip, if it is showing a stale "no such workbook", is now wrong.
@@ -2325,6 +2404,7 @@ window.LOfficeEmbed = {
   renameTo: renameTo,
   applyOps: applyOps,
   readCells: readCells,
+  selection: selection,
   probe: () => ({ready: ready, doc: DOC, dirty: dirtyNow, saving: saving,
                  editorTag: editorTag, extSaves: extSaves,
                  heldClears: heldClears,
@@ -2363,12 +2443,15 @@ window.LOfficeEmbed = {
                                stops: aiStreamStops, ttft: aiStreamTTFT,
                                modal: aiStreamModal(), last: aiStreamLast}}}),
   destroy: async () => {
-    openSeq++;
+    const gen = ++openSeq;
+    if (cancelOpening) { cancelOpening(); cancelOpening = null; }
     // Same rule as the swap: the conversation is saved while the frame that holds it
     // is still there. A host that tears the embed down does not lose the chat either.
     if (editor) { await aiChatHandover(DOC, ''); }
+    if (gen !== openSeq) return;
     if (editor) { try { editor.destroyEditor(); } catch (e) { /* gone */ } }
     aiStreamDisarm();   // the chip must not outlive the editor it was reporting on
+    if (aiChatHold) { clearInterval(aiChatHold); aiChatHold = null; }
     editor = null; ready = false; dirtyNow = false;
   }
 };

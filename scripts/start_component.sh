@@ -174,7 +174,7 @@ import importlib.util, json, os, stat
 root = os.environ["ROOT_ABS"]
 try:
     active_path = os.path.join(root, "data", "runner.active.json")
-    fd = os.open(active_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(active_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode): raise ValueError("active marker is not regular")
         with os.fdopen(fd, encoding="utf-8") as handle:
@@ -182,7 +182,7 @@ try:
     finally:
         if fd >= 0: os.close(fd)
     pid_path = os.path.join(root, "data", "runner.pid")
-    pfd = os.open(pid_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    pfd = os.open(pid_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
         if not stat.S_ISREG(os.fstat(pfd).st_mode): raise ValueError("runner pid report is not regular")
         with os.fdopen(pfd, encoding="ascii") as handle:
@@ -810,31 +810,7 @@ PYRESOLVE
     # on a model that has no MTP heads fail the load — self-healing beats a hard stop).
     _launch_llama() {   # args: the full argv after $BIN
       _detached "$BIN" "$@" >> data/logs/runner.log 2>&1 &
-      _record_child runner "$!"
-      # THE APPLIED STAMP (S32). b10662 reads --api-key-file exactly ONCE, at this
-      # instant — adding a key to the file afterwards does not admit it and removing one
-      # does not revoke it (both directions measured). So this records the DIGEST of the
-      # key set THIS process was launched with, and the panel compares it against the
-      # file on disk to say "active after the runner restarts" as a fact rather than a
-      # guess. It is the sorted key set that is hashed, never a key: the stamp is
-      # 64 hex characters and reveals nothing.
-      #
-      # The digest is computed in awk-free plain shell + shasum so this arm keeps
-      # working with no python on PATH; the bridge computes the identical value in
-      # bridge/routers/apikeys.py:digest() and a test asserts the two agree.
-      #
-      # ⚠️ ONLY WHEN THE FLAG IS ACTUALLY SUPPORTED. On a binary with no
-      # --api-key-file the named keys do NOT work, and stamping them "applied" would
-      # make the panel say they are live — the LIE-TO-USER class. No stamp means the
-      # panel keeps saying "restart the runner", which is at least not false.
-      if [[ "$KEYFILE_ARMED" == "1" ]]; then
-        if [[ -s "$KEYFILE" ]]; then
-          grep -v '^[[:space:]]*\(#\|$\)' "$KEYFILE" | LC_ALL=C sort \
-            | shasum -a 256 | cut -d' ' -f1 > data/api_keys.applied
-        else
-          : | shasum -a 256 | cut -d' ' -f1 > data/api_keys.applied
-        fi
-      fi
+      _record_child runner "$!" || return 1
       local i
       for i in $(seq 1 90); do
         # ⚠️ THE HEADER IS LOAD-BEARING (ledger U21, fixed 2026-08-29). We launch with
@@ -845,16 +821,27 @@ PYRESOLVE
         # a runner that was up. -f treats 401 as failure, which is what hid it.
         if curl -sf -m 2 -H "Authorization: Bearer ${R_KEY}" \
              "http://127.0.0.1:${R_PORT}/v1/models" >/dev/null 2>&1; then
-          # b10662 has already parsed the file; unlink the derived plaintext copy so
-          # the protected store is the only persistent home of the built-in key.
+          # A function called from `if` does not inherit Bash errexit. Propagate
+          # the ownership refusal explicitly before claiming this launch is ready.
+          _stamp_pidfile_from_port runner "$R_PORT" || return 1
+          # Hash the exact named-key snapshot this child parsed, excluding its
+          # first (built-in) key. KEYFILE can change while the model is loading.
+          # Only a verified ready child gets an applied stamp.
+          if [[ "$KEYFILE_ARMED" == "1" ]]; then
+            local stamp_tmp
+            stamp_tmp=$(mktemp "$ROOT_ABS/data/.api-keys-applied.XXXXXX") || return 1
+            if ! tail -n +2 "$LAUNCH_KEYFILE" | LC_ALL=C sort \
+                | shasum -a 256 | cut -d' ' -f1 > "$stamp_tmp"; then
+              rm -f "$stamp_tmp"
+              return 1
+            fi
+            if ! mv -f "$stamp_tmp" "$ROOT_ABS/data/api_keys.applied"; then
+              rm -f "$stamp_tmp"
+              return 1
+            fi
+          fi
+          # The ready server retains the set in memory; remove the launch copy.
           rm -f "$LAUNCH_KEYFILE"
-          # U54 — the server is answering, so :$R_PORT can now be ASKED who holds it.
-          # This is the one instant where the answer is unambiguous, and it is why the
-          # stamp lives inside _launch_llama rather than after the retry ladder: each
-          # attempt that reaches readiness corrects the pidfile for itself, so the
-          # retry arm below cannot leave a losing $! behind. Never fatal — a failure
-          # here only means the pidfile keeps the value it already had.
-          _stamp_pidfile_from_port runner "$R_PORT"
           return 0
         fi
         sleep 2

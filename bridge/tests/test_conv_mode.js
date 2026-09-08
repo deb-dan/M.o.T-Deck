@@ -414,7 +414,7 @@ check('the reply is spoken through the EXISTING ▶ speak path (same endpoint, s
   /function convSpeak\([\s\S]{0,700}?msgSpeak\(wrap, btn, \(\) => convEvent\('speak_ok'\)\)/.test(html));
 check('playback ending re-arms the mic through ONE funnel (stopSpeaking), so a '
     + 'natural end, an error and a manual ■ stop all resume the same way',
-  /function stopSpeaking\([\s\S]{0,700}?if \(c\.onDone\)\{ try \{ c\.onDone\(\); \}/.test(html));
+  /if \(c\.onDone\)\{ try \{ c\.onDone\(\); \}/.test(require('./_panel_source').extractFunction(html, 'stopSpeaking')));
 check('msgSpeak reports whether playback actually STARTED, so a failed render is '
     + 'counted rather than hanging the loop forever',
   /msgSpeak\(wrap, btn, onDone\)\{/.test(html)

@@ -376,7 +376,7 @@ check('interpolation actually interpolates (a midpoint is between its neighbours
   (() => {
     const two = Float32Array.from([0, 1]);
     const up = resampleLinear(two, 1, 2);      // → [0, 0.5]
-    return up.length === 4 || (up[1] > 0 && up[1] < 1);
+    return up.length === 4 && up[0] === 0 && up[1] === 0.5 && up[2] === 1 && up[3] === 1;
   })());
 check('an empty input yields an empty output', resampleLinear(new Float32Array(0), 48000, 16000).length === 0);
 check('a zero/absurd rate yields empty rather than Infinity',
@@ -422,7 +422,7 @@ check('the transcript is APPENDED, never auto-sent',
   html.indexOf('function appendTranscript(') >= 0
   && !/function autoDrain\([\s\S]*?\n}/.exec(html)[0].includes('sendChat('));
 check('an empty transcript is silently skipped (whisper hallucinates on silence)',
-  /if \(text\) appendTranscript\(text, false\)/.test(html));
+  /if \(text && autoVad === a\) appendTranscript\(text, false\)/.test(html));
 check('utterances are transcribed one at a time (the endpoint holds a global lock)',
   /if \(!a \|\| a\.busy \|\| !a\.queue\.length\) return;/.test(html));
 check('auto mode gives up after repeated failures rather than looping forever',
@@ -437,8 +437,8 @@ check('clearing the STT default stops it',
   html.indexOf("stopAuto('the speech-to-text default was cleared')") >= 0);
 check('starting manual dictation stops it (the two are exclusive)',
   html.indexOf("stopAuto('manual dictation started')") >= 0);
-check('starting auto stops manual dictation (exclusive both ways)',
-  /async function startAuto\([\s\S]{0,400}?if \(talkRec\) stopTalk\(true\)/.test(html));
+check('starting auto cancels manual dictation including pending permission',
+  /stopTalk\(true\)/.test(require('./_panel_source').extractFunction(html, 'startAuto')));
 check('the transcribing state is surfaced in the title attribute (non-intrusive)',
   /busy \? 'transcribing…'/.test(html));
 check('errors on this chip use a flash that restores the AUTO label, not speakFlash '

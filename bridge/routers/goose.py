@@ -345,8 +345,10 @@ async def goose_session_remove(request: Request) -> JSONResponse:
         body = await request.json()
     except Exception:                                            # noqa: BLE001
         body = {}
-    sid = str((body or {}).get("id") or "").strip()
-    ok, msg = _goose.remove_session(ROOT, sid)
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "message": "session id required"}, status_code=400)
+    sid = str(body.get("id") or "").strip()
+    ok, msg = await asyncio.to_thread(_goose.remove_session, ROOT, sid)
     _goose_log(f"session remove {sid!r}: {'ok' if ok else 'REFUSED'} — {msg}")
     return JSONResponse({"ok": ok, "message": msg}, status_code=200 if ok else 409)
 
@@ -365,7 +367,7 @@ async def goose_sessions_prune_empty(request: Request) -> JSONResponse:
         body = await request.json()
     except Exception:                                            # noqa: BLE001
         body = {}
-    supplied = (body or {}).get("ids")
+    supplied = body.get("ids") if isinstance(body, dict) else None
     if (not isinstance(supplied, list) or not supplied
             or any(not isinstance(sid, str) or not _goose.SESSION_ID_RE.fullmatch(sid)
                    for sid in supplied)
@@ -380,7 +382,8 @@ async def goose_sessions_prune_empty(request: Request) -> JSONResponse:
     sess = _goose.current()
     live = (sess.session_id if sess is not None and sess.alive() else "") or ""
     current = sorted(r["id"] for r in rows
-                     if int(r.get("messages") or 0) == 0 and r.get("id") != live)
+                     if type(r.get("messages")) is int and r["messages"] == 0
+                     and r.get("id") != live)
     wanted = sorted(supplied)
     if wanted != current:
         return JSONResponse({
@@ -574,54 +577,62 @@ async def goose_pty(ws: WebSocket) -> None:
     replay, eof = attached
     # ONE relay per session, started here rather than in start(): it is idempotent, and
     # a reattach must not spawn a second reader for the same fd.
-    sess.start_relay()
-    if reattached:
-        _goose_log(f"session {'TAKEOVER' if verdict == 'takeover' else 'REATTACH'} "
-                   f"pid={sess.proc.pid} replay={len(replay)}B "
-                   f"id={sess.session_id or '?'}")
-        if replay:
-            await ws.send_bytes(replay)
-            # A rule, so the user can SEE where the replayed tail ends and live output
-            # begins. A scrollback that silently pretends to be the whole transcript is
-            # the quiet-wrong-answer shape this project ranks worst.
-            await ws.send_bytes(
-                ("\r\n\x1b[2m— reattached · last "
-                 f"{int(_goose.SCROLLBACK_BYTES / 1024)}KB replayed —\x1b[0m\r\n")
-                .encode())
-        sess.resize(cols, rows)
-
-    async def _pump() -> None:
-        while True:
-            data = await outq.get()
-            if not data:
-                return
-            await ws.send_bytes(data)
-
-    async def _recv() -> None:
-        while True:
-            msg = await ws.receive()
-            if msg.get("type") == "websocket.disconnect":
-                return
-            raw = msg.get("bytes")
-            if raw is None and msg.get("text") is not None:
-                raw = msg["text"].encode()
-            clean, sizes = _goose.split_resize(raw or b"")
-            for c, r in sizes:
-                sess.resize(c, r)
-            if clean:
-                sess.write(clean)
-
-    pump = asyncio.create_task(_pump())
-    recv = asyncio.create_task(_recv())
-    if eof:                # the child died while nobody was attached: nothing to pump
-        pump.cancel()
+    pump = recv = None
     try:
+        sess.start_relay()
+        if reattached:
+            _goose_log(f"session {'TAKEOVER' if verdict == 'takeover' else 'REATTACH'} "
+                       f"pid={sess.proc.pid} replay={len(replay)}B "
+                       f"id={sess.session_id or '?'}")
+            if replay:
+                await ws.send_bytes(replay)
+                # A rule, so the user can SEE where the replayed tail ends and live output
+                # begins. A scrollback that silently pretends to be the whole transcript is
+                # the quiet-wrong-answer shape this project ranks worst.
+                await ws.send_bytes(
+                    ("\r\n\x1b[2m— reattached · last "
+                     f"{int(_goose.SCROLLBACK_BYTES / 1024)}KB replayed —\x1b[0m\r\n")
+                    .encode())
+            sess.resize(cols, rows)
+
+        async def _pump() -> None:
+            while True:
+                data = await outq.get()
+                if not data:
+                    return
+                await ws.send_bytes(data)
+
+        async def _recv() -> None:
+            while True:
+                msg = await ws.receive()
+                if msg.get("type") == "websocket.disconnect":
+                    return
+                raw = msg.get("bytes")
+                if raw is None and msg.get("text") is not None:
+                    raw = msg["text"].encode()
+                clean, sizes = _goose.split_resize(raw or b"")
+                for c, r in sizes:
+                    sess.resize(c, r)
+                if clean:
+                    sess.write(clean)
+
+        pump = asyncio.create_task(_pump())
+        recv = asyncio.create_task(_recv())
+        if eof:                # the child died while nobody was attached: nothing to pump
+            pump.cancel()
         await asyncio.wait({pump, recv}, return_when=asyncio.FIRST_COMPLETED)
     except Exception:                                            # noqa: BLE001
         pass
     finally:
-        for t in (pump, recv):
+        tasks = [t for t in (pump, recv) if t is not None]
+        for t in tasks:
             t.cancel()
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            # ASGI shutdown may cancel this join too. The subscription still has
+            # to be detached below, or its live child never gets a grace timer.
+            pass
         # ══ DELIBERATE-VS-DROP, DECIDED BY THE CHILD AND NOT BY THE WIRE ═══════
         # Ending is an explicit act that kills the PROCESS: the End button posts
         # /api/goose/end, and `/exit` inside goose does the same thing from the other

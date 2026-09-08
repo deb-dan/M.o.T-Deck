@@ -282,6 +282,10 @@ def main() -> int:
             else:
                 print("NEXT: no managed running-secret consumer is implied by this migration")
         return 0
+    except yaml.YAMLError:
+        print("ERROR: local-secret migration stopped safely: invalid YAML (values redacted)",
+              file=sys.stderr)
+        return 2
     except Exception as exc:  # never interpolate a credential
         print(f"ERROR: local-secret migration stopped safely: {exc}", file=sys.stderr)
         return 2

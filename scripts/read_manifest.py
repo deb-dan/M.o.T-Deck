@@ -19,7 +19,7 @@ import yaml
 
 
 def _read_regular(path: Path) -> str:
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise ValueError("manifest is not a regular file")
@@ -32,7 +32,11 @@ def _read_regular(path: Path) -> str:
 
 
 def value(root: Path, dotted: str, kind: str):
-    data = yaml.safe_load(_read_regular(root / "motdeck.yaml"))
+    try:
+        data = yaml.safe_load(_read_regular(root / "motdeck.yaml"))
+    except yaml.YAMLError:
+        # PyYAML includes the offending source line, which may contain a password.
+        raise ValueError('manifest YAML syntax is invalid (values redacted)') from None
     if not isinstance(data, dict):
         raise ValueError("manifest root must be a mapping")
     # The launcher's typed YAML boundary is also the one secret-overlay boundary;

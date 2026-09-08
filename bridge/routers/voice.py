@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import functools
+import json
+import tempfile
 import os
 import random
 import subprocess
@@ -11,8 +14,9 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from ..core.appctx import ROOT, _VOICE_ERR, _voice, app
 from ..core.hfclient import _HF_ANY
+from ..core.modelreg import _read_registry_text, registry_lock, write_registry
 from ..core.procs import _registry_models, cfg
-from ..core.yamlset import _set_yaml_scalar
+from ..core.yamlset import _set_yaml_scalar, _set_yaml_scalars
 from .downloads import _registry_update
 from .models import _is_hidden, _split_audio, _voice_cfg, _voice_spawn_guard
 
@@ -69,6 +73,7 @@ async def voice_config_set(req: Request) -> JSONResponse:
     _, audio = _split_audio(_registry_models())
     v_before = _voice_cfg()
     changed = []
+    updates = {}
     for field, key, pred, label in (
             ("tts_model", "tts_model", _voice.is_tts_entry, "TTS"),
             ("stt_model", "stt_model", _voice.is_stt_entry, "STT")):
@@ -87,15 +92,20 @@ async def voice_config_set(req: Request) -> JSONResponse:
                     {"ok": False, "error": f"'{mid}' is a {_voice.audio_entry_view(entry)['role']} "
                                            f"model — it cannot be the default {label} model"},
                     status_code=400)
-        if key == "tts_model" and mid != v_before["tts_model"]:
-            # The resident worker holds exactly one checkpoint. Clearing the default
-            # must free that RAM immediately (Debi's ratified lifecycle), and a SWITCH
-            # would otherwise leave the old model resident — charged to the ledger —
-            # until someone happened to speak again. ⚠️ PENDING FABLE QA: the spec
-            # named only the clear case; killing on a switch too is strictly tidier.
-            _voice.worker_stop("tts default " + ("cleared" if not mid else f"→ {mid}"))
-        _set_yaml_scalar("voice", key, mid)
+        updates[key] = mid
         changed.append(f"{key}={mid or '(off)'}")
+    if updates:
+        # Validate the whole request before changing either default or unloading.
+        # Quote IDs so YAML words such as "on" remain literal registry IDs.
+        try:
+            _set_yaml_scalars("voice", {key: json.dumps(mid) if mid else ""
+                                       for key, mid in updates.items()})
+        except (OSError, ValueError) as exc:
+            return JSONResponse({"ok": False, "error": f"could not save voice defaults: {exc}"},
+                                status_code=500)
+        if "tts_model" in updates and updates["tts_model"] != v_before["tts_model"]:
+            mid = updates["tts_model"]
+            _voice.worker_stop("tts default " + ("cleared" if not mid else f"→ {mid}"))
     if changed:
         print(f"[voice] config {' · '.join(changed)}", flush=True)
     v = _voice_cfg()
@@ -188,7 +198,7 @@ async def _heal_ref_text(entry: dict, audio: list) -> "dict | None":
     text = await _transcribe_clip(path, audio)
     if not text:
         return None
-    updated = _registry_update(entry.get("id"), {"ref_text": text[:_voice.REF_TEXT_MAX]})
+    updated = _registry_update(entry.get("id"), {"ref_text": text[:_voice.REF_TEXT_MAX]}, expected=entry)
     if updated is None:
         return None
     print(f"[voice] ref_text self-healed for {entry.get('id')}: {text[:60]!r}",
@@ -206,17 +216,28 @@ def _trim_ref_clip(ff: "str | None", src: str) -> tuple:
     if not ff or _voice is None:
         return None, "no ffmpeg"
     try:
+        source_stamp = _voice.ref_stamp(src)
         dst = _voice.trimmed_clip_path(src, ROOT)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         if os.path.isfile(dst) and os.path.getsize(dst) > 0 \
                 and os.path.getmtime(dst) >= os.path.getmtime(src):
             return dst, ""
-        argv = _voice.ffmpeg_trim_argv(ff, src, dst, _voice.REF_CLIP_TRIM_SECS)
-        c = subprocess.run(argv, capture_output=True, text=True, cwd=str(ROOT),
-                           timeout=120)
-        if os.path.isfile(dst) and os.path.getsize(dst) > 0:
-            return dst, ""
-        return None, ((c.stderr or "").strip()[-160:] or "ffmpeg produced no wav")
+        fd, temporary = tempfile.mkstemp(prefix=".trim-", suffix=".wav",
+                                          dir=os.path.dirname(dst))
+        os.close(fd)
+        try:
+            argv = _voice.ffmpeg_trim_argv(ff, src, temporary, _voice.REF_CLIP_TRIM_SECS)
+            c = subprocess.run(argv, capture_output=True, text=True, cwd=str(ROOT),
+                               timeout=120)
+            if c.returncode == 0 and os.path.getsize(temporary) > 0:
+                if _voice.ref_stamp(src) != source_stamp:
+                    return None, "the source clip changed during trimming; please choose it again"
+                os.replace(temporary, dst)
+                return dst, ""
+            return None, ((c.stderr or "").strip()[-160:] or "ffmpeg produced no wav")
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
     except Exception as e:                                   # noqa: BLE001
         return None, f"{type(e).__name__}: {str(e)[:120]}"
 
@@ -280,7 +301,7 @@ async def voice_entry_ref(req: Request) -> JSONResponse:
         if action == "refuse":
             return JSONResponse({"ok": False, "error": msg}, status_code=400)
         if action == "trim":
-            trimmed, why = _trim_ref_clip(ff, path)
+            trimmed, why = await asyncio.to_thread(_trim_ref_clip, ff, path)
             if trimmed:
                 path, length_note = trimmed, msg
                 # A trimmed clip is a DIFFERENT clip, so a transcript supplied for the
@@ -320,11 +341,11 @@ async def voice_entry_ref(req: Request) -> JSONResponse:
              # Clearing the clip clears its transcript too: a caption with no audio
              # is not a voice, it is a stray sentence prepended to every render.
              "ref_text": (ref_text[:500] or None) if path else None}
-    updated = _registry_update(mid, patch)
+    updated = _registry_update(mid, patch, expected=entry)
     if updated is None:
         return JSONResponse(
-            {"ok": False, "error": f"'{mid}' is no longer in the registry"},
-            status_code=400)
+            {"ok": False, "error": f"'{mid}' changed while preparing the clip — please choose it again"},
+            status_code=409)
     print(f"[voice] entry-ref {mid} → {os.path.basename(path) if path else '(cleared)'}",
           flush=True)
     return JSONResponse({"ok": True, "entry": _voice.audio_entry_view(updated),
@@ -815,11 +836,29 @@ async def voice_library_save(req: Request) -> JSONResponse:
             status_code=400)
     d = _voice.voices_dir(ROOT)
     os.makedirs(d, exist_ok=True)
-    path = _voice.unique_clip_path(d, name)
+    path = None
+    created = False
     try:
-        with open(path, "wb") as f:
-            f.write(raw)
+        # The candidate is advisory: exclusive creation arbitrates simultaneous saves.
+        for attempt in range(100):
+            path = _voice.unique_clip_path(d, name)
+            try:
+                with open(path, "xb") as f:
+                    created = True
+                    f.write(raw)
+                    f.flush()
+                    os.fsync(f.fileno())
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise FileExistsError("too many recordings with that name; choose another name")
     except OSError as e:
+        if created:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
         return JSONResponse({"ok": False, "error": f"could not save the clip: {str(e)[:200]}"},
                             status_code=500)
     # LENGTH GUARD, save side. The library keeps what it was given — trimming a stored
@@ -864,16 +903,33 @@ async def voice_library_delete(req: Request) -> JSONResponse:
     path, why = _voice.library_target(body.get("name"), ROOT)
     if not path:
         return JSONResponse({"ok": False, "error": why}, status_code=400)
+    unpinned = []
+    reg = ROOT / "data" / "models.json"
     try:
-        os.remove(path)
-    except OSError as e:
+        with registry_lock(str(reg)):
+            data = json.loads(_read_registry_text(reg))
+            if (not isinstance(data, dict) or not isinstance(data.get("models"), list)
+                    or any(not isinstance(m, dict) for m in data["models"])):
+                raise ValueError("model registry is unreadable; the clip was kept")
+            before = copy.deepcopy(data)
+            for m in data["models"]:
+                if str(m.get("ref_audio") or "") == path:
+                    m.pop("ref_audio", None)
+                    m.pop("ref_text", None)
+                    unpinned.append(m.get("id"))
+            # Commit all pins before removing irreplaceable audio. A failed registry
+            # write leaves the recording intact; a failed removal restores the pins.
+            if unpinned:
+                write_registry(str(reg), data)
+            try:
+                os.remove(path)
+            except OSError:
+                if unpinned:
+                    write_registry(str(reg), before)
+                raise
+    except (OSError, ValueError) as e:
         return JSONResponse({"ok": False, "error": f"could not delete: {str(e)[:200]}"},
                             status_code=500)
-    unpinned = []
-    for m in _registry_models():
-        if str(m.get("ref_audio") or "") == path:
-            _registry_update(m.get("id"), {"ref_audio": None, "ref_text": None})
-            unpinned.append(m.get("id"))
     print(f"[voice] library deleted {os.path.basename(path)}"
           f"{' (unpinned ' + ', '.join(unpinned) + ')' if unpinned else ''}", flush=True)
     return JSONResponse({"ok": True, "deleted": os.path.basename(path),

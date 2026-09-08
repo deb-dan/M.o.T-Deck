@@ -63,7 +63,7 @@ def check(name, cond):
 
 
 def run(coro):
-    return asyncio.new_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 # ── 1. fan-out and lifecycle ─────────────────────────────────────────────────
@@ -121,8 +121,10 @@ async def _t2():
     slow = h.subscribe()
     fast = h.subscribe()
     t0 = time.monotonic()
+    fast_ids = []
     for i in range(200):
         h.publish("download", id=str(i), state="downloading")
+        fast_ids.append(fast.get_nowait()["id"])
     dt = time.monotonic() - t0
     check(f"200 publishes with a wedged subscriber took {dt * 1000:.1f}ms and did not "
           "block (no await on a full queue)", dt < 1.0)
@@ -130,18 +132,13 @@ async def _t2():
           slow.qsize() == 4)
     check("…and it is holding the NEWEST events, not the oldest (a nudge to refetch is "
           "only useful while it is fresh)",
-          json.dumps(slow.get_nowait())  # oldest of the surviving four
-          and True)
+          [slow.get_nowait()["id"] for _ in range(slow.qsize())]
+          == ["196", "197", "198", "199"])
     check("the drop was COUNTED for that subscriber, so it can be told it is behind",
           h.missed(slow) > 0)
     check("…and the hub's own counter saw it too", h.dropped > 0)
-    # The fast subscriber is drained as it goes: it must have lost nothing.
-    got = 0
-    while not fast.empty():
-        fast.get_nowait()
-        got += 1
-    check("one slow subscriber did not cost the fast one its buffer "
-          f"({got} events held)", got == 4)
+    check("one slow subscriber did not cost the fast one any event",
+          fast_ids == [str(i) for i in range(200)] and h.missed(fast) == 0)
     h.clear_missed(slow)
     check("clear_missed resets the counter (it is sent once, not forever)",
           h.missed(slow) == 0)

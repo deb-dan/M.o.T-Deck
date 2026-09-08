@@ -81,7 +81,7 @@ ok(C({sseOff: true}) === M.POLL_WATCH
 ok(C({sseOff: true, provisioning: true}) === M.POLL_FAST,
    '…and provisioning still wins there');
 ok(Object.keys({provisioning:0, sseOff:0, sseLive:0, unhealthy:0}).every(
-     k => new Set([C({[k]: true}), C({})]).size >= 1),
+     k => new Set([C({sseLive:true, [k]:true}), C({sseLive:true, [k]:false})]).size === 2),
    'every documented input key is actually read by the function');
 
 // ── 2. the state machine ────────────────────────────────────────────────────
@@ -171,8 +171,8 @@ ok(/function armPoll\(\)\s*\{[\s\S]{0,200}clearTimeout\(pollTimer\)/.test(html),
 ok(!/clearInterval\(sseStaleTimer\)/.test(html),
    'no extra staleness timer was added — refresh() carries the tick, so the idle path '
    + 'gains ZERO wakeups from this feature');
-ok(/async function refresh\(manual\) \{\s*\n\s*sseStep\('tick'\);/.test(html),
-   '…and that tick is the FIRST thing refresh does');
+ok(/async function refreshStatusOnce\(manual\) \{\s*\n\s*sseStep\('tick'\);/.test(html),
+   '…and that tick runs before the serialized status read');
 // every handler is a handler the page already had
 for (const [kind, fn] of [['download', 'refreshDownloads'], ['download', 'ensureDlPoll'],
                           ['nav', 'navSync'], ['model', 'initModels'],

@@ -1018,7 +1018,7 @@ def test_the_sessions_list_is_gooses_own(live_check=True):
     ok([r["id"] for r in rows] == ["20260828_9", "20260828_2"],
        "newest first, and a row without an id is dropped rather than rendered blank")
     ok(rows[1]["messages"] == 4 and rows[1]["model"] == "m", "the fields are read")
-    ok(rows[0]["messages"] == 0 and rows[0]["model"] == "" and rows[0]["when"],
+    ok(rows[0]["messages"] is None and rows[0]["model"] == "" and rows[0]["when"],
        "…and a sparse row still renders, with the values it actually has")
     for junk in ("", "null", "{}", "not json", None, "[1,2,3]"):
         ok(G.parse_sessions(junk) == [] or all(isinstance(r, dict)

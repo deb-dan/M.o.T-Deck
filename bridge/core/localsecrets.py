@@ -34,7 +34,7 @@ def _path(root: Path) -> Path:
 
 
 def _read_regular(path: Path) -> str:
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):

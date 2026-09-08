@@ -109,10 +109,10 @@ function run(state) {
   dom.els['chat-auto'].hidden = !state.sttOn;
   dom.els['chat-conv'].hidden = !(state.sttOn && state.ttsOn);
   const fns = new Function('document', 'autoOn', 'convOn', 'talkRec', 'voiceCfg',
-    'TALK_TITLE', 'stopAuto', 'stopConv',
+    'TALK_TITLE', 'stopAuto', 'stopConv', 'autoStarting',
     SRC + '; return { renderAudioSwitch, audioModeOff, audioSwKey };')(
       env.document, env.autoOn, env.convOn, env.talkRec, env.voiceCfg, env.TALK_TITLE,
-      env.stopAuto, env.stopConv);
+      env.stopAuto, env.stopConv, state.pending || null);
   fns.renderAudioSwitch();     // every case below starts from a painted switch
   return { dom, log, fns, els: dom.els };
 }
@@ -183,6 +183,12 @@ for (const pos of ['off', 'auto', 'conv']) {
   eq('…and from off it tears nothing down', o.log, []);
   ok(o.els['chat-audiosw'].dataset.pos === 'off',
      '…but still REPAINTS rather than doing nothing at all');
+}
+for (const pending of ['auto', 'conv']) {
+  const r = run({pos:'off', sttOn:true, ttsOn:true, pending});
+  r.fns.audioModeOff();
+  eq('Off cancels pending ' + pending + ' microphone permission', r.log,
+     [(pending === 'conv' ? 'stopConv:' : 'stopAuto:') + 'the audio switch was set to off']);
 }
 // (e) THE KEYBOARD — a radio group moves and selects in one action, and skips dead zones
 {

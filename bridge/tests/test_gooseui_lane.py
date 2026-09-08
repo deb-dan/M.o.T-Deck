@@ -383,12 +383,11 @@ def test_never_clobber_matrix():
         ok(sorted(PR.OWNED_KEYS) == ["api_key_env", "base_url", "engine", "models"],
            "…and the owned set is exactly those four, stated rather than implied")
 
-        # A corrupt file is treated as absent, never as a reason to refuse.
+        # A damaged user edit must remain recoverable instead of being discarded.
         open(p, "w").write("{not json")
-        PR.seed_provider(cd, "http://127.0.0.1:6767/v1", reg)
-        ok(_json.load(open(p))["name"] == PR.PROVIDER_NAME,
-           "an unreadable provider file is REPLACED rather than left broken — the lane "
-           "lands on something usable")
+        _, changed, err = PR.seed_provider(cd, "http://127.0.0.1:6767/v1", reg)
+        ok(not changed and err and Path(p).read_text() == "{not json",
+           "an unreadable provider file is preserved with an explicit refusal")
 
 
 def test_the_main_model_setting_is_seeded_not_enforced():

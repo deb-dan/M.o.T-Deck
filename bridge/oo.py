@@ -269,7 +269,21 @@ def brotli_sibling(path, accept_encoding) -> str:
     files — and it is safe only when the client asked, which is why the header is a
     required argument rather than an assumption.
     """
-    if not isinstance(accept_encoding, str) or "br" not in accept_encoding.lower():
+    if not isinstance(accept_encoding, str):
+        return ""
+    qualities = {}
+    for item in accept_encoding.lower().split(','):
+        coding, *params = item.strip().split(';')
+        quality = 1.0
+        for param in params:
+            key, _, value = param.strip().partition('=')
+            if key == 'q':
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0.0
+        qualities[coding.strip()] = quality if 0 <= quality <= 1 else 0.0
+    if qualities.get('br', qualities.get('*', 0.0)) <= 0:
         return ""
     if str(path).endswith(".br"):
         return ""
@@ -279,7 +293,7 @@ def brotli_sibling(path, accept_encoding) -> str:
             return cand
     except OSError:
         return ""
-    return cand if os.path.isfile(cand) else ""
+    return ""
 
 
 # ── write-back: THE SAVE ─────────────────────────────────────────────────────
@@ -382,9 +396,8 @@ def writeback(office, root, name, data, expect_mtime=None, force=False, today=No
         return None, (400, UNFENCED_REFUSAL)
 
     if want is not None and not force:
-        # One second of slack: the wire carries a float that has been through JSON
-        # and a filesystem whose timestamp resolution is not ours to assume.
-        if abs(want - disk_mtime) > 1.0:
+        # A second edit in the same second must still trip the fence.
+        if abs(want - disk_mtime) > office.SAVE_FENCE_SLACK:
             return None, (409, "that workbook changed on disk since the editor opened "
                                "it — saving now would overwrite the newer version. "
                                "Reopen it, or save again with force to overwrite.")

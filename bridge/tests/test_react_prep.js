@@ -1,60 +1,10 @@
-// TASK B / TASK A unit test — pure helpers from the sandboxed artifact renderer
-// (bridge/panel/index.html): prepReact() (import stripping + root-component detection)
-// and the resizable-pane clamp math (clampArtSplit / clampSessionsWidth).
-// Mirrors the functions verbatim. Offline, no deps. Run: node bridge/tests/test_react_prep.js
-
-// ---- mirror of prepReact() ----
-function prepReact(src){
-  let s = String(src || '');
-  const named = new Set();
-  const grab = (g) => g.split(',').forEach(x => { x = x.trim().replace(/\s+as\s+\w+$/, ''); if (x) named.add(x); });
-  s = s.replace(/import\s+React\s*,\s*\{([^}]*)\}\s*from\s*['"]react['"]\s*;?/g, (m, g) => { grab(g); return ''; });
-  s = s.replace(/import\s*\{([^}]*)\}\s*from\s*['"]react['"]\s*;?/g, (m, g) => { grab(g); return ''; });
-  s = s.replace(/import\s+React\s+from\s*['"]react['"]\s*;?/g, '');
-  s = s.replace(/import\s+\*\s+as\s+React\s+from\s*['"]react['"]\s*;?/g, '');
-  s = s.replace(/import\s+ReactDOM\s*,?\s*(?:\{[^}]*\})?\s*from\s*['"]react-dom(?:\/client)?['"]\s*;?/g, '');
-  s = s.replace(/import\s*\{[^}]*\}\s*from\s*['"]react-dom(?:\/client)?['"]\s*;?/g, '');
-
-  let defaultName = null, m;
-  if ((m = s.match(/export\s+default\s+function\s+([A-Za-z_$][\w$]*)/))){
-    defaultName = m[1];
-    s = s.replace(/export\s+default\s+function\s+([A-Za-z_$][\w$]*)/, 'function $1');
-  } else if ((m = s.match(/export\s+default\s+class\s+([A-Za-z_$][\w$]*)/))){
-    defaultName = m[1];
-    s = s.replace(/export\s+default\s+class\s+([A-Za-z_$][\w$]*)/, 'class $1');
-  } else if (/export\s+default\s+function\s*\(/.test(s)){
-    defaultName = '__ArtifactRoot__';
-    s = s.replace(/export\s+default\s+function\s*\(/, 'function __ArtifactRoot__(');
-  } else if (/export\s+default\s+class\b/.test(s)){
-    defaultName = '__ArtifactRoot__';
-    s = s.replace(/export\s+default\s+class\b/, 'class __ArtifactRoot__');
-  } else if ((m = s.match(/export\s+default\s+([A-Za-z_$][\w$]*)\s*;?/))){
-    defaultName = m[1];
-    s = s.replace(/export\s+default\s+[A-Za-z_$][\w$]*\s*;?/, '');
-  } else if (/export\s+default\s+/.test(s)){
-    defaultName = '__ArtifactRoot__';
-    s = s.replace(/export\s+default\s+/, 'const __ArtifactRoot__ = ');
-  }
-  s = s.replace(/export\s+default\s+/g, '');
-  s = s.replace(/export\s+(?=(?:function|class|const|let|var)\b)/g, '');
-
-  let root = null;
-  if (/\b(?:function|class|const|let|var)\s+App\b/.test(s)) root = 'App';
-  else if (defaultName) root = defaultName;
-  else {
-    const comps = [];
-    const re = /(?:function|class)\s+([A-Z][\w$]*)|(?:const|let|var)\s+([A-Z][\w$]*)\s*=/g;
-    let mm; while ((mm = re.exec(s))) comps.push(mm[1] || mm[2]);
-    if (comps.length) root = comps[comps.length - 1];
-  }
-
-  const inject = named.size ? ('const { ' + [...named].join(', ') + ' } = React;\n') : '';
-  return { code: inject + s, root: root };
-}
-
-// ---- mirror of the clamp helpers ----
-function clampArtSplit(f){ f = parseFloat(f); if (!isFinite(f)) return 0.5; return Math.max(0.25, Math.min(0.75, f)); }
-function clampSessionsWidth(w){ w = parseFloat(w); if (!isFinite(w)) return 204; return Math.max(180, Math.min(420, w)); }
+// Execute the shipped helpers; the expectations below are independent fixtures.
+const fs = require('node:fs'), path = require('node:path');
+const {extractFunction} = require('./_panel_source');
+const source = fs.readFileSync(path.join(__dirname, '../panel/index.html'), 'utf8');
+const names = ['prepReact', 'clampArtSplit', 'clampSessionsWidth'];
+const {prepReact,clampArtSplit,clampSessionsWidth} = new Function(names.map(n => extractFunction(source, n)).join('\n')
+  + '; return {' + names.join(',') + '};')();
 
 let pass = 0, fail = 0;
 function eq(name, got, want){
@@ -105,15 +55,23 @@ ok('named export function kept', /function Header\(/.test(namedExp.code));
 ok('named export const kept', /const App = /.test(namedExp.code));
 eq('named-export App detected as root', namedExp.root, 'App');
 
+// Existing single-file expressions must remain executable after export normalization.
+for (const input of ['export default props => props.value;', 'export default React.memo(() => 7);']) {
+  const result = prepReact(input);
+  eq('expression default gets a synthetic root', result.root, '__ArtifactRoot__');
+  const component = new Function('React', result.code + '; return ' + result.root)({memo: fn => fn});
+  eq('expression default remains executable', component({value:7}), 7);
+}
+
 // ---- clamp math ----
-eq('artsplit default (junk)', clampArtSplit('abc'), 0.5);
+eq('artsplit default (junk)', clampArtSplit('abc'), 0.42);
 eq('artsplit clamp low', clampArtSplit(0.1), 0.25);
 eq('artsplit clamp high', clampArtSplit(0.9), 0.75);
 eq('artsplit passthrough', clampArtSplit(0.5), 0.5);
 eq('artsplit string parse', clampArtSplit('0.6'), 0.6);
 eq('sessions default (junk)', clampSessionsWidth('x'), 204);
-eq('sessions clamp low', clampSessionsWidth(50), 180);
-eq('sessions clamp high', clampSessionsWidth(900), 420);
+eq('sessions clamp low', clampSessionsWidth(50), 120);
+eq('sessions clamp high', clampSessionsWidth(900), 560);
 eq('sessions passthrough', clampSessionsWidth(300), 300);
 eq('sessions string parse', clampSessionsWidth('250px'), 250);
 

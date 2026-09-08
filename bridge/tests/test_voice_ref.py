@@ -290,14 +290,17 @@ check("GET /api/voice/library exists", '@app.get("/api/voice/library")' in APP)
 check("POST /api/voice/library/save exists", '@app.post("/api/voice/library/save")' in APP)
 check("POST /api/voice/library/delete exists", '@app.post("/api/voice/library/delete")' in APP)
 check("entry-ref writes through the atomic _registry_update",
-      "_registry_update(mid, patch)" in APP)
+      "_registry_update(mid, patch, expected=entry)" in APP)
 check("entry-ref validates before writing", "validate_ref_choice(entry, path, ref_text)" in APP)
 check("a library name is resolved through the containment guard",
       "library_target(name, ROOT)" in APP)
 check("delete is guarded by the same containment helper",
       'library_target(body.get("name"), ROOT)' in APP)
-check("deleting a clip UN-PINS every entry that used it",
-      '"ref_audio": None, "ref_text": None' in APP)
+DELETE = APP.split("async def voice_library_delete(", 1)[1].split('\n@app.', 1)[0]
+check("deleting a clip UN-PINS every entry that used it in the registry transaction",
+      'for m in data["models"]:' in DELETE
+      and 'm.pop("ref_audio", None)' in DELETE and 'm.pop("ref_text", None)' in DELETE
+      and 'write_registry' in DELETE)
 check("a saved clip never clobbers", "unique_clip_path(d, name)" in APP)
 check("the save endpoint sanitizes the name server-side", "sanitize_clip_name(" in APP)
 check("the save endpoint caps the body", "REF_AUDIO_MAX_BYTES" in APP)

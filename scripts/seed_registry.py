@@ -717,16 +717,22 @@ def reconcile_lmstudio(existing, scanned, inventory, protect=()):
     return listed, sorted(set(removed)), sorted(set(unlisted))
 
 
-def load_existing(path):
-    """Return the existing registry's model list (or [] if none/invalid)."""
-    if not os.path.isfile(path):
-        return []
+def _existing_document(path):
+    """Missing state can be seeded; unknown state cannot authorize replacement."""
+    if MODELREG is None:
+        raise RuntimeError("model registry helper is unavailable")
     try:
-        with open(path) as fh:
-            data = json.load(fh)
-        return data.get("models", []) or []
-    except Exception:
-        return []
+        data = json.loads(MODELREG._read_registry_text(path))
+    except FileNotFoundError:
+        return {"models": []}
+    if (not isinstance(data, dict) or not isinstance(data.get("models", []), list)
+            or any(not isinstance(row, dict) for row in data.get("models", []))):
+        raise ValueError("existing model registry is invalid; left unchanged")
+    return data
+
+
+def load_existing(path):
+    return _existing_document(path).get("models", [])
 
 
 RESCANNED_SOURCES = ("jan-import", "lmstudio-import", "local", "audio-hf-cache")
@@ -772,7 +778,7 @@ def _keep_user(entry, existing_user):
     return dict(entry, **add) if add else entry
 
 
-def _audio_artifact_identity(entry):
+def _local_artifact_identity(entry):
     """Canonical format + complete launch-artifact identity, or ``None``.
 
     This is deliberately an identity check only: resolving a symlink lets a rescan
@@ -784,7 +790,7 @@ def _audio_artifact_identity(entry):
     if not isinstance(entry, dict):
         return None
     fmt = str(entry.get("format") or "").strip().lower()
-    if entry.get("kind") != "audio" and not fmt.startswith(("tts-", "stt-")):
+    if fmt not in ("gguf", "mlx") and entry.get("kind") != "audio" and not fmt.startswith(("tts-", "stt-")):
         return None
     path = entry.get("path")
     if not isinstance(path, str) or not path:
@@ -794,7 +800,7 @@ def _audio_artifact_identity(entry):
             return None
         primary = os.path.realpath(os.path.abspath(path))
         projector = ""
-        if fmt == "tts-gguf":
+        if fmt == "tts-gguf" or (fmt == "gguf" and entry.get("mmproj") is not None):
             mmproj = entry.get("mmproj")
             if not isinstance(mmproj, str) or not mmproj or not os.path.exists(mmproj):
                 return None
@@ -838,8 +844,8 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
     forward any non-null ctx already recorded for that id in the existing registry
     (e.g. the 35B's 95536 that came from Jan's router.preset.ini).
 
-    On id collision, suffix the lmstudio entry's id with '-lms'. A fresh local AUDIO
-    row first compares its canonical primary-artifact path with kept audio rows: a
+    On id collision, suffix the lmstudio entry's id with '-lms'. A fresh local
+    row first compares its canonical complete-artifact identity with kept rows: a
     matching path is the same artifact, so the richer kept row wins; a different path
     keeps both via a deterministic '-local' suffix. HF-cache audio entries instead
     DROP on collision: the same weights already reached the registry by a path we
@@ -881,13 +887,11 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
         except (OSError, TypeError, ValueError):
             same = False
         return dict(m, artifact_evidence=evidence) if same else m
-    local_filled = []
-    for m in local_entries:
+    def fill_local(m):
+        # Fill after collision resolution: the final id owns these user choices.
         if m.get("ctx") in (None, "") and existing_ctx.get(m.get("id")) not in (None, ""):
-            m = dict(m)
-            m["ctx"] = existing_ctx[m["id"]]
-        m = carry_evidence(_keep_user(m, existing_user))
-        local_filled.append(m)
+            m = dict(m, ctx=existing_ctx[m["id"]])
+        return carry_evidence(_keep_user(m, existing_user))
     fresh_keys = {(str(m.get("source") or ""), str(m.get("id") or ""))
                   for m in list(jan_entries) + list(local_entries)
                   + list(lmstudio_entries) + list(audio_cache_entries)
@@ -920,20 +924,36 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
         except Exception:
             return True
     kept = [m for m in existing if preserve_unavailable(m)]
-    kept_audio_paths = {_audio_artifact_identity(m) for m in kept}
-    kept_audio_paths.discard(None)
     result = kept + [carry_evidence(_keep_user(m, existing_user)) for m in jan_entries]
+    kept_paths = {_local_artifact_identity(m) for m in result}
+    kept_paths.discard(None)
     used = {m.get("id") for m in result}
-    for m in local_filled:
-        if _is_audio_entry(m):
-            artifact = _audio_artifact_identity(m)
-            if artifact is not None and artifact in kept_audio_paths:
-                continue
-            if m.get("id") in used:
-                m = dict(m)
-                m["id"] = _local_collision_id(m["id"], used)
+    previous_local_ids = {}
+    for m in existing:
+        artifact = _local_artifact_identity(m)
+        if m.get("source") == "local" and artifact is not None:
+            previous_local_ids.setdefault(artifact, m.get("id"))
+    # Reserve natural names and previously assigned artifact names before choosing
+    # suffixes. Directory traversal order must not transfer another model's settings
+    # or rename an existing row when a newly scanned file occupies its old suffix.
+    reserved = {m.get("id") for m in local_entries}
+    reserved.update(previous_local_ids.values())
+    previous_id_owners = {ident: artifact for artifact, ident in previous_local_ids.items()}
+    for m in local_entries:
+        artifact = _local_artifact_identity(m)
+        if artifact is not None and artifact in kept_paths:
+            continue
+        previous_id = previous_local_ids.get(artifact)
+        if previous_id and previous_id not in used:
+            m = dict(m, id=previous_id)
+        ident = m.get("id")
+        if ident in used or (ident in previous_id_owners
+                             and previous_id_owners[ident] != artifact):
+            m = dict(m, id=_local_collision_id(m["id"], used | reserved))
         used.add(m.get("id"))
-        result.append(m)
+        result.append(fill_local(m))
+        if artifact is not None:
+            kept_paths.add(artifact)
     for m in lmstudio_entries:
         if m.get("id") in used:
             m = dict(m)
@@ -1098,7 +1118,10 @@ def missing_confirmation_token(models, ambiguous_ids):
 def write(path, models):
     if MODELREG is None:
         raise RuntimeError("model registry helper is unavailable")
-    MODELREG.write_registry(path, {"models": models})
+    with MODELREG.registry_lock(path):
+        data = _existing_document(path)
+        data["models"] = models
+        MODELREG.write_registry(path, data)
 
 
 def local_entries_for(local_dir):

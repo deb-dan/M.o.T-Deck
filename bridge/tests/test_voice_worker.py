@@ -447,7 +447,7 @@ check("the spawn guard is handed to tts_render", "spawn_guard=_voice_spawn_guard
 check("a budget refusal is a 409, like the runner's",
       "except _voice.VoiceBudget" in APP)
 check("clearing/changing the TTS default kills the worker",
-      'if key == "tts_model" and mid != v_before["tts_model"]' in APP)
+      'if "tts_model" in updates and updates["tts_model"] != v_before["tts_model"]' in APP)
 check("deleting a model kills it if resident", "worker_stop_if_model(mid" in APP)
 # (2026-08-20) this used to pin the literal `"voice-worker")` — i.e. the CLOSING
 # PAREN of the _LOG_NAMES tuple, which broke the moment another log name was added

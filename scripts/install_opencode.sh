@@ -37,6 +37,16 @@ echo "──────── install_opencode.sh · $(date '+%Y-%m-%d %H:%M:%S
 say() { echo "[opencode] $*"; }
 die() { echo "[opencode] ERROR: $*" >&2; exit 1; }
 
+# Version probes use the same private XDG directories as the runtime.
+opencode_run() {
+  local executable="$1"
+  shift
+  mkdir -p "$DEST/xdg/"{config,cache,data,state}
+  env XDG_CONFIG_HOME="$DEST/xdg/config" XDG_CACHE_HOME="$DEST/xdg/cache" \
+      XDG_DATA_HOME="$DEST/xdg/data" XDG_STATE_HOME="$DEST/xdg/state" \
+      OPENCODE_DISABLE_AUTOUPDATE=1 "$executable" "$@"
+}
+
 # ── pin reader (identical awk shape to install_aider.sh / install_music.sh) ───
 _yb() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' motdeck.yaml; }
 
@@ -90,7 +100,7 @@ main() {
   # no version) and it is also the proof the binary RUNS on this machine.
   if [[ -x "$BIN" ]]; then
     local have
-    have="$("$BIN" --version 2>/dev/null | tr -d '[:space:]' || true)"
+    have="$(opencode_run "$BIN" --version 2>/dev/null | tr -d '[:space:]' || true)"
     if [[ "$have" == "$pin" ]]; then
       say "already installed at the pin (${have}) — nothing to do."
       post_install "$pin"
@@ -152,19 +162,26 @@ PY
 
   # 4. Extract exactly ONE file. --strip-components drops npm's `package/` wrapper.
   mkdir -p "$DEST/bin"
-  rm -f "$BIN"
-  tar xzf "$tgz" -C "$DEST/bin" --strip-components 2 package/bin/opencode \
+  OPENCODE_STAGE="$(mktemp -d "$DEST/.opencode-install.XXXXXX")"
+  trap 'rm -rf "${OPENCODE_STAGE:-}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  local candidate="$OPENCODE_STAGE/opencode"
+  tar xzf "$tgz" -C "$OPENCODE_STAGE" --strip-components 2 package/bin/opencode \
     || { rm -f "$tgz"; die "the tarball does not contain package/bin/opencode — upstream changed its layout."; }
   rm -f "$tgz"
-  chmod +x "$BIN"
-  [[ -x "$BIN" ]] || die "no executable at $BIN after extraction."
+  [[ -f "$candidate" && ! -L "$candidate" ]] || die "no regular executable after extraction."
+  chmod +x "$candidate"
 
   # 5. Prove it RUNS before claiming success — a tab that opens onto a dyld error is
   #    worse than an install that refused.
   local ver
-  ver="$("$BIN" --version 2>/dev/null | tr -d '[:space:]' || true)"
-  [[ -n "$ver" ]] || die "the binary is installed but does not run (see $LOG)."
+  ver="$(opencode_run "$candidate" --version 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ -n "$ver" ]] || die "the candidate binary does not run; the existing install was kept (see $LOG)."
   [[ "$ver" == "$pin" ]] || say "WARN: the binary reports ${ver}, the pin says ${pin}."
+  mv -f "$candidate" "$BIN"
+  rm -rf "$OPENCODE_STAGE"
+  OPENCODE_STAGE=""
   say "installed: opencode ${ver}"
   post_install "$pin"
 }

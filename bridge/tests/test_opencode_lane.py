@@ -712,7 +712,7 @@ def test_a_user_model_choice_survives_but_a_deleted_one_does_not():
         "but a pointer at one of OUR models that no longer exists is repaired")
 
 
-def test_a_broken_config_file_is_replaced_not_inherited():
+def test_a_broken_config_file_is_preserved_for_repair():
     d = tempfile.mkdtemp()
     os.makedirs(os.path.join(d, "data"))
     gp = os.path.join(d, "g.json")
@@ -722,8 +722,10 @@ def test_a_broken_config_file_is_replaced_not_inherited():
                OC_BASE="http://127.0.0.1:6767/v1", OC_KEY="k", MOT_DECK_ROOT=d)
     p = subprocess.run([sys.executable, SEED_SCRIPT], cwd=d, env=env,
                        capture_output=True, text=True, timeout=60)
-    assert p.returncode == 0, p.stderr
-    assert "llama.cpp" in json.load(open(gp, encoding="utf-8"))["provider"]
+    assert p.returncode != 0
+    assert open(gp, encoding="utf-8").read() == "{ this is not json"
+    assert not os.path.exists(os.path.join(d, "p.json"))
+    assert "left untouched" in p.stdout
 
 
 # ── the self-check: the line that makes a silent failure decidable ───────────

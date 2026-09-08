@@ -98,10 +98,17 @@ fi
 # ---------- 1. extract the seed → runtime root ----------
 say "Provisioning MOT Deck into: $DEST"
 mkdir -p "$DEST"
-tar xzf "$SEED" -C "$DEST" || fail "could not extract the seed into $DEST"
+# A failed first run can leave a usable manifest, credentials, and conversations.
+# macOS bsdtar's keep-old-files resumes missing seed files without replacing any
+# existing state (including dangling links). Upgrades use ship's explicit merger.
+tar xzf "$SEED" -C "$DEST" --keep-old-files || fail "could not extract the seed into $DEST"
 # record which bundle this install came from, so the NEXT installer can compare.
-[[ -f "$DEST/SEED_STAMP" ]] && cp "$DEST/SEED_STAMP" "$DEST/.seed_stamp"
-[[ -f "$DEST/SEED_FILES.json" ]] && cp "$DEST/SEED_FILES.json" "$DEST/.seed_files.json"
+if [[ -f "$DEST/SEED_STAMP" && ! -e "$DEST/.seed_stamp" && ! -L "$DEST/.seed_stamp" ]]; then
+  cp "$DEST/SEED_STAMP" "$DEST/.seed_stamp"
+fi
+if [[ -f "$DEST/SEED_FILES.json" && ! -e "$DEST/.seed_files.json" && ! -L "$DEST/.seed_files.json" ]]; then
+  cp "$DEST/SEED_FILES.json" "$DEST/.seed_files.json"
+fi
 cd "$DEST"
 
 LOGDIR="$DEST/data/logs"; mkdir -p "$LOGDIR"
@@ -205,13 +212,16 @@ fi
 # the wheelhouse. Asking for anything else here fails OFFLINE ("no matching distribution").
 # Empty pin ⇒ fall back to unpinned so a hand-edited yaml can't hard-block provisioning.
 _yb_mlx() { awk -v k="  $1:" '/^build:/{f=1} f && index($0,k)==1 {line=$0; sub(/#.*/,"",line); sub(/^[^:]*:[[:space:]]*/,"",line); gsub(/[",]/,"",line); gsub(/[[:space:]]+$/,"",line); print line; exit} f && /^[a-z]/ && !/^build:/{exit}' "$DEST/motdeck.yaml" 2>/dev/null; }
-MLX_LM_PIN="$(_yb_mlx mlx_lm_pin)"; MLX_VLM_PIN="$(_yb_mlx mlx_vlm_pin)"
-if [[ -n "$MLX_LM_PIN" && -n "$MLX_VLM_PIN" ]]; then
-  MLX_PKGS=("mlx-lm==$MLX_LM_PIN" "mlx-vlm==$MLX_VLM_PIN")
-else
-  echo "[firstrun] WARN: build.mlx_*_pin missing from motdeck.yaml — installing mlx unpinned"
-  MLX_PKGS=(mlx-lm mlx-vlm)
-fi
+MLX_PKGS=()
+for engine in lm vlm audio whisper; do
+  pin="$(_yb_mlx "mlx_${engine}_pin")"
+  if [[ -n "$pin" ]]; then
+    MLX_PKGS+=("mlx-${engine}==$pin")
+  else
+    echo "[firstrun] WARN: build.mlx_${engine}_pin missing — resolving from the offline wheelhouse"
+    MLX_PKGS+=("mlx-${engine}")
+  fi
+done
 MLOG="$LOGDIR/firstrun_mlx.log"; : >"$MLOG"
 mkvenv data/mlx-venv mlx "$MLOG"
 pipi data/mlx-venv mlx "$MLOG" "${MLX_PKGS[@]}"

@@ -221,7 +221,15 @@ def ody_shim_stale_rows(rows, base: str) -> list:
             continue
         if str(r.get("name") or "").strip() not in ODY_VLSHIM_EP_NAMES_ALL:
             continue
-        if "127.0.0.1" not in url and "localhost" not in url:
+        from urllib.parse import urlsplit
+        try:
+            parsed = urlsplit(url)
+            local = (parsed.scheme in ("http", "https")
+                     and parsed.hostname in ("127.0.0.1", "localhost", "::1")
+                     and parsed.username is None and parsed.password is None)
+        except ValueError:
+            local = False
+        if not local:
             continue
         if r.get("id"):
             out.append(str(r["id"]))
@@ -542,13 +550,22 @@ async def ody_vision_shim_ensure(settings=None) -> dict:
     base = ody_shim_base(cfg().get("bridge", {}).get("port") or 8700)
     try:
         s = settings if isinstance(settings, dict) else await _ody_settings()
+        if s is None:
+            out["reason"] = "Odysseus settings could not be read — endpoint setup left unchanged"
+            return out
         # Snapshot what the shim will need to know while Odysseus's loop is blocked.
         fb = s.get("vision_model_fallbacks")
         _SHIM_STATE["fallbacks"] = bool(fb) if isinstance(fb, (list, tuple, str)) else False
         r = await _ody_req("GET", "/api/model-endpoints")
-        rows = r.json() if r.status_code == 200 else []
+        if r.status_code != 200:
+            out["reason"] = f"Odysseus endpoint list could not be read ({r.status_code})"
+            return out
+        rows = r.json()
         if isinstance(rows, dict):
-            rows = rows.get("endpoints") or rows.get("items") or []
+            rows = rows.get("endpoints", rows.get("items"))
+        if not isinstance(rows, list):
+            out["reason"] = "Odysseus returned an unsupported endpoint list"
+            return out
         row = ody_shim_endpoint_pick(rows, base)
         for _stale in ody_shim_stale_rows(rows, base):
             # Best-effort and never fatal: a leftover of OURS at an address we no
@@ -560,19 +577,26 @@ async def ody_vision_shim_ensure(settings=None) -> dict:
                       f"({d.status_code})", flush=True)
             except Exception:                                # noqa: BLE001
                 pass
+        if row.get("is_enabled") is False:
+            out["reason"] = "the endpoint is disabled in Odysseus — left alone"
+            out["endpoint_id"] = str(row.get("id") or "")
+            return out
         if row and str(row.get("name") or "").strip() in ODY_VLSHIM_EP_NAMES_ALL \
                 and str(row.get("name") or "").strip() != ODY_VLSHIM_EP_NAME:
             # Rename-forward migration: the row still wears an OLD default name of
             # ours (so this is not a user rename — those are any OTHER string).
-            # Delete + recreate rather than update: create is the one admin call
-            # this file already depends on, and Odysseus dedupes on base_url.
-            try:
-                d = await _ody_req("DELETE", f"/api/model-endpoints/{row.get('id')}")
-                print(f"[ody-vlshim] renamed our endpoint to the current default "
-                      f"(delete {d.status_code} + recreate)", flush=True)
-            except Exception:                                # noqa: BLE001
-                pass
-            row = {}
+            # Upstream's field-targeted PATCH preserves identity, enabled state,
+            # pinned models and every session/settings reference to this endpoint.
+            renamed = await _ody_req("PATCH", f"/api/model-endpoints/{row.get('id')}",
+                                     json={"name": ODY_VLSHIM_EP_NAME})
+            if renamed.status_code != 200:
+                out["reason"] = f"Odysseus refused the endpoint rename ({renamed.status_code})"
+                return out
+            updated = renamed.json()
+            if not isinstance(updated, dict) or updated.get("name") != ODY_VLSHIM_EP_NAME:
+                out["reason"] = "Odysseus did not confirm the endpoint rename"
+                return out
+            row = dict(row, name=updated["name"])
         if not row:
             # Odysseus dedupes on base_url itself, so a concurrent create is safe.
             c = await _ody_req("POST", "/api/model-endpoints", data={

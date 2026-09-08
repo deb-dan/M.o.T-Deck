@@ -26,7 +26,7 @@ def _require_regular(path: str, *, absent_ok: bool = False) -> os.stat_result | 
 
 
 def _read_regular(path: str) -> str:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     fd = os.open(path, flags)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):

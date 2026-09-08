@@ -72,6 +72,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
+import tempfile
 
 # ── identity ─────────────────────────────────────────────────────────────────
 # The product name, spelled once. Same string OpenCode's provider carries
@@ -244,9 +246,8 @@ def merge_provider(existing, ours: dict) -> dict:
     survives untouched) and replace ONLY OWNED_KEYS. `display_name` is emphatically not
     ours: the walked journey is "rename it by hand, re-seed, the rename is still there".
 
-    A file that is not a JSON object (corrupt, or a directory the user put there) is
-    treated as absent rather than as a reason to refuse — we write our own document and
-    the user's unreadable one is what was lost, which the caller reports.
+    None means a missing file. The writer refuses unreadable or non-object files
+    before merging so a hand-edited provider is never discarded as a default.
     """
     if not isinstance(existing, dict):
         return dict(ours)
@@ -272,10 +273,21 @@ def merge_provider(existing, ours: dict) -> dict:
 # ── the writer ───────────────────────────────────────────────────────────────
 def read_provider(config_dir, name: str = PROVIDER_NAME):
     try:
-        with open(provider_path(config_dir, name), encoding="utf-8") as fh:
-            return json.load(fh)
+        return json.loads(_provider_text(provider_path(config_dir, name)))
     except (OSError, ValueError):
         return None
+
+
+def _provider_text(path):
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("provider is not a regular file")
+        with os.fdopen(fd, encoding="utf-8", closefd=False) as fh:
+            return fh.read()
+    finally:
+        os.close(fd)
 
 
 def seed_provider(config_dir, endpoint, registry, port=6767,
@@ -292,24 +304,36 @@ def seed_provider(config_dir, endpoint, registry, port=6767,
     """
     p = provider_path(config_dir, name)
     ours = provider_doc(base_url(endpoint, port), model_entries(registry), name=name)
+    tmp = None
     try:
-        merged = merge_provider(read_provider(config_dir, name), ours)
+        try:
+            cur = _provider_text(p)
+        except FileNotFoundError:
+            cur, existing = "", None
+        else:
+            existing = json.loads(cur)
+            if not isinstance(existing, dict):
+                raise ValueError("provider must be a JSON object; existing file left untouched")
+        merged = merge_provider(existing, ours)
         os.makedirs(os.path.dirname(p), exist_ok=True)
         new = json.dumps(merged, indent=2) + "\n"
-        try:
-            with open(p, encoding="utf-8") as fh:
-                cur = fh.read()
-        except OSError:
-            cur = ""
         if new == cur:
             return p, False, ""
-        tmp = p + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
+        fd, tmp = tempfile.mkstemp(prefix=".provider-", suffix=".tmp", dir=os.path.dirname(p))
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(new)
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(tmp, p)
         return p, True, ""
-    except OSError as e:                                              # noqa: BLE001
+    except (OSError, ValueError) as e:
         return p, False, str(e)
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
 
 
 # ── pure: the main-model setting, and how NOT to silently change it ──────────

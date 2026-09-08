@@ -14,7 +14,7 @@ from .procs import _registry_models, cfg
 
 def _read_regular_json(path):
     """Read one app-generated JSON fact without following links/special files."""
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise ValueError(f"refusing non-regular state file: {path}")

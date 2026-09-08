@@ -647,10 +647,10 @@ def parse_sessions(text) -> list:
             continue
         mc = row.get("model_config")
         model = str((mc or {}).get("model_name") or "") if isinstance(mc, dict) else ""
-        try:
-            msgs = int(row.get("message_count") or 0)
-        except (TypeError, ValueError):
-            msgs = 0
+        count = row.get("message_count")
+        # Only an actual nonnegative count can establish that a session is empty.
+        # Unknown metadata keeps the history visible and out of bulk cleanup.
+        msgs = count if type(count) is int and count >= 0 else None
         upd = str(row.get("updated_at") or row.get("created_at") or "")
         out.append({
             "id": sid,
@@ -738,7 +738,8 @@ def _run_fenced(root, argv, timeout, base_env=None):
     except OSError as e:
         return "", f"could not run goose: {e}"
     if r.returncode != 0:
-        return r.stdout or "", (r.stderr or r.stdout or "").strip()[-400:]
+        return r.stdout or "", ((r.stderr or r.stdout or "").strip()[-400:]
+                                or f"goose exited with code {r.returncode}")
     return r.stdout or "", ""
 
 
@@ -753,8 +754,14 @@ def list_sessions(root, base_env=None) -> tuple:
     if not ok:
         return [], reason
     out, err = _run_fenced(root, list_argv(root), LIST_TIMEOUT_S, base_env)
-    if err and not out.strip().startswith("["):
+    if err:
         return [], err
+    try:
+        data = json.loads(out)
+    except (ValueError, TypeError):
+        return [], "goose returned an unreadable session list"
+    if not isinstance(data, list):
+        return [], "goose returned an unexpected session list"
     return parse_sessions(out), ""
 
 

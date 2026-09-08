@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+from contextlib import aclosing
 import json
 import re
 import secrets
@@ -132,7 +133,7 @@ class TurnStore:
     @staticmethod
     def _validate(body: dict[str, Any]) -> tuple[str, str, str]:
         lane, session, request_id = body.get("lane"), body.get("session"), body.get("request_id")
-        if lane not in {"chat", "agent"}:
+        if not isinstance(lane, str) or lane not in {"chat", "agent"}:
             raise ValueError("lane must be exactly chat or agent")
         if not isinstance(session, str) or not session.strip():
             raise ValueError("session is required")
@@ -305,28 +306,29 @@ class TurnStore:
                 await self._append(turn_id, payload)
 
         try:
-            async for raw in factory():
-                if isinstance(raw, bytes):
-                    buffer += decoder.decode(raw, final=False)
-                else:
-                    # Producers in this app use bytes or text consistently. Refuse a
-                    # text chunk if it would skip an incomplete buffered UTF-8 codepoint.
-                    pending, _flag = decoder.getstate()
-                    if pending:
-                        raise UnicodeDecodeError("utf-8", pending, 0, len(pending),
-                                                 "text arrived mid-codepoint")
-                    buffer += raw
-                frames = SSE_BOUNDARY.split(buffer)
-                buffer = frames.pop()
-                for frame in frames:
-                    await consume_frame(frame)
+            async with aclosing(factory()) as producer:
+                async for raw in producer:
+                    if isinstance(raw, bytes):
+                        buffer += decoder.decode(raw, final=False)
+                    else:
+                        # Producers in this app use bytes or text consistently. Refuse a
+                        # text chunk if it would skip an incomplete buffered UTF-8 codepoint.
+                        pending, _flag = decoder.getstate()
+                        if pending:
+                            raise UnicodeDecodeError("utf-8", pending, 0, len(pending),
+                                                     "text arrived mid-codepoint")
+                        buffer += raw
+                    frames = SSE_BOUNDARY.split(buffer)
+                    buffer = frames.pop()
+                    for frame in frames:
+                        await consume_frame(frame)
+                        if saw_done:
+                            break
                     if saw_done:
                         break
-                if saw_done:
-                    break
-                # The parsed-event cap cannot protect an unterminated SSE frame.
-                if len(buffer.encode("utf-8")) > MAX_EVENT_BYTES_PER_TURN:
-                    raise TurnOverflow("the producer exceeded the incomplete event limit")
+                    # The parsed-event cap cannot protect an unterminated SSE frame.
+                    if len(buffer.encode("utf-8")) > MAX_EVENT_BYTES_PER_TURN:
+                        raise TurnOverflow("the producer exceeded the incomplete event limit")
             buffer += decoder.decode(b"", final=True)
             if buffer and not saw_done:
                 await consume_frame(buffer)

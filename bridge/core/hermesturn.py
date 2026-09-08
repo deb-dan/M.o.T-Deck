@@ -14,6 +14,7 @@ import asyncio
 import json
 import time
 import uuid
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
@@ -221,15 +222,36 @@ class HermesTurnStore:
 
     async def _collect(self, turn: HermesTurn, producer: AsyncIterator[str]) -> None:
         state, error = "completed", ""
+        saw_done, reported_error = False, False
         try:
-            async for frame in producer:
-                await turn.append(frame)
+            async with aclosing(producer):
+                async for frame in producer:
+                    # Producers emit complete panel frames, not network chunks.
+                    # Hold the terminator until their cleanup has finished.
+                    data = frame[5:].strip() if frame.startswith("data:") else ""
+                    if data == "[DONE]":
+                        saw_done = True
+                        continue
+                    try:
+                        payload = json.loads(data)
+                    except (TypeError, ValueError):
+                        payload = None
+                    if isinstance(payload, dict) and payload.get("type") == "proxy_error":
+                        state, error = "failed", str(payload.get("error") or "Hermes turn failed")[:300]
+                        reported_error = True
+                    await turn.append(frame)
+            if not saw_done and not error:
+                state, error = "failed", "Hermes relay ended without a completion event"
         except asyncio.CancelledError:
             state, error = "interrupted", "bridge shutdown"
             raise
-        except Exception as exc:  # producer also emits its user-facing error frame
+        except Exception as exc:
             state, error = "failed", str(exc)[:300]
         finally:
+            if error and not reported_error:
+                await turn.append("data: " + json.dumps({
+                    "type": "proxy_error", "error": error}) + "\n\n")
+            await turn.append("data: [DONE]\n\n")
             await turn.finish(state, error)
             self._prune()
 

@@ -1,33 +1,11 @@
-// CANVAS unit test — pure editor logic used by the editable-artifact mode
-// (bridge/panel/index.html): split clamp, kind→CodeMirror-mode map, default
-// save filename. Mirror copies (house pattern, like test_rewrite_cdns.js).
-// Run: node bridge/tests/test_canvas_logic.js
-
-// --- mirror of clampCanvasSplit() ---
-function clampCanvasSplit(f){ f = parseFloat(f); if (!isFinite(f)) return 0.5; return Math.max(0.2, Math.min(0.8, f)); }
-// --- mirror of cmModeFor() ---
-function cmModeFor(kind, filename){
-  if (kind === 'html') return 'htmlmixed';
-  if (kind === 'svg') return 'xml';
-  if (kind === 'react') return 'jsx';
-  if (kind === 'js') return 'javascript';
-  if (kind === 'json') return 'application/json';
-  if (kind === 'markdown') return 'markdown';
-  if (kind === 'code'){
-    const ext = ((filename || '').toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
-    const M = { py:'python', ts:'javascript', js:'javascript', css:'css', scss:'css',
-                yaml:'yaml', yml:'yaml', xml:'xml', json:'application/json', md:'markdown' };
-    return (ext in M) ? M[ext] : null;
-  }
-  return null;
-}
-// --- mirror of canvasSaveName() ---
-function canvasSaveName(filename, kind){
-  if (filename && /\.[a-z0-9]+$/i.test(filename)) return filename;
-  const E = { html:'html', svg:'svg', react:'jsx', js:'js', markdown:'md',
-              mermaid:'mmd', csv:'csv', json:'json' };
-  return 'artifact.' + (E[kind] || 'txt');
-}
+// Exercise the actual canvas helpers; duplicated test implementations cannot catch drift.
+const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+const {extractFunction} = require('./_panel_source');
+const source = fs.readFileSync(path.join(__dirname, '../panel/index.html'), 'utf8');
+const context = vm.createContext({});
+for (const name of ['clampCanvasSplit', 'cmModeFor', 'canvasSaveName'])
+  vm.runInContext(extractFunction(source, name), context);
+const {clampCanvasSplit, cmModeFor, canvasSaveName} = context;
 
 let pass = 0, fail = 0;
 function eq(name, got, want){

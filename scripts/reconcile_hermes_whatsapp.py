@@ -95,7 +95,7 @@ def _require_replaceable(path: Path) -> None:
 
 def _read_optional(path: Path) -> bytes | None:
     """Read one regular file without following its final path component."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(path, flags)
     except FileNotFoundError:
@@ -320,8 +320,10 @@ def reconcile(home: Path, desired: bool,
             pending = json.loads(journal_raw.decode("utf-8"))
             if pending.get("version") != 1 or not isinstance(pending.get("enabled"), bool):
                 raise ValueError(f"invalid WhatsApp recovery journal: {journal_path}")
-            desired = pending["enabled"]
-        return _commit(home, desired, writer, recovery_pending=journal_raw is not None)
+            _commit(home, pending["enabled"], writer, recovery_pending=True)
+        # Recovery completes the previous action; it must not consume the new
+        # enable/disable request and report the opposite state as its success.
+        return _commit(home, desired, writer)
 
 
 def recover(home: Path,

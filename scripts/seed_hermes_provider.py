@@ -320,7 +320,8 @@ def model_block_plan(model_cfg, marker, want, our_aliases, seeded_before=False) 
             ch[key] = target
         else:
             notes.append("model.%s: honoured your %s (%s) — not overwritten"
-                         % (key, "choice" if key != "default" else "model", cur_s))
+                         % (key, "choice" if key != "default" else "model",
+                            "redacted" if key == "api_key" else cur_s))
     return ch, notes
 
 
@@ -374,11 +375,12 @@ def main() -> int:
         # A config we cannot parse is a config we must not rewrite (it may be the
         # user's half-finished edit). Say so and leave the file alone; the anonymous
         # model.* wiring the Start script writes still routes every turn.
-        print("[motdeck] WARNING: could not parse %s (%s) — provider NOT seeded"
-              % (cfg_path, exc))
+        print("[motdeck] WARNING: could not parse or read %s — provider NOT seeded (values redacted)"
+              % cfg_path)
         return 0
     if not isinstance(data, dict):
-        data = {}
+        print("[motdeck] WARNING: Hermes config is not a mapping — left untouched")
+        return 0
     before = json.dumps(data, sort_keys=True, default=str)
 
     providers = data.get("custom_providers")

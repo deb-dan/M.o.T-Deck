@@ -455,7 +455,7 @@ def _script_tracked(name: str, *args: str, track: str, timeout: int = 1800):
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, cwd=ROOT)
     try:
-        write_pidfile(track, proc.pid)
+        _, birth = write_pidfile(track, proc.pid)
     except Exception:
         proc.terminate()                  # exact child handle; no inferred ownership
         proc.communicate()
@@ -469,7 +469,7 @@ def _script_tracked(name: str, *args: str, track: str, timeout: int = 1800):
     finally:
         # If cancellation already retired the claim this is a no-op. If a new child
         # somehow claimed the same track name, exact release cannot erase it.
-        _ownership.release_owned(ROOT, track, proc.pid)
+        _ownership.retire_owned(ROOT, track, proc.pid, birth)
     return subprocess.CompletedProcess(argv, proc.returncode, out or "", err or "")
 
 

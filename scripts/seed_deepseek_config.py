@@ -304,7 +304,7 @@ def load_doc(path):
     try:
         data = yaml.safe_load(raw)
     except Exception as e:                                          # noqa: BLE001
-        return None, f"{path} is not valid YAML ({str(e)[:100]}) — left untouched"
+        return None, f"{path} is not valid YAML (values redacted) — left untouched"
     if data is None:
         return {}, ""
     if not isinstance(data, dict):
@@ -430,18 +430,16 @@ def main() -> int:
     # every single start.
     ns = doc.get(NS)
     if not isinstance(ns, dict):
+        if ns is not None:
+            print("[motdeck] deepseek config: llm-pi-ai is not a mapping — left untouched")
+            return 0
         ns = {}
     provs = ns.get("providers")
     if not isinstance(provs, dict):
-        # ⚠️ F1: the pre-release ARRAY shape fails load. If we find one, replacing it
-        # with a dict is the migration upstream's own error message asks for — but say
-        # so, because it is the one case where we drop something the user may have
-        # written.
-        if isinstance(provs, list) and provs:
-            print("[motdeck]   REPAIRED: llm-pi-ai.providers was the pre-release LIST "
-                  "shape (which fails to load upstream) — converted to a mapping; %d "
-                  "hand-written entr%s could not be carried over"
-                  % (len(provs), "y" if len(provs) == 1 else "ies"))
+        if provs is not None:
+            print("[motdeck] deepseek config: providers must be a mapping; "
+                  "existing routes were preserved for repair in DeepSeek settings")
+            return 0
         provs = {}
     before = len(((provs.get(PID) or {}) if isinstance(provs.get(PID), dict) else {})
                  .get("models") or [])

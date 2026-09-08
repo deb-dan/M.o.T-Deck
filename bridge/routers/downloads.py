@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from ..core.appctx import ROOT, _modeltools, _voice, app
 from ..core.events import publish
 from ..core.hfclient import _HF
-from ..core.modelreg import registry_lock, write_registry
+from ..core.modelreg import _read_registry_text, registry_lock, write_registry
 
 # ── SSE (2026-08-28): how often a running download is allowed to push ────────
 # ⚠️ THE ONE EMITTER THAT NEEDS A THROTTLE, AND THE NUMBER IS NOT ARBITRARY. The read
@@ -68,27 +68,36 @@ def _split_files(filename: str) -> list:
 
 
 def _registry_add(entry: dict) -> None:
-    """Read data/models.json, drop any model with the same id, append `entry`,
-    atomic write (tmp + os.replace)."""
-    import json as _json, os as _os
+    """Add a completed artifact while preserving the library and user choices."""
+    import json as _json
     reg = ROOT / "data" / "models.json"
     with registry_lock(str(reg)):
         try:
-            data = _json.loads(reg.read_text())
-            if not isinstance(data, dict) or "models" not in data:
-                data = {"models": []}
-        except Exception:
+            data = _json.loads(_read_registry_text(reg))
+        except FileNotFoundError:
             data = {"models": []}
-        models = [m for m in data.get("models", []) if m.get("id") != entry.get("id")]
+        if (not isinstance(data, dict) or not isinstance(data.get("models"), list)
+                or any(not isinstance(m, dict) for m in data["models"])):
+            raise ValueError("model registry is unreadable — the existing library was left unchanged")
+        old = next((m for m in data["models"] if m.get("id") == entry.get("id")), {})
+        entry = dict(entry)
+        # These choices cannot be reconstructed from weights. Like Rescan, a
+        # re-download must carry them forward while refreshing artifact evidence.
+        for key in ("voice", "ref_audio", "ref_text", "hidden", "settings", "load", "name"):
+            if key in old:
+                entry[key] = old[key]
+        if entry.get("ctx") is None and old.get("ctx") is not None:
+            entry["ctx"] = old["ctx"]
+        models = [m for m in data["models"] if m.get("id") != entry.get("id")]
         models.append(entry)
         data["models"] = models
         write_registry(str(reg), data)
 
 
-def _registry_update(mid: str, patch: dict) -> "dict | None":
+def _registry_update(mid: str, patch: dict, *, expected: dict | None = None) -> "dict | None":
     """Read data/models.json, merge `patch` into the entry with id `mid`, then use
     the one deterministic locked/fsynced registry writer shared by every mutator.
-    Returns the updated entry, or None when the id is not in the registry.
+    Returns the updated entry, or None if missing or changed since `expected`.
 
     A key whose patch value is None is REMOVED rather than stored as null: the
     voice picker's "model default" is the absence of a `voice` key, not a null."""
@@ -96,7 +105,7 @@ def _registry_update(mid: str, patch: dict) -> "dict | None":
     reg = ROOT / "data" / "models.json"
     with registry_lock(str(reg)):
         try:
-            data = _json.loads(reg.read_text())
+            data = _json.loads(_read_registry_text(reg))
             if not isinstance(data, dict) or not isinstance(data.get("models"), list):
                 return None
         except Exception:
@@ -104,6 +113,8 @@ def _registry_update(mid: str, patch: dict) -> "dict | None":
         out = None
         for m in data["models"]:
             if isinstance(m, dict) and m.get("id") == mid:
+                if expected is not None and m != expected:
+                    return None
                 for k, v in (patch or {}).items():
                     if v is None:
                         m.pop(k, None)

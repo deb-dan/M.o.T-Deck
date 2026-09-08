@@ -152,12 +152,23 @@ console.log('\n2. the ✓ summary never stamps a tool that failed');
      'chatSummary branches on st.error and renders ✗ for a failed step');
   ok(/class="d">✓</.test(s),
      '…while a successful step keeps its ✓ (the change is a branch, not a rewrite)');
-  const M = new Function('esc', s.replace('function chatSummary', 'function _cs')
-    + '; return function(steps){ return steps.map(st => st.error'
-    + ' ? "X " + esc(st.tool) : "V " + esc(st.tool)).join(" . "); };')(x => x);
-  ok(M([{tool: 'read_file'}, {tool: 'write_file', error: 'denied'}])
-       === 'V read_file . X write_file',
-     'executed: the failed step is ✗ and the successful one is ✓, in order');
+  const summarize = new Function('esc', 'chatStatusEl', s + '; return chatSummary;')(
+    value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    holder => holder._status || (holder._status = {innerHTML: ''}));
+  const holder = {_steps: [{tool: 'read_file'}, {tool: '<write&file>', error: 'denied'}]};
+  summarize(holder);
+  ok(holder._status.innerHTML === '<span class="d">✓</span> read_file · '
+    + '<span class="x">✗</span> &lt;write&amp;file&gt;'
+    + ' <span class="dim">— 2 steps</span>',
+    'executed production summary: success, failure, escaping and step count agree');
+  const rendered = holder._status.innerHTML;
+  holder._steps.push({tool: 'late_tool'});
+  summarize(holder);
+  ok(holder._status.innerHTML === rendered, 'an already summarized holder is left alone');
+  let removed = false;
+  const empty = {_status: {remove(){ removed = true; }}};
+  summarize(empty);
+  ok(removed && empty._status === null, 'a turn without tool steps removes its old status');
 }
 
 // ── 3. the handler ──────────────────────────────────────────────────────────

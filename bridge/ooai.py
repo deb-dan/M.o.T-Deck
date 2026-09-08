@@ -249,12 +249,14 @@ def runner_state(cfg_fn, probe_fn) -> dict:
     except Exception:                                             # noqa: BLE001
         cfg = {}
     rc = (cfg.get("runner") or {}) if isinstance(cfg, dict) else {}
+    if not isinstance(rc, dict):
+        rc = {}
     try:
         port = int(rc.get("port") or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         port = 0
     key = str(rc.get("api_key") or "")
-    if not port:
+    if not 1 <= port <= 65535:
         return {"ok": False, "base_url": "", "key": "", "model": "",
                 "reason": "motdeck.yaml does not give the runner a port"}
     base_url = f"http://127.0.0.1:{port}/v1"
@@ -268,7 +270,7 @@ def runner_state(cfg_fn, probe_fn) -> dict:
                            f"127.0.0.1:{port} (or has no model loaded)")}
     try:
         ctx = int(rc.get("ctx_size") or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         ctx = 0
     return {"ok": True, "base_url": base_url, "key": key, "model": str(model),
             "ctx_size": ctx, "reason": ""}
@@ -295,12 +297,15 @@ def max_input_tokens(runner: dict) -> int:
     """
     try:
         ctx = int((runner or {}).get("ctx_size") or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         ctx = 0
     if ctx <= 0:
         return _INPUT_BUCKETS[3]        # 32k — the plugin's own default
     half = ctx // 2
-    best = _INPUT_BUCKETS[0]
+    # Small supported windows (1024+) need a smaller cap than the first bucket.
+    # The pinned plugin reserves 500 tokens for chunk headers; <=500 can reset
+    # its cap or produce zero-length chunks. Keep the cap above that boundary.
+    best = max(501, min(_INPUT_BUCKETS[0], half))
     for b in _INPUT_BUCKETS:
         if b <= half:
             best = b

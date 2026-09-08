@@ -8,7 +8,7 @@ Two things are pinned here:
    runner's gate can't see that the model is MTP, and you silently get
    MTP-without-acceleration (found live 2026-08-06).
 
-2. The shell gate's decision table, mirrored here as a pure function so the
+2. The shell gate's decision table, executed from production Bash so the
    conservative behaviour is testable: spec flags must NEVER be added to a model
    with no MTP evidence (they fail the load on a model without MTP heads), and
    an explicit runner.spec_mtp must win over detection.
@@ -17,6 +17,8 @@ Run: python3 bridge/tests/test_mtp_detect.py
 """
 import ast
 import os
+import subprocess
+from pathlib import Path
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -68,17 +70,22 @@ check("empty repo → None", ns["_gguf_registry_entry"](
     {"model_id": "x", "repo": "", "files": [{"dest": "/m/x.gguf", "total": 1}]})["repo"], None)
 
 
-# ── 2. the detection decision table (mirrors start_component.sh) ─────────────
+# ── 2. the production detection decision table ─────────────
+sh = Path(ROOT, "scripts", "start_component.sh").read_text()
+start = sh.index('    SPEC_ARGS=()')
+end = sh.index('    if [[ "$MTP_HIT" == "1" ]]', start)
+detection = sh[start:end]
+
+
 def spec_enabled(model_id: str, repo: str, override: str = "auto") -> bool:
-    """Pure mirror of the shell gate: on/off win outright; auto matches MTP
-    case-insensitively in the id OR the repo; anything else → no flags."""
-    ov = (override or "auto").strip().lower()
-    if ov in ("on", "true", "yes", "1"):
-        return True
-    if ov in ("off", "false", "no", "0"):
-        return False
-    hay = f"{model_id or ''}\n{repo or ''}".lower()
-    return "mtp" in hay
+    """Execute the actual launcher decision without its process-launching branches."""
+    script = '_manifest_value() { printf "%s" "$TEST_OVERRIDE"; }\n' + detection + '\nprintf "%s" "$MTP_HIT"\n'
+    result = subprocess.run(['/bin/bash', '-c', script], capture_output=True,
+        text=True, timeout=5, env=dict(os.environ, R_MODEL=model_id or '',
+                                     MODEL_REPO=repo or '', TEST_OVERRIDE=override or ''))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout in ('0', '1'), result.stdout
+    return result.stdout == '1'
 
 
 # the live case that failed: MTP only in the repo name

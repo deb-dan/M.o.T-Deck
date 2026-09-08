@@ -563,7 +563,8 @@ check("the trim bound is comfortably ABOVE the ~10s the engine actually reads",
 print("\ntrim paths + argv")
 check("the trimmed copy is a wav in data/voices/trimmed/",
       voice.trimmed_clip_path("/x/y/long.mp3", "/r")
-      == os.path.join(voice.trimmed_dir("/r"), "long-12s.wav"))
+      .startswith(os.path.join(voice.trimmed_dir("/r"), "long-"))
+      and voice.trimmed_clip_path("/x/y/long.mp3", "/r").endswith("-12s.wav"))
 check("only the BASENAME of the source survives — nothing can climb out of the dir",
       "/" not in os.path.basename(voice.trimmed_clip_path("../../etc/passwd.wav", "/r"))
       and voice.trimmed_clip_path("../../x.wav", "/r").startswith(
@@ -670,7 +671,7 @@ check("the no-ffmpeg degrade is surfaced honestly rather than silently",
       "no ffmpeg" in PSRC)
 check("the panel prints the REASON for every failed slot into the activity feed — "
       "'2 added, 11 failed' with no reason is what made this bug undiagnosable",
-      "') failed — ' + esc(f.reason)" in PSRC)
+      "') failed — ' + f.reason" in PSRC)
 check("the panel names the substituted speaker and the slot it filled",
       "for the same accent slot" in PSRC)
 check("the status line carries the first reason, not just a count",
@@ -684,11 +685,11 @@ check("the pin path measures the clip and acts on the verdict",
 check("a refusal is a 400 with the reason, not a silent slow render",
       '"refuse"' in ASRC and "status_code=400" in ASRC)
 check("a trim pins the BOUNDED COPY, and the original file is only ever read",
-      "_trim_ref_clip(ff, path)" in ASRC
+      "asyncio.to_thread(_trim_ref_clip, ff, path)" in ASRC
       and "os.remove(src)" not in ASRC.split("def _trim_ref_clip")[1].split("@app.post")[0])
 check("a trim drops any ref_text supplied for the ORIGINAL — it no longer describes "
       "the clip being pinned",
-      'ref_text = ""' in ASRC.split("_trim_ref_clip(ff, path)")[1][:600])
+      'ref_text = ""' in ASRC.split("asyncio.to_thread(_trim_ref_clip, ff, path)")[1][:600])
 check("a failed trim degrades to pinning the clip as it is, rather than to a dead end",
       "the trim failed" in ASRC)
 check("the save path applies the same guard and cleans up a refused file rather than "
@@ -697,7 +698,7 @@ check("the save path applies the same guard and cleans up a refused file rather 
 check("the pin endpoint hands its note back so the panel can say what it did",
       '"note": length_note' in ASRC)
 check("the panel surfaces that note instead of silently pinning a different file",
-      "j.note" in PSRC and "feed('voice', esc(j.note))" in PSRC)
+      "j.note" in PSRC and "feed('voice', j.note)" in PSRC)
 check("the picker's note states the trim honestly",
       "trimmed to ~12s" in PSRC and "first ~10" in PSRC)
 

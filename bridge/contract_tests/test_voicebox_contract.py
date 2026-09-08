@@ -121,7 +121,7 @@ def test_upstream_bare_git_lines_are_the_exact_shape_the_installer_rewrites():
     until that source is reviewed and pinned; this test makes the present premise
     visible even when the optional checkout is absent."""
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     req = _read(VB / "backend" / "requirements.txt")
     active = [line.strip() for line in req.splitlines()
               if "git+https://" in line and not line.lstrip().startswith("#")]
@@ -172,7 +172,7 @@ def test_voicebox_installed_provenance_verification_executes(monkeypatch):
 
 def test_launch_module_exists_and_reexports_app():
     if not _present():
-        return  # optional component not installed — nothing to gate
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(MAIN)
     assert "app" in src, "backend/main.py no longer references the ASGI app"
     assert APP.exists(), (
@@ -184,7 +184,7 @@ def test_launch_module_exists_and_reexports_app():
 
 def test_main_is_runnable_as_a_module():
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(MAIN)
     assert '__name__ == "__main__"' in src or "__name__ == '__main__'" in src, (
         "backend/main.py lost its __main__ block — start_component.sh runs "
@@ -193,7 +193,7 @@ def test_main_is_runnable_as_a_module():
 
 def test_host_port_and_data_dir_flags_exist():
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(MAIN)
     for flag in ("--host", "--port", "--data-dir"):
         assert flag in src, (
@@ -207,7 +207,7 @@ def test_host_port_and_data_dir_flags_exist():
 
 def test_health_route_registered():
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     health = VB / "backend" / "routes" / "health.py"
     src = _read(health) if health.exists() else ""
     assert '"/health"' in src or "'/health'" in src, (
@@ -217,7 +217,7 @@ def test_health_route_registered():
 
 def test_mcp_mounted():
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(APP) if APP.exists() else ""
     assert '"/mcp"' in src or "'/mcp'" in src, (
         "the in-process MCP server at /mcp is gone — Phase 3 registers exactly that "
@@ -230,7 +230,7 @@ def test_mcp_is_streamable_http_at_the_mount_root():
     app is FastMCP-based, and the ASGI app it mounts is the streamable-HTTP one (an
     SSE-only mount would need transport='sse' in the Odysseus form instead)."""
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(APP) if APP.exists() else ""
     hay = src + "".join(
         _read(p) for p in (VB / "backend").rglob("*mcp*.py") if p.is_file())
@@ -247,7 +247,7 @@ def test_mcp_tool_names_for_the_panel():
     `voicebox.` prefix; this trips if that changes so the panel stops lying.
     ⚠️ Unverifiable until the component is actually checked out (skips otherwise)."""
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     hay = "".join(_read(p) for p in (VB / "backend").rglob("*mcp*.py") if p.is_file())
     if not hay:
         return
@@ -259,7 +259,7 @@ def test_mcp_tool_names_for_the_panel():
 
 def test_spa_served_from_repo_root_frontend():
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(APP) if APP.exists() else ""
     assert "frontend" in src, (
         "backend/app.py no longer mounts a frontend directory — the install script "
@@ -271,7 +271,7 @@ def test_no_auth_assumption_still_holds():
     """We bind loopback-only BECAUSE there is no auth. If upstream ever adds one this
     trips, and the note/plan wording in bridge/app.py should be revisited."""
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(APP) if APP.exists() else ""
     assert "AuthenticationMiddleware" not in src and "HTTPBearer" not in src, (
         "voicebox appears to have gained authentication — update the NO AUTH warnings "

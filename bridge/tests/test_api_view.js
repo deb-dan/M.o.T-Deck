@@ -52,9 +52,8 @@ function ok(cond, msg) { checks++; console.log((cond ? '  ok  ' : '  FAIL ') + m
 const start = script.indexOf('const API_POLL_MS =');
 const end = script.indexOf('function renderApi()');
 ok(start > 0 && end > start, 'the API renderer block is where the test expects it');
-const shim = `
-  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;'); }`;
+const {extractFunction} = require('./_panel_source');
+const shim = `function esc(s){return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}` + extractFunction(html, 'escAttr');
 const M = new Function(shim + script.slice(start, end) + `
   ; return { apiTime, apiDur, apiTok, apiDate, apiEndpointHtml, apiEndpointsHtml,
              apiKeysHtml, apiLogHtml, API_POLL_MS, API_METRIC_CHIPS };`)();

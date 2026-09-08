@@ -65,8 +65,10 @@ deactivate
 # 3. settings.yml — merge over SearXNG defaults; localhost-only, no Redis (limiter off),
 #    JSON format enabled for API consumers.
 mkdir -p data/searxng
+if [[ ! -e data/searxng/settings.yml && ! -L data/searxng/settings.yml ]]; then
 SECRET=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
-cat > data/searxng/settings.yml <<EOF
+# Exclusive creation also preserves settings written by another setup invocation.
+( set -o noclobber; cat > data/searxng/settings.yml <<EOF
 use_default_settings: true
 server:
   secret_key: "$SECRET"
@@ -78,6 +80,8 @@ search:
     - html
     - json
 EOF
+) || { echo "ERROR: could not create SearXNG settings; existing state was preserved"; exit 1; }
+fi
 
 # Mission Control reads components.searxng.installed from motdeck.yaml, never the disk
 # (bridge/app.py::status). This installer is standalone — it is NOT a branch of

@@ -38,7 +38,9 @@ HONEST LIMITS (also recorded in CLAUDE.md):
 from __future__ import annotations
 
 import logging
+import json
 import os
+import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
@@ -68,16 +70,23 @@ def parse_policy_text(text: str) -> Dict[str, List[str]]:
     data: Any = None
     try:
         import yaml  # type: ignore
-        data = yaml.safe_load(text)
-    except Exception:
-        data = None
-    if not isinstance(data, dict):
+    except ImportError:
         data = _mini_parse(text)
+    else:
+        try:
+            data = yaml.safe_load(text)
+        except Exception:
+            # A parse failure is not permission to salvage half a policy: its deny
+            # section may be the part that failed while a broad allow survived.
+            return {'allow': [], 'deny': []}
     out: Dict[str, List[str]] = {"allow": [], "deny": []}
+    if not isinstance(data, dict):
+        return out
     for key in ("allow", "deny"):
-        vals = data.get(key) if isinstance(data, dict) else None
-        if isinstance(vals, list):
-            out[key] = [str(v).strip() for v in vals if str(v).strip()]
+        vals = data.get(key, [])
+        if not isinstance(vals, list) or any(not isinstance(v, str) or not v.strip() for v in vals):
+            return {'allow': [], 'deny': []}
+        out[key] = [v.strip() for v in vals]
     return out
 
 
@@ -85,19 +94,42 @@ def _mini_parse(text: str) -> Dict[str, List[str]]:
     """Minimal `key:` + `  - "value"` reader for the policy shape above."""
     out: Dict[str, List[str]] = {"allow": [], "deny": []}
     current: Optional[str] = None
+    seen = set()
     for raw in (text or "").splitlines():
-        line = raw.split("#", 1)[0].rstrip() if not raw.strip().startswith("#") else ""
-        if not line.strip():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith('#'):
             continue
-        stripped = line.strip()
-        if stripped.startswith("- "):
-            if current:
-                val = stripped[2:].strip().strip('"').strip("'")
-                if val:
-                    out[current].append(val)
+        header = re.fullmatch(r'(allow|deny):\s*(?:\[\]\s*)?(?:#.*)?', stripped)
+        if header and not raw[:1].isspace():
+            current = header.group(1)
+            # Duplicate headers are ambiguous in this deliberately narrow reader.
+            if current in seen:
+                return {'allow': [], 'deny': []}
+            seen.add(current)
             continue
-        head = stripped.split(":", 1)[0].strip()
-        current = head if head in ("allow", "deny") else None
+        if not current or not raw[:1].isspace() or not stripped.startswith('- '):
+            return {'allow': [], 'deny': []}
+        value = stripped[2:].strip()
+        try:
+            if value.startswith('"'):
+                val, end = json.JSONDecoder().raw_decode(value)
+                rest = value[end:].strip()
+                if rest and not rest.startswith('#'):
+                    raise ValueError('invalid trailing policy text')
+            elif value.startswith("'"):
+                match = re.fullmatch(r"'((?:[^']|'')*)'\s*(?:#.*)?", value)
+                if match is None:
+                    raise ValueError('invalid quoted policy path')
+                val = match.group(1).replace("''", "'")
+            else:
+                val = re.split(r'\s+#', value, maxsplit=1)[0].strip()
+                if any(c in val for c in '[]"\'') or ': ' in val:
+                    raise ValueError('unsupported policy syntax')
+            if not isinstance(val, str) or not val.strip():
+                raise ValueError('empty policy path')
+        except (ValueError, TypeError):
+            return {'allow': [], 'deny': []}
+        out[current].append(val)
     return out
 
 

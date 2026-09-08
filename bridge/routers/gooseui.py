@@ -225,7 +225,8 @@ def _read_runtime_unlocked() -> dict | None:
     path = _runtime_path()
     fd = -1
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or (info.st_mode & 0o077):
             return None
@@ -233,13 +234,15 @@ def _read_runtime_unlocked() -> dict | None:
         if len(raw) > 4096:
             return None
         doc = json.loads(raw.decode("utf-8"))
+        if not isinstance(doc, dict):
+            return None
         pid, port = int(doc.get("pid") or 0), int(doc.get("port") or 0)
         birth, token = str(doc.get("birth") or ""), str(doc.get("token") or "")
         if (doc.get("version") != 1 or pid <= 0 or not birth
                 or not 0 < port <= 65535 or not 20 <= len(token) <= 512):
             return None
         return {"pid": pid, "birth": birth, "port": port, "token": token}
-    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+    except (OSError, UnicodeError, ValueError, TypeError, OverflowError):
         return None
     finally:
         if fd >= 0:
@@ -365,15 +368,27 @@ def _reap_orphan() -> bool:
             return False
         _ownership.signal_owned(
             ROOT, "goose-ui", expected_pid=pid or 0, expected_birth="", force=True)
-        _log(f"legacy/stale pidfile for pid {pid or '?'} had no launch claim — cleared, not signalled")
+        _log(f"legacy/stale pidfile for pid {pid or '?'} had no launch claim — retained, not signalled")
         return False
     pid = claim[0]
     sent, detail = _ownership.signal_owned(
         ROOT, "goose-ui", expected_pid=pid, expected_birth=claim[1],
-        group=True)
+        group=True, retire=False)
     if sent:
-        _clear_runtime(pid, claim[1])
-        _log(f"reaped our launch-recorded orphaned goosed pid={pid}")
+        # A delivered TERM is not proof of exit. Keep the durable claim while it
+        # drains, and reverify the same birth before any escalation.
+        for force in (False, True):
+            if force and _ownership.process_birth(pid) == claim[1]:
+                _ownership.signal_owned(ROOT, "goose-ui", expected_pid=pid,
+                    expected_birth=claim[1], group=True, force=True, retire=False)
+            deadline = time.monotonic() + 5
+            while _ownership.process_birth(pid) == claim[1] and time.monotonic() < deadline:
+                time.sleep(.1)
+            if _ownership.process_birth(pid) != claim[1]:
+                _clear_pidfile(pid, claim[1])
+                _log(f"reaped our launch-recorded orphaned goosed pid={pid}")
+                return True
+        _log(f"goose UI child pid={pid} is still alive; retained its launch record")
     else:
         _log(f"refused orphan signal for pid={pid}: {detail}")
     return sent
@@ -405,9 +420,16 @@ def _ensure() -> tuple:
                 if _probe(_PORT):
                     return _ui.acp_url(_PORT, _TOKEN), ""
                 time.sleep(0.2)
-            _stop_locked("wedged")
+            how = _stop_locked("wedged")
+            if how not in ("term", "kill", "reaped", "gone"):
+                _START_ERR = f"the previous Goose UI could not be stopped ({how}); retry Stop first"
+                return "", _START_ERR
 
         _reap_orphan()
+        if (_ownership.read_claim(ROOT, "goose-ui")
+                or os.path.lexists(_ui.pidfile_path(ROOT))):
+            _START_ERR = "the previous Goose UI launch is unresolved; its process record was kept"
+            return "", _START_ERR
 
         ok, reason = _ui.is_installed(ROOT)
         if not ok:
@@ -536,7 +558,6 @@ def _stop_locked(why: str) -> str:
     """
     global _PROC, _PROC_BIRTH
     p = _PROC
-    _PROC = None
     if p is None or p.poll() is not None:
         # ⚠️ A5 — WALKED, NOT IMAGINED (2026-08-29). The bridge restarted between a
         # /start and a /stop; the new process had no Popen handle, this branch cleared
@@ -546,9 +567,14 @@ def _stop_locked(why: str) -> str:
         # one-DB story _reap_orphan exists to prevent.) The pidfile IS the cross-restart
         # handle, so "no handle in memory" must consult it BEFORE erasing it — and
         # _reap_orphan is already the identity-verified way to do exactly that.
-        return "reaped" if _reap_orphan() else "gone"
+        _PROC, _PROC_BIRTH = None, ""
+        reaped = _reap_orphan()
+        if _ownership.read_claim(ROOT, "goose-ui"):
+            return "kill-pending"
+        if os.path.lexists(_ui.pidfile_path(ROOT)):
+            return "not-ours"
+        return "reaped" if reaped else "gone"
     birth = _PROC_BIRTH
-    _PROC_BIRTH = ""
     if not birth or not is_ours(p.pid):
         _log(f"REFUSED to signal pid {p.pid}: it is not provably our goosed "
              "(no matching PID+kernel-birth launch record). Left running.")
@@ -566,17 +592,19 @@ def _stop_locked(why: str) -> str:
     try:
         p.wait(timeout=5)
         _clear_pidfile(p.pid, birth)
+        _PROC, _PROC_BIRTH = None, ""
         _log(f"serve stopped ({why}, SIGTERM)")
         return "term"
     except subprocess.TimeoutExpired:
         pass
     if _ownership.process_birth(p.pid) != birth:
         _clear_pidfile(p.pid, birth)
+        _PROC, _PROC_BIRTH = None, ""
         return "term"
     try:
         sent, detail = _ownership.signal_owned(
             ROOT, "goose-ui", expected_pid=p.pid, expected_birth=birth,
-            force=True, group=True)
+            force=True, group=True, retire=False)
         if not sent:
             _log(f"REFUSED SIGKILL for pid {p.pid}: {detail}")
             return "not-ours"
@@ -589,6 +617,7 @@ def _stop_locked(why: str) -> str:
         _log(f"recorded goose UI child pid {p.pid} did not become waitable after SIGKILL")
         return "kill-pending"
     _clear_pidfile(p.pid, birth)
+    _PROC, _PROC_BIRTH = None, ""
     _log(f"serve stopped ({why}, SIGKILL)")
     return "kill"
 
@@ -987,4 +1016,7 @@ def gooseui_stop() -> JSONResponse:
         return _unavailable()
     with _LOCK:
         how = _stop_locked("requested")
-    return JSONResponse({"ok": True, "stopped": how})
+    ok = how in ("gone", "reaped", "term", "kill")
+    return JSONResponse({"ok": ok, "stopped": how,
+                         "error": None if ok else "Goose UI could not be stopped; its process record was kept"},
+                        status_code=200 if ok else 409)

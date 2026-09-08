@@ -158,13 +158,14 @@ check(f"ROOT is held by many lanes ({len(_root_holders)}), which is exactly why 
 # The other side of that fence: a satellite's own ROOT must NOT move, because it never
 # did. bridge/voice.py is the live example.
 import bridge.voice as _sat                                       # noqa: E402
+_root_saved = A.ROOT
 _sat_saved, _sentinel = _sat.ROOT, Path("/tmp/facade-fence-sentinel")
 A.ROOT = _sentinel
 check("a satellite module's own ROOT is NOT rebound by the facade — pre-split "
       "`A.ROOT = tmp` did not reach bridge/voice.py either, and the satellites resolve "
       "their own paths on purpose", _sat.ROOT == _sat_saved)
-A.ROOT = ROOT
-check("…and ROOT is back to the real repo root afterwards", A.ROOT == ROOT)
+A.ROOT = _root_saved
+check("…and ROOT is restored to its actual pre-test value", A.ROOT == _root_saved)
 
 # ── 3. dependency direction ──────────────────────────────────────────────────
 print("\n── 3. the layering holds ──")

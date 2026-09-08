@@ -47,6 +47,11 @@ def test_symlink_manifest_is_refused(tmp_path):
     assert p.returncode == 2 and p.stdout == ""
 
 
+def test_yaml_syntax_errors_do_not_echo_credentials(tmp_path):
+    result = _read(tmp_path, 'runner:\n  api_key: "secret-marker-unclosed\n')
+    assert result.returncode == 2 and 'secret-marker' not in result.stderr
+
+
 def test_start_script_has_one_semantic_reader_boundary():
     src = (ROOT / "scripts" / "start_component.sh").read_text()
     assert "_manifest_value" in src and "scripts/read_manifest.py" in src

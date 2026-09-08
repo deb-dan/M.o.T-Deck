@@ -17,6 +17,7 @@ are NOT importable from the bridge venv, so nothing here imports it.
 
 Run: pytest bridge/contract_tests/
 """
+import pytest
 from pathlib import Path
 
 import yaml
@@ -52,7 +53,7 @@ def test_voicestudio_pinned_in_motdeck_yaml():
 
 def test_asgi_entrypoint_exists():
     if not _present():
-        return  # optional component not installed — nothing to gate
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(MAIN)
     assert "app = FastAPI(" in src or "app: FastAPI" in src or "\napp = " in src, (
         "backend/main.py no longer defines a module-level `app` — "
@@ -61,7 +62,7 @@ def test_asgi_entrypoint_exists():
 
 def test_bind_env_vars_still_honoured():
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(MAIN)
     for var in ("OMNIVOICE_BIND_HOST", "OMNIVOICE_PORT"):
         assert var in src, (
@@ -72,7 +73,7 @@ def test_bind_env_vars_still_honoured():
 
 def test_health_route_registered():
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(MAIN)
     assert '"/health"' in src or "'/health'" in src, (
         "GET /health is gone — it is the readiness probe start_component.sh polls "
@@ -81,7 +82,7 @@ def test_health_route_registered():
 
 def test_spa_mounted_from_frontend_dist():
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(MAIN)
     assert "frontend" in src and "dist" in src, (
         "backend/main.py no longer references frontend/dist — the install script "
@@ -90,7 +91,7 @@ def test_spa_mounted_from_frontend_dist():
 
 def test_mcp_mounted():
     if not _present():
-        return
+        pytest.skip("optional upstream source is absent: not _present()")
     src = _read(MAIN)
     assert '"/mcp"' in src or "'/mcp'" in src or "OMNIVOICE_MCP_DISABLE" in src, (
         "the in-process MCP server at /mcp is gone — Phase 3 registers exactly that "
@@ -109,7 +110,7 @@ def test_mcp_endpoint_is_exactly_slash_mcp():
     streamable_http_path to "/" before sub-mounting the app at "/mcp" — without that
     the real endpoint would be /mcp/mcp and every agent call would 404."""
     if not _present() or not MCP_SRV.exists():
-        return
+        pytest.skip("optional upstream source is absent: not _present() or not MCP_SRV.exists()")
     src = _read(MCP_SRV)
     assert 'app.mount("/mcp"' in src, (
         "mount_mcp no longer mounts the MCP app at /mcp — update VOICE_MCP['voicestudio']"
@@ -124,7 +125,7 @@ def test_mcp_tools_still_named_as_advertised():
     only — the hosts discover the real list themselves), so a rename is cosmetic
     drift we still want to hear about at pin-bump."""
     if not _present() or not MCP_SRV.exists():
-        return
+        pytest.skip("optional upstream source is absent: not _present() or not MCP_SRV.exists()")
     src = _read(MCP_SRV)
     for tool in ("generate_speech", "clone_voice", "transcribe", "list_voices",
                  "list_personalities", "list_languages", "check_health"):
@@ -137,7 +138,7 @@ def test_mcp_callback_base_url_env():
     http://localhost:3900. start_component.sh pins OMNIVOICE_API_URL to the port we
     actually bound, so a non-default port can't silently break every tool call."""
     if not _present() or not MCP_SRV.exists():
-        return
+        pytest.skip("optional upstream source is absent: not _present() or not MCP_SRV.exists()")
     assert "OMNIVOICE_API_URL" in _read(MCP_SRV), (
         "OMNIVOICE_API_URL is no longer how the MCP tools find their own backend — "
         "the env export in start_component.sh's voicestudio branch needs updating")
@@ -149,7 +150,7 @@ def test_per_agent_voice_binding_is_header_only():
     MCP entry — so our calls use the global default voice. If upstream ever accepts
     the client id another way (a query param, a tool arg), revisit VOICE_MCP's note."""
     if not _present() or not MCP_SRV.exists():
-        return
+        pytest.skip("optional upstream source is absent: not _present() or not MCP_SRV.exists()")
     assert "x-omnivoice-client-id" in _read(MCP_SRV).lower(), (
         "the X-OmniVoice-Client-Id binding header changed — the caveat shown in the "
         "Capabilities panel (VOICE_MCP['voicestudio']['note']) is now wrong")
@@ -160,7 +161,7 @@ def test_llm_custom_provider_env_triplet():
     the `custom` (OpenAI-compatible) provider's env triplet. All three names, plus the
     resolution order, are upstream's — pin them."""
     if not _present() or not LLM_PROVIDERS.exists():
-        return
+        pytest.skip("optional upstream source is absent: not _present() or not LLM_PROVIDERS.exists()")
     src = _read(LLM_PROVIDERS)
     for env in ("TRANSLATE_BASE_URL", "TRANSLATE_API_KEY", "TRANSLATE_MODEL"):
         assert env in src, (

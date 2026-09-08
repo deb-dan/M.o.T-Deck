@@ -1,18 +1,17 @@
-// PHASE 2.1 unit test — pure Tailwind Play CDN → self-hosted rewrite + nav-guard href
-// classification used by the sandboxed artifact renderer (bridge/panel/index.html).
-// Mirrors rewriteVendorCdns() and the ART_NAV_GUARD anchor rule. Offline, no deps.
-// Run: node bridge/tests/test_rewrite_cdns.js
-
-// --- mirror of rewriteVendorCdns() (index.html) ---
-function rewriteVendorCdns(html, assetBase){
-  return String(html == null ? '' : html).replace(
-    /(<script\b[^>]*\bsrc\s*=\s*)(["'])([^"']*tailwindcss\.com[^"']*)\2/gi,
-    function(m, pre, q){ return pre + q + assetBase + '/tailwind.play.js' + q; }
-  );
+// Exercise both the real rewrite and the actual injected navigation handler.
+const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+const {extractFunction} = require('./_panel_source');
+const source = fs.readFileSync(path.join(__dirname, '../panel/index.html'), 'utf8');
+const rewriteVendorCdns = new Function(extractFunction(source, 'rewriteVendorCdns') + ';return rewriteVendorCdns;')();
+const start = source.indexOf('const ART_NAV_GUARD ='), end = source.indexOf("+ '})();</scr' + 'ipt>';", start);
+const guard = new Function(source.slice(start, end + "+ '})();</scr' + 'ipt>';".length) + ';return ART_NAV_GUARD;')();
+let click;
+vm.runInNewContext(guard.slice(8, -9), {document:{addEventListener:(_event, fn)=>{click=fn;}}});
+function navBlocked(href){
+  let blocked=false;
+  click({target:{closest:()=>({getAttribute:()=>href})},preventDefault(){blocked=true;},stopPropagation(){}});
+  return blocked;
 }
-// --- mirror of the ART_NAV_GUARD decision: does clicking this href navigate away? ---
-// (returns true if the guard would preventDefault — i.e. it's NOT an in-page #fragment)
-function navBlocked(href){ return String(href || '').charAt(0) !== '#'; }
 
 const A = 'http://127.0.0.1:8700/assets/vendor';
 const LOCAL = A + '/tailwind.play.js';

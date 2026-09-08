@@ -545,7 +545,11 @@ console.log('2. Editorial does not pay for the second design');
                ⚠️ NOTHING WAS ADDED TO THIS PAGE FOR THE LANE ITSELF. The DeepSeek tab
                is a third-party page in its own WKWebView: no view, no renderer, no CSS,
                no first-party handler. That is why 0.5KB is the whole cost. */
-  const CEILING = 877700;
+  // Whole-code review: ~13.3 KB beyond ea47eb1 buys request ownership for
+  // chat/voice/artifacts, serialized preferences, retryable design loading,
+  // complete CSV rows, lazy JSON expansion and model reload/save ordering.
+  // Design CSS stays external; no palette, layout or theme was removed.
+  const CEILING = 885000;
   const size = Buffer.byteLength(html, 'utf8');
   ok(size <= CEILING, 'index.html is ' + size + ' bytes (ceiling ' + CEILING + ')');
   // (a) the structural half: the design's own rules are NOT in the page.

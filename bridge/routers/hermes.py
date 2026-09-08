@@ -449,9 +449,8 @@ class _HermesWS:
             await self._ws.send(_json.dumps({"jsonrpc": "2.0", "id": rid,
                                              "method": method, "params": params}))
             resp, boundary = await asyncio.wait_for(fut, timeout)
-        except Exception:
+        finally:
             self._pending.pop(rid, None)
-            raise
         if resp.get("error"):
             raise RuntimeError(str((resp.get("error") or {}).get("message")
                                    or "hermes rpc error"))

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import aclosing
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
@@ -25,8 +26,9 @@ async def _producer(body: dict, lane: str):
     else:
         from .odychat import agent_events
         stream = await agent_events(_body_for_lane(body, lane))
-    async for chunk in stream:
-        yield chunk
+    async with aclosing(stream):
+        async for chunk in stream:
+            yield chunk
 
 
 async def _start(body: dict, record: dict) -> None:

@@ -162,6 +162,8 @@ def _aux_start_locked(req: Request) -> JSONResponse:
     # immediate probe would refuse our OWN just-stopped aux (the race the runner Stop
     # documents at length in routers/components.py).
     _pre = _aux_kill(port)
+    if _pre:
+        return JSONResponse({"ok": False, "log": "; ".join(_pre)}, status_code=409)
     for _ in range(8):
         if not _port_alive_sync(port):
             break
@@ -268,26 +270,18 @@ def aux_stop() -> JSONResponse:
 def _aux_stop_locked() -> JSONResponse:
     """Stop the aux model, and REPORT WHAT ACTUALLY HAPPENED.
 
-    This used to return ok unconditionally without checking anything — already a small
-    lie, and a load-bearing one now that _aux_kill can legitimately REFUSE. The PORT is
-    the oracle (an observation outranks a report — the U15 header in
-    routers/components.py), and the refusals are what the user reads when it answers."""
+    A quiet port cannot overrule a refused stop: an owned child may still be loading
+    before it binds. Preserve that refusal before checking socket shutdown."""
     ax = cfg().get("aux", {}) or {}
     port = int(ax.get("port") or 6768)
     was_up = _port_alive_sync(port)
     notes = _aux_kill(port)
+    notes = [n for n in notes if NO_PIDFILE_NOTE not in n]
+    if notes:
+        return JSONResponse({"ok": False, "log": "; ".join(notes)}, status_code=409)
     if not was_up:
-        # Nothing was serving, so this IS a successful stop — but any refusal sentence
-        # still travels with it. A pidfile we declined to act on (a recycled pid, a
-        # stranger) is exactly the thing somebody debugging "why did aux not stop"
-        # needs to read, and dropping it because the port happened to be quiet would
-        # make the honest half of this fix invisible on the quiet path.
-        # …but "there was no pidfile" is dropped here: it is not a refusal, and after
-        # "nothing was listening" it is only noise. A real identity refusal survives.
-        notes = [n for n in notes if NO_PIDFILE_NOTE not in n]
         log = f"nothing was listening on :{port}"
-        return JSONResponse({"ok": True,
-                             "log": log + (" · " + "; ".join(notes) if notes else "")})
+        return JSONResponse({"ok": True, "log": log})
     for _ in range(12):                     # up to ~3s for the socket to be torn down
         if not _port_alive_sync(port):
             return JSONResponse({"ok": True, "log": "aux stopped"})

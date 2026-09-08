@@ -103,7 +103,7 @@ def test_active_turn_limit_refuses_new_work_without_cancelling_existing_turn(mon
 
         async def producer():
             await release.wait()
-            yield "data: [DONE]\\n\\n"
+            yield "data: [DONE]\n\n"
 
         first = store.start(sid="one", stored_sid="one-stored", request_id="one",
                             user="one", image_name="", producer=producer())

@@ -115,7 +115,7 @@ def _parse(raw: bytes | None):
 def _read(path: Path) -> bytes | None:
     fd = -1
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             return None
         with os.fdopen(fd, "rb") as handle:

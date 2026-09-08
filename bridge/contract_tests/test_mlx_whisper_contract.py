@@ -21,6 +21,9 @@ that has not re-run scripts/install_mlx.sh since Phase D, have nothing to check.
 Run: pytest bridge/contract_tests/
 """
 import subprocess
+from functools import lru_cache
+
+import pytest
 from pathlib import Path
 
 import yaml
@@ -29,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BIN = ROOT / "data" / "mlx-venv" / "bin" / "mlx_whisper"
 
 
+@lru_cache(maxsize=1)
 def _help():
     """--help text, or None when it cannot be obtained (absent venv, wrong arch).
     Both streams are joined and the return code ignored: argparse prints usage to
@@ -93,7 +97,7 @@ def test_console_script_present_when_mlx_venv_exists():
 def test_model_flag_present():
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert "--model" in h, (
         "mlx_whisper no longer advertises --model — stt_argv names the registry path "
         "with it; re-run recon before bumping build.mlx_whisper_pin")
@@ -102,7 +106,7 @@ def test_model_flag_present():
 def test_output_format_and_dir_flags_present():
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert ("--output-format" in h) or ("-f " in h) or ("-f," in h), (
         "mlx_whisper no longer advertises an output-FORMAT flag — stt_argv passes "
         "`-f json` and reads the resulting file")
@@ -114,7 +118,7 @@ def test_output_format_and_dir_flags_present():
 def test_json_is_still_an_output_format():
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert "json" in h.lower(), (
         "mlx_whisper's --output-format no longer lists json — voice.stt_read_output "
         "parses that file; a txt-only CLI would need a different reader")
@@ -125,7 +129,7 @@ def test_verbose_flag_present():
     stdout, which is what our 1500-char error log tail would then be full of."""
     h = _help()
     if h is None:
-        return
+        pytest.skip("the installed engine help is unavailable on this machine")
     assert "--verbose" in h, (
         "mlx_whisper dropped --verbose — stt_argv passes `--verbose False` to keep "
         "the transcript out of the engine log tail")

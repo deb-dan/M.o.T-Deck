@@ -147,6 +147,7 @@ fi
 # two writers on one `.part` file produce a corrupt artifact whose digest failure looks
 # like an upstream problem.
 STAGE="$DEST/.ui-install"
+mkdir -p "$DEST" || die "could not create installation directory: $DEST"
 if ! mkdir "$STAGE" 2>/dev/null; then
   die "another install is already running (staging dir ${STAGE#"$ROOT"/} exists).
      If you are sure nothing is running, remove it and try again:
@@ -156,7 +157,9 @@ fi
 # interrupted transfer therefore leaves NOTHING behind: the next run starts clean, and
 # the previously installed bundle (if any) was never touched.
 cleanup() { rm -rf "$STAGE"; }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 ZIP="$STAGE/${UI_ASSET}"
 say "downloading ${UI_ASSET} (${UI_ASSET_SIZE} bytes ≈ 209MB) from ${GOOSE_REPO} ${GOOSE_TAG}…"

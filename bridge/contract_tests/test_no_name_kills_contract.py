@@ -360,7 +360,7 @@ def test_component_stop_routes_the_pid_kill_through_the_verified_reaper():
         "the unverified pid signal is back in the generic stop"
 
 
-def test_reap_pidfile_refuses_a_foreign_pid_and_reaps_our_own_live():
+def test_reap_pidfile_refuses_a_foreign_pid_and_reaps_our_own_live(tmp_path, monkeypatch):
     """EXECUTED, not grepped — the journey that matters, both directions, on real
     processes: a pidfile pointing at a process that is NOT ours must survive (this is
     Debi's standalone app, and the pid-recycling case), and one that IS ours must die."""
@@ -371,7 +371,8 @@ def test_reap_pidfile_refuses_a_foreign_pid_and_reaps_our_own_live():
     sys.path.insert(0, ROOT)
     from bridge.core import procs
 
-    data = os.path.join(ROOT, "data")
+    monkeypatch.setattr(procs, "ROOT", tmp_path)
+    data = os.path.join(tmp_path, "data")
     os.makedirs(data, exist_ok=True)
     pf = os.path.join(data, "u64probe.pid")
 
@@ -438,10 +439,10 @@ def test_reap_pidfile_refuses_a_foreign_pid_and_reaps_our_own_live():
     #     ⚠️ IT MUST BE REAPED UNDER THE REAL COMPONENT NAMES ("aux", "runner"): the
     #     engine signatures live in _PORT_OWNER_SIGS keyed by exactly those, so a probe
     #     component name would make this test pass vacuously. Their pidfiles are
-    #     therefore BACKED UP AND RESTORED around the probe.
+    #     therefore created under the isolated fixture root, never in the checkout.
     import shutil as _sh
     import tempfile
-    tmpd = tempfile.mkdtemp(prefix="u64probe-foreign-")
+    tmpd = tempfile.mkdtemp(prefix="u64probe-foreign-", dir=tmp_path)
     foreign_script = os.path.join(tmpd, "llama-server")   # the NAME is the whole point
     with open(foreign_script, "w") as fh:
         fh.write("import time\ntime.sleep(37)\n")
@@ -450,15 +451,9 @@ def test_reap_pidfile_refuses_a_foreign_pid_and_reaps_our_own_live():
     # made the stranger look OURS and this assertion pass for the wrong reason (caught
     # while writing it). The interpreter has to be as foreign as the script.
     stranger = sp.Popen(["/usr/bin/python3", foreign_script, "--port", "6768"], cwd="/")
-    saved = {}
     try:
         for comp in ("aux", "runner"):
             real = os.path.join(data, f"{comp}.pid")
-            owner = os.path.join(data, f"{comp}.owner")
-            for candidate in (real, owner):
-                if os.path.exists(candidate):
-                    saved[candidate] = _read(candidate)
-                    os.remove(candidate)
             with open(real, "w") as fh:
                 fh.write(str(stranger.pid))
             notes = procs.reap_pidfile(comp)
@@ -470,15 +465,6 @@ def test_reap_pidfile_refuses_a_foreign_pid_and_reaps_our_own_live():
         stranger.kill()
         stranger.wait()
         _sh.rmtree(tmpd, ignore_errors=True)
-        for comp in ("aux", "runner"):
-            for candidate in (os.path.join(data, f"{comp}.pid"),
-                              os.path.join(data, f"{comp}.owner")):
-                if candidate in saved:         # put live bookkeeping back byte for byte
-                    with open(candidate, "w") as fh:
-                        fh.write(saved[candidate])
-                elif os.path.exists(candidate):
-                    os.remove(candidate)
-
     # (d) NO PIDFILE AT ALL → a sentence, and nothing signalled. There is no fallback
     #     to a name sweep, which is the entire point of the rule.
     notes = procs.reap_pidfile("u64probe-absent")
