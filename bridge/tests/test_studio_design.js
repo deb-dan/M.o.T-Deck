@@ -669,8 +669,8 @@ const grab = name => {
 {
   // the button, the Appearance row, the ⌘K entry
   const topbar = html.slice(html.indexOf('<div class="topbar">'), html.indexOf('<div id="view-mc">'));
-  eq('the top bar now carries FIVE icon chips — the design axis added exactly one',
-     (topbar.match(/class="chip chip-icon"/g) || []).length, 5);
+  eq('the top bar carries six icon chips — design plus the ownership-safe storage manager',
+     (topbar.match(/class="chip chip-icon"/g) || []).length, 6);
   ok(/id="design-chip" onclick="toggleDesign\(\)" title="Studio design"/.test(topbar),
      '…the ✦ chip, wired to toggleDesign, tooltip "Studio design"');
   ok(/>✦<\/span>/.test(topbar), '…with its own glyph, distinct from ◐ and ▣');

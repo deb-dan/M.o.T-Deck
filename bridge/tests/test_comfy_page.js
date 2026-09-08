@@ -1218,6 +1218,13 @@ const licLinks = (html.match(/target="_blank"/g) || []).length;
 ok(licLinks >= 1 && /huggingface\.co/.test(html),
    'the licence links stay real anchors — somebody else’s website IS what a browser is '
    + 'for, and demoting them would be the "invisible provenance" failure');
+ok(/\/api\/storage\/generate\/plan/.test(html) && /\/api\/storage\/generate\/apply/.test(html),
+   'Generate model/workflow removal is a preview/apply transaction');
+ok(/Remove this type’s downloaded files/.test(html) &&
+   /Uninstall this model’s downloaded files/.test(html),
+   'the overflow distinguishes one workflow’s files from the whole model family');
+ok(/<b>Preserved:<\/b>/.test(html) && /Shared by other workflows/.test(html),
+   'the preview renders preserved media state and names shared-file impact');
 
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

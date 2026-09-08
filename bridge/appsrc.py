@@ -158,6 +158,10 @@ FILES: tuple[str, ...] = (
     "core/chatattachments.py",
     "core/hermesattachments.py",
     "routers/hermesattachments.py",
+    # Ownership-safe uninstall/reset inventory and transactions (v1.5.90).
+    "core/appidentity.py",
+    "core/storageops.py",
+    "routers/storage.py",
 )
 
 # EVERYTHING FROM app.py's LANE LIST DOWN IS EXCLUDED from the view: the lane tuple, the

@@ -522,12 +522,13 @@ ok(delta({ tag: 'input', id: 'cap-setting-agent_max_rounds', cls: ['cap-num'] },
   ok(w['border-color'] === undefined && w.border && /--st-edge/.test(w.border.v),
      '...with the same edge as the buttons, so it is the same family');
 }
-// LANDMINE L4 (this slice's own): base #chat-input:focus is (1,1,0) and the studio block
-// is LAST in the sheet, so a studio #chat-input rule at the same specificity would win
-// the tie on source order and take the gold focus border with it.
+// COMPOSER CASCADE (v1.5.90): the shell owns the ground and focus edge. Studio chrome
+// must not repaint the textarea as a second field when the Studio design sheet is off.
 { const w = winners({ tag: 'textarea', id: 'chat-input', cls: [], pseudo: ['focus'] }, ON);
-  ok(w['border-color'] && w['border-color'].v === 'var(--gold)',
-     '#chat-input keeps its GOLD focus border under studio chrome (L4)'); }
+  ok(w.background && w.background.v === 'transparent'
+     && w.border && w.border.v === '0',
+     '#chat-input stays transparent and borderless under studio chrome; focus belongs '
+     + 'to #chat-inputrow'); }
 { const w = winners({ tag: 'input', id: null, cls: ['cap-inp'], pseudo: ['focus'] }, ON);
   ok(w['border-color'] && w['border-color'].v === 'var(--gold)',
      'a focused field takes the gold edge, like every other focused control'); }
@@ -658,11 +659,12 @@ for (const el of [{ tag: 'span', id: null, cls: ['mpill'] },
                 'border-color']).length === 0,
      'studio chrome leaves ' + (el.id || el.cls[0] || el.tag) + ' untouched (exempt)');
 }
-// #chat-input is the PARTIAL exemption §C names: the ground, the edge and the corner
-// join the family; the 14px prose sizing and the height do not.
+// #chat-input is a COMPLETE visual-shell exemption: #chat-inputrow already carries
+// the family ground, edge and corner. Repainting those on the textarea makes a nested
+// field. Studio may alter neither shell geometry nor prose geometry here.
 ok(delta({ tag: 'textarea', id: 'chat-input', cls: [] },
-         ['background', 'border-color', 'border-radius']).length === 3,
-   'the chat composer joins the family on ground / edge / corner only');
+         ['background', 'border', 'border-color', 'border-radius']).length === 0,
+   'the chat textarea stays transparent/borderless; the composer SHELL joins the family');
 ok(delta({ tag: 'textarea', id: 'chat-input', cls: [] },
          ['font', 'font-size', 'font-family', 'height', 'padding']).length === 0,
    '...and keeps its own 14px prose sizing, padding and height (§C exemption)');

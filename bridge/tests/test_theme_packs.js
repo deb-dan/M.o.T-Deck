@@ -279,17 +279,17 @@ console.log('the appearance surface');
      '…and the Navigation row it sits beside is untouched');
   const topbar = html.slice(html.indexOf('<div class="topbar">'),
                             html.indexOf('<div id="view-mc">'));
-  // ⚠️ PIN MOVED 4 → 5 (2026-08-28, the studio-design slice), and the reason is
+  // ⚠️ PIN MOVED 4 → 5 (2026-08-28, the studio-design slice), then 5 → 6 for the
+  // ownership-safe storage manager. The reason is
   // recorded rather than the number quietly bumped. This assertion's job is to stop a
   // slice from growing the top bar CASUALLY. The theme packs added none, and still add
-  // none — the fifth chip is the ✦ design axis, which the spec required to have its own
-  // button, and which is separately fenced in test_studio_design.js. The identities are
-  // pinned below, so a sixth chip, or a swap of one of these five, still fails here.
-  eq('the top bar carries exactly five icon chips — the packs added none, and the '
-     + 'design axis added exactly one', (topbar.match(/class="chip chip-icon"/g) || []).length, 5);
-  eq('…and they are these five, in this order — ◐ theme, ▣ chrome, ✦ design, ⌘K, ↻',
+  // none — the fifth chip is the ✦ design axis and the sixth is the explicit storage
+  // manager requested for install/remove/reset. The identities remain pinned below.
+  eq('the top bar carries exactly six icon chips — the packs added none',
+     (topbar.match(/class="chip chip-icon"/g) || []).length, 6);
+  eq('…and they are these six, in order — ◐ theme, ▣ chrome, ✦ design, ⌘K, storage, ↻',
      (topbar.match(/onclick="(\w+)\(/g) || []).map(s => s.slice(9, -1)),
-     ['toggleTheme', 'toggleChrome', 'toggleDesign', 'openPalette', 'refresh']);
+     ['toggleTheme', 'toggleChrome', 'toggleDesign', 'openPalette', 'openStorageManager', 'refresh']);
   ok(/onclick="toggleTheme\(\)"/.test(topbar), '…and ◐ is still one of them');
   ok(/\{t:'Next theme', k:'◐', f:toggleTheme\}/.test(html), '⌘K reaches the theme axis');
   // the select must reflect reality when the chip is what moved.

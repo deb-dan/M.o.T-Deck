@@ -296,8 +296,8 @@ _LANES = (
     "routers.hermeschannels",
     # U106 bridge-lifetime Hermes relay ownership (route-less, appended).
     "core.hermesturn",
-    "core.hermesreplay",
-    "core.localsecrets", "core.chatattachments", "core.hermesattachments", "routers.hermesattachments",
+    "core.hermesreplay", "core.localsecrets", "core.chatattachments", "core.hermesattachments", "routers.hermesattachments",
+    "core.appidentity", "core.storageops", "routers.storage",
 )
 # The route table BEFORE any lane is imported: FastAPI's own four (/openapi.json,
 # /docs, /docs/oauth2-redirect, /redoc) plus the /assets mount above. Frozen here so

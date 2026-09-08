@@ -844,6 +844,7 @@ const S = {
   form:{ engine:null, prompt:'', lyrics:'', seconds:null, steps:'', seed:'', format:'' },
   busy:false, submitUnknown:false, warn:'', jobErr:'',
   sheet:null,            /* null | 'engines' | 'track' | 'presets' */
+  removePlan:null,       /* preview token + exact paths for one engine removal */
   dirEdit:false, dirValue:null,   /* the tracks-folder editor, held in STATE */
   more:false, all:false, lyricsOpen:false,
   sel:null,              /* the track filename the stage is showing (null = newest) */
@@ -1883,6 +1884,7 @@ function renderSheet() {
   /* …and a COMMITTED field gives the focus back (blurCommitted below), so the sheet is
      never left showing a stale row just because the caret is still in a saved field. */
   if (S.sheet === 'engines') renderEnginesSheet();
+  else if (S.sheet === 'remove-engine') renderRemoveEngineSheet();
   else if (S.sheet === 'track') renderTrackSheet();
   else if (S.sheet === 'presets') renderPresetsSheet();
   wireTips($('sheet'));
@@ -1909,8 +1911,10 @@ function renderEnginesSheet() {
           (sv.act ? ' data-act="' + esc(sv.act) + '" data-pick="' + esc(e.engine) + '"' : '') +
           tipRef(sv) + '>' + esc(sv.chip) + '</span>' +
         (e.installed
-          ? '<button class="btn" data-act="pick-engine" data-pick="' + esc(e.engine) + '"' +
-            (e.engine === S.form.engine ? ' disabled' : '') + '>Use</button>'
+          ? '<span class="row"><button class="btn" data-act="pick-engine" data-pick="' +
+            esc(e.engine) + '"' + (e.engine === S.form.engine ? ' disabled' : '') +
+            '>Use</button><button class="btn" data-act="remove-engine" data-pick="' +
+            esc(e.engine) + '">Uninstall…</button></span>'
           : '<span></span>') +
       '</div>';
     }).join('') +
@@ -1928,6 +1932,25 @@ function renderEnginesSheet() {
           '<button class="btn" data-act="cancel-dir">Cancel</button>'
         : '<button class="btn" data-act="edit-dir">Change ▸</button>') +
     '</div>';
+}
+function renderRemoveEngineSheet() {
+  const p = S.removePlan;
+  if (!p) {
+    $('sheet').innerHTML = sheetHead('Uninstall engine') +
+      '<p class="say">Building an exact ownership preview…</p>';
+    return;
+  }
+  const rows = (p.paths || []).map(x => '<div class="mono">' +
+    esc((x.state === 'present' ? 'MOVE  ' : 'ABSENT  ') + x.path) + '</div>').join('');
+  $('sheet').innerHTML = sheetHead('Uninstall ' + (p.label || p.target)) +
+    '<p class="say">' + esc(bytes(p.bytes || 0)) +
+      ' moves to Trash. Disk space returns only after Trash is emptied.</p>' +
+    '<div class="utext">' + rows + '</div>' +
+    '<p class="say"><b>Preserved:</b> ' + esc((p.preserve || []).join(' · ')) + '</p>' +
+    (p.note ? '<p class="say bad"><b>Shared-cache effect.</b> ' + esc(p.note) + '</p>' : '') +
+    '<div class="row"><span class="grow"></span>' +
+      '<button class="btn" data-act="engines">Cancel</button>' +
+      '<button class="btn primary" data-act="apply-remove-engine">Move to Trash</button></div>';
 }
 /* THE TRACK SHEET — one tap from the stage or the ledger. Real name editing lives here:
    a filename is not an identity, and the run's own numbers are written back beside it. */
@@ -2442,6 +2465,25 @@ document.addEventListener('click', async (e) => {
   else if (act === 'select')  { S.sel = b.dataset.name; render(); }
   else if (act === 'open-track') { S.detail = b.dataset.name; S.sheet = 'track'; render(); }
   else if (act === 'pick-engine') { S.form.engine = b.dataset.pick; render(); }
+  else if (act === 'remove-engine') {
+    b.disabled = true;
+    const r = await api('/api/storage/music/plan', { method:'POST',
+      body:JSON.stringify({ engine:b.dataset.pick }) });
+    b.disabled = false;
+    if (!r.ok) { toast(r.error || 'could not build the removal preview', true); return; }
+    S.removePlan = r; S.sheet = 'remove-engine'; render();
+  }
+  else if (act === 'apply-remove-engine') {
+    const p = S.removePlan;
+    if (!p) return;
+    b.disabled = true;
+    const r = await api('/api/storage/music/apply', { method:'POST',
+      body:JSON.stringify({ token:p.token }) });
+    if (!r.ok) { b.disabled = false; toast(r.error || 'the engine was not removed', true); return; }
+    S.removePlan = null; S.sheet = 'engines'; S.form.engine = null;
+    toast('Engine files moved to Trash. Your music library was preserved.');
+    await load();
+  }
   else if (act === 'use-prompt') {
     const t = tracks().find(x => x.name === b.dataset.name);
     if (!t) return;

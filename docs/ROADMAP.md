@@ -10,7 +10,7 @@ than restating rows.
 Current shipped release: **v1.5.89** (see `VERSION`). Written 2026-09-08.
 
 <!-- current-status:start
-in-progress:
+in-progress: U167
 next: P6 P3 P5 S4 S7 U3
 later: U2 U9 U14 U26 U28 U29 U44 U45 U47 U57 U58
 someday: S2 U4 U5 U6 U8 U43 U46 U68
@@ -185,6 +185,24 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 ---
 
 ## In progress / Next
+
+**U167 — ownership-safe removal, reset and optional setup (candidate, not shipped).**
+The current wave adds paired Preview/Apply transactions for component runtimes, Music
+engines and Generate workflow/model files; lane-scoped clear-all for Chat/Agent and
+Hermes; an installed-app-only factory reset and full uninstall; and one post-core
+optional-tool selector that reuses the existing pinned installers. Removal is never a
+generic recursive delete: every plan inventories exact no-follow entries, binds consent
+to current evidence, stops only launch-provenance-owned processes, moves recoverably to
+Trash, and names the data/workspaces/models/shared homes it preserves. The factory reset
+is intentionally the broader local-data tier: it moves the complete canonical
+`Application Support/MOT Deck` root, but it cannot and does not claim external model
+manager libraries, external workspaces, shared Hugging Face caches, or the standalone
+Hermes `~/.hermes` home. The API page now separates configured routes from current
+runner reachability, and the composer keeps one integrated shell in every chrome/design
+combination. This paragraph records work in progress only; U167 may move to Done and
+`VERSION` may advance only after the complete gate and non-destructive installed-app
+preview/cancel journeys pass. Binding behavior and ownership matrix:
+`docs/FABLE-v1.5.90-OWNERSHIP-SAFE-UNINSTALL-RESET-SPEC.md`.
 
 The corrective v1.5.80 wave is shipped. Its closure checkpoint is U140 in the ledger;
 the U82–U138 rows remain the adversarial incident trail explaining why each first

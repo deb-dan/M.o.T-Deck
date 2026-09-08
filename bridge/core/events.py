@@ -93,10 +93,12 @@ RETRY_MS = 3000         # the SSE `retry:` hint — EventSource's own reconnect 
 #                and state/id hints; both Music surfaces refetch their existing routes.
 #                Active log progress still uses its 1s poll; idle polling remains the
 #                dead-stream recovery backstop.
+#   storage    → an optional install/removal/reset transaction moved; consumers refetch
+#                their existing disk/status authority rather than trusting the hint
 #   hello      → sent once per connection, never emitted by a state transition
 #   ping       → the keepalive above
 KINDS = ("component", "health", "model", "download", "config", "nav", "memory",
-         "comfy", "music")
+         "comfy", "music", "storage")
 
 
 class Hub:

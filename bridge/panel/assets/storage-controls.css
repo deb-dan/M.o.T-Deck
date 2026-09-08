@@ -1,0 +1,42 @@
+/* v1.5.90 — storage/uninstall controls. Scoped so this cannot repaint existing cards,
+   drag handles, composer controls, theme affordances, or third-party pages. */
+#storage-dlg { width:min(760px, 92vw); max-width:760px; max-height:82vh; }
+#storage-dlg .storage-head { display:flex; align-items:flex-start; justify-content:space-between;
+  gap:18px; border-bottom:1px solid var(--line); padding-bottom:12px; margin-bottom:12px; }
+#storage-dlg .storage-head h3 { margin:0 0 5px; }
+#storage-dlg #storage-body { max-height:62vh; overflow:auto; padding-right:3px; }
+#storage-dlg .storage-group { border:1px solid var(--line); border-radius:10px;
+  padding:12px; margin:9px 0; background:var(--card); }
+#storage-dlg .storage-row { display:grid; grid-template-columns:minmax(150px, .8fr) minmax(240px, 1.8fr) auto;
+  align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid var(--line); }
+#storage-dlg .storage-row:last-child { border-bottom:0; }
+#storage-dlg .storage-choice { cursor:pointer; }
+#storage-dlg .storage-choice:has(input:disabled) { cursor:default; }
+#storage-dlg .storage-choice input { accent-color:var(--gold); }
+#storage-dlg .storage-name { color:var(--cream); font-weight:600; }
+#storage-dlg .storage-meta { color:var(--faint); font:10.5px var(--mono); line-height:1.55; }
+#storage-dlg .storage-paths { margin:10px 0; padding:10px 12px; border-radius:8px;
+  background:var(--bg); border:1px solid var(--line); font:10.5px var(--mono); line-height:1.6;
+  overflow-wrap:anywhere; }
+#storage-dlg .storage-preserve { color:var(--ok); }
+#storage-dlg .storage-warn { color:var(--warn); }
+#storage-dlg .storage-error { color:var(--bad); }
+#storage-dlg .storage-confirm { display:block; width:100%; box-sizing:border-box;
+  margin-top:14px; padding:10px 12px; border:1px solid var(--bad); border-radius:8px;
+  background:var(--bg); color:var(--cream); font:12px var(--mono); }
+#storage-dlg .storage-actions { display:flex; flex-wrap:wrap; justify-content:flex-end;
+  gap:8px; margin-top:14px; }
+#storage-dlg button.danger, #chat-menu button.danger { color:var(--bad); border-color:var(--bad); }
+#storage-dlg button.danger.primary { background:var(--bad); color:var(--bg); }
+.cs-head-actions { display:inline-flex; align-items:center; gap:5px; }
+#cs-more { height:26px; min-width:28px; padding:0 7px; border-radius:7px;
+  color:var(--dim); background:transparent; border:1px solid transparent; }
+#cs-more:hover, #cs-more[aria-expanded="true"] { color:var(--cream); border-color:var(--gold); }
+#chat-menu { position:fixed; z-index:90; min-width:210px; padding:6px; }
+#chat-menu button { width:100%; display:block; text-align:left; background:transparent;
+  border:0; padding:8px 10px; }
+#chat-menu button:hover { background:var(--line); }
+@media (max-width:720px) {
+  #storage-dlg .storage-row { grid-template-columns:1fr; }
+  #storage-dlg .storage-row button { justify-self:start; }
+}

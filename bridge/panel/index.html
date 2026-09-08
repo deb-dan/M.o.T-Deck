@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MOT Deck</title>
 <script src="/assets/identity-migration.js"></script>
+<link rel="stylesheet" href="/assets/storage-controls.css">
 <style>
   :root {
     --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
@@ -2104,13 +2105,16 @@
   html[data-chrome="studio"] .cap-inp:focus,
   html[data-chrome="studio"] .cap-num:focus,
   html[data-chrome="studio"] .cap-sel:focus { border-color:var(--gold); outline:none; }
-  /* EXEMPTION (§C): the chat composer keeps its 14px PROSE sizing — only the ground,
-     the edge and the corner join. LANDMINE L4: base #chat-input:focus is (1,1,0) and
-     this block is LAST in the sheet, so the studio #chat-input rule (1,1,0) would win
-     the tie on source order and the gold focus border would disappear. Restated. */
+  /* EXEMPTION (§C): the COMPOSER SHELL owns the ground, edge, corner and focus.
+     The earlier version of this rule repainted the textarea itself with --st-inp and
+     an edge, undoing the one-bounded-field contract above whenever Studio chrome was
+     selected without the separate Studio design sheet. That created the exact
+     box-inside-a-box appearance Debi reported even though every control was correctly
+     inside #chat-inputrow in the DOM. Keep only the typography inheritance here; the
+     textarea must remain transparent and borderless in every axis combination. */
   html[data-chrome="studio"] #chat-input {
-    background:var(--st-inp); border-color:var(--st-edge); border-radius:var(--st-r); }
-  html[data-chrome="studio"] #chat-input:focus { border-color:var(--gold); }
+    background:transparent; border:0; border-radius:0; }
+  html[data-chrome="studio"] #chat-input:focus { border:0; }
   /* the slider joins by FAMILY only: the track keeps its --line2 hairline and the gold
      thumb is squared to the same corner as the buttons (§C). */
   html[data-chrome="studio"] .cap-range::-webkit-slider-thumb { border-radius:6px; }
@@ -2231,6 +2235,7 @@
          app to the studio design; one click back is Editorial exactly as it was. -->
     <span class="chip chip-icon" id="design-chip" onclick="toggleDesign()" title="Studio design" aria-label="Studio design">✦</span>
     <span class="chip chip-icon" onclick="openPalette()" title="Command palette (⌘K)" aria-label="Command palette">⌘K</span>
+    <span class="chip chip-icon" onclick="openStorageManager()" title="Installations, storage and reset" aria-label="Installations, storage and reset">⌫</span>
     <span class="chip chip-icon" onclick="refresh(true)" title="Refresh status" aria-label="Refresh status">↻</span>
   </div>
 
@@ -2279,7 +2284,10 @@
             <button id="cs-collapse" onclick="toggleSessionsRail()" title="Hide sessions" aria-label="Hide sessions">«</button>
             <span class="cs-title">Sessions</span>
           </span>
-          <button id="cs-new" onclick="newSession()" title="New chat" aria-label="New chat">＋ New</button>
+          <span class="cs-head-actions">
+            <button id="cs-new" onclick="newSession()" title="New chat" aria-label="New chat">＋ New</button>
+            <button id="cs-more" onclick="toggleChatMenu(event)" title="Conversation actions" aria-label="Conversation actions" aria-haspopup="menu" aria-expanded="false">⋯</button>
+          </span>
         </div>
         <div id="cs-list"></div>
         <!-- TASK A: drag to resize the sessions rail (180–560px, persisted) -->
@@ -2721,6 +2729,20 @@
   <div class="nv-body" id="nv-body"></div>
 </dialog>
 
+<dialog id="storage-dlg" class="float-surface">
+  <div class="storage-head">
+    <div><h3>Installations &amp; storage</h3><div class="note" id="storage-note">Preview first. Nothing is removed until you confirm.</div></div>
+    <button onclick="closeStorageManager()" aria-label="Close">Close</button>
+  </div>
+  <div id="storage-body"><div class="cs-empty">Loading…</div></div>
+</dialog>
+
+<div id="chat-menu" class="float-surface" role="menu" hidden>
+  <button role="menuitem" onclick="refreshChatSessions()">Refresh chats</button>
+  <button role="menuitem" class="danger" onclick="planClearLaneChats()">Delete all chats in this lane…</button>
+</div>
+
+<script src="/assets/storage-controls.js"></script>
 <script src="/assets/turn-stream.js"></script>
 <script src="/assets/chat-files.js"></script>
 <script>
@@ -2874,7 +2896,7 @@ function sseDispatch(kind){
     if (was && !musicRunning()) await loadMusicLibrary();
     else if (!was) await loadMusicLibrary();
   });
-  if (kind === 'component' || kind === 'health' || kind === 'config')
+  if (kind === 'component' || kind === 'health' || kind === 'config' || kind === 'storage')
     return sseRun('status', 120, () => { sseStats.refreshes++; refresh(); });
 }
 
@@ -3749,6 +3771,10 @@ function cardHTML(name, c, isBridge, prov) {
       actions += ` <button onclick="disableHermesWhatsapp(this)"
         title="Disable the Hermes WhatsApp channel, keep its login, and restart this M.O.T-owned Hermes process if it is running">Disable WhatsApp (keep login)</button>`;
     }
+    if (c.installed && !isRunner) {
+      actions += ` <button onclick="openStorageManager('${name}')"
+        title="Preview an ownership-safe runtime uninstall; your data and models are preserved">Uninstall…</button>`;
+    }
   }
   // The pin line. `pin` is the bridge's best-known name; the LABEL is what stops it
   // reading as a claim that the model is loaded and fine (U15 #2).
@@ -4135,7 +4161,7 @@ function openSetup() {
         <h3>Setting things up</h3>
         <div class="su-sub">green means ready — MOT runs fully local</div>
         <div id="su-rows"></div>
-        <div class="su-foot"><button id="su-dismiss" onclick="closeSetup()">Run in background</button></div>
+        <div class="su-foot"><button onclick="setupOptionalTools()">Choose optional tools…</button><button id="su-dismiss" onclick="closeSetup()">Run in background</button></div>
       </div>`;
     document.body.appendChild(scrim);
     scrim.addEventListener('click', e => { if (e.target === scrim) closeSetup(); });
@@ -4172,6 +4198,11 @@ function closeSetup() {
   if (scrim) scrim.style.display = 'none';
   if (!setupNeeded()) localStorage.setItem('motdeck-setup-done', '1');   // remember once healthy
   if (!localStorage.getItem('motdeck-tour-done')) startTour();           // walkthrough follows
+}
+function setupOptionalTools() {
+  const scrim = document.getElementById('setup-scrim');
+  if (scrim) scrim.style.display = 'none';
+  openStorageManager();
 }
 
 const TOUR = [
@@ -4601,12 +4632,20 @@ function apiEndpointHtml(keys, runner) {
    use): glanceable summary always, prose only when asked for. A closed <details> is
    also why the page audit in bridge/tests/test_api_view.js does not count these
    against the budget — prose behind a disclosure is not prose standing on the page. */
-function apiEndpointsHtml(ep) {
+function apiEndpointsHtml(ep, runner) {
   if (!ep || !ep.endpoints || !ep.endpoints.length) return '';
-  const served = ep.endpoints.filter(e => e.served).length;
-  const off = ep.endpoints.length - served;
+  /* The catalogue says which launch flags support a route; the live runner says
+     whether any route is reachable NOW. Keep those facts separate so an offline
+     optional/core service cannot leave a green "served" label behind. `undefined`
+     retains the pure renderer's historic standalone use; the real page always passes
+     the status row explicitly. */
+  const available = runner === undefined ? true : !!(runner && runner.loaded);
+  const configured = ep.endpoints.filter(e => e.served).length;
+  const served = available ? configured : 0;
+  const off = ep.endpoints.length - configured;
   let h = '<details class="api-routes"><summary>'
         + '<span class="chip">' + served + ' routes served</span>'
+        + (!available ? '<span class="chip">runner unavailable</span>' : '')
         + (off ? '<span class="chip">' + off + ' need a launch flag</span>' : '')
         + '</summary>';
   ep.endpoints.forEach(e => {
@@ -4614,7 +4653,8 @@ function apiEndpointsHtml(ep) {
        + '<div class="cap-name"><code>' + esc(e.method) + ' ' + esc(e.path) + '</code></div>'
        + '<div class="cap-desc say">' + esc(e.means) + '</div>'
        + '</div><div class="cap-ctl">'
-       + (e.served ? '<span class="cap-pill on">served</span>'
+       + (e.served && available ? '<span class="cap-pill on">served</span>'
+                   : e.served ? '<span class="cap-pill off">runner unavailable</span>'
                    : '<span class="cap-pill off">needs ' + esc(e.enabled_by || 'a flag') + '</span>')
        + '</div></div>';
   });
@@ -4776,7 +4816,7 @@ function renderApi() {
      reason, which is why it is composed in one innerHTML with the endpoint. */
   const routes = document.querySelector('#api-endpoint details.api-routes');
   const routesOpen = !!(routes && routes.open);
-  ep.innerHTML = apiEndpointHtml(apiState.keys, runner) + apiEndpointsHtml(apiState.endpoints);
+  ep.innerHTML = apiEndpointHtml(apiState.keys, runner) + apiEndpointsHtml(apiState.endpoints, runner);
   if (routesOpen) {
     const again = document.querySelector('#api-endpoint details.api-routes');
     if (again) again.open = true;

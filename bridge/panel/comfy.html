@@ -834,6 +834,7 @@ const MOTActionLifecycle = (() => {
 const S = {
   state:null, gallery:null, form:{}, busy:false, submitUnknown:false, err:null, validation:null,
   sheet:false, adv:false, all:false, sel:null, wroteBack:null, manifest:null,
+  removePlan:null,       /* exact Generate-file preview; workflow metadata is retained */
   /* which numeric fields the USER has typed in — see resetUntouched() */
   typed:{},
   /* Debi's stage: how tall it is, how many panes it has, and what is in them */
@@ -2197,6 +2198,7 @@ function refusalHtml() {
 function renderSheet() {
   $('scrim').hidden = !S.sheet;
   if (!S.sheet) { $('sheet').innerHTML = ''; return; }
+  if (S.removePlan) { renderRemoveFilesSheet(); return; }
   const cu = (S.state && S.state.curation) || {};
   const cards = cu.picks || [];
   const dv = diskVerdict(S.state);
@@ -2222,6 +2224,24 @@ function renderSheet() {
         'workflow-template registry is not readable in this install. The ComfyUI tab ' +
         'still works.</p>');
   wireTips($('sheet'));
+}
+function renderRemoveFilesSheet() {
+  const p = S.removePlan;
+  const shared = (p.impact || []).filter(x => x.shared);
+  $('sheet').innerHTML =
+    '<div class="row"><h2>Remove ' + esc(p.label || 'downloaded files') + '</h2>' +
+      '<span class="grow"></span><button class="ghost" data-act="cancel-remove-files">✕</button></div>' +
+    '<p class="say">' + esc(gb(p.bytes || 0)) +
+      ' moves to Trash. The workflow catalogue remains and can download the files again.</p>' +
+    '<div class="manifest">' + (p.paths || []).map(x => '<div class="mono">' +
+      esc((x.state === 'present' ? 'MOVE  ' : 'ABSENT  ') + x.path) + '</div>').join('') + '</div>' +
+    (shared.length ? '<p class="say bad"><b>Shared by other workflows.</b> ' +
+      esc(shared.map(x => x.file + ' → ' + (x.workflows || []).map(w => w.workflow).join(', ')).join(' · ')) +
+      '</p>' : '') +
+    '<p class="say"><b>Preserved:</b> ' + esc((p.preserve || []).join(' · ')) + '</p>' +
+    '<div class="row"><span class="grow"></span>' +
+      '<button class="ghost" data-act="cancel-remove-files">Cancel</button>' +
+      '<button class="primary" data-act="apply-remove-files">Move files to Trash</button></div>';
 }
 function modelRow(c) {
   const dl = dlFor(c.id);
@@ -2746,13 +2766,41 @@ document.addEventListener('click', async (e) => {
   }
   else if (act === 'wf-menu') {
     const w = curWorkflow();
+    const m = curModel();
     const its = [];
     if (w) its.push({ label:'Open template in ComfyUI', act:'template',
                       workflow:w.id });
+    if (w && w.present_count) its.push({ label:'Remove this type’s downloaded files…',
+                                        act:'remove-workflow-files', workflow:w.id });
+    if (m && m.on_disk_bytes) its.push({ label:'Uninstall this model’s downloaded files…',
+                                        act:'remove-model-files', pick:m.id });
     its.push({ label:'ComfyUI tab ↗', act:'comfyui-tab' });
     its.push({ label:'Models ▸', act:'sheet' });
     its.push({ label:'Reveal the models folder', act:'reveal-models' });
     menuShow(b, its);
+  }
+  else if (act === 'remove-workflow-files' || act === 'remove-model-files') {
+    menuHide();
+    const scope = act === 'remove-model-files' ? 'model' : 'workflow';
+    const id = scope === 'model' ? b.dataset.pick : b.dataset.workflow;
+    const r = await api('/api/storage/generate/plan', { method:'POST',
+      body:JSON.stringify({ scope:scope, id:id }) });
+    if (!r.ok) { toast(r.error || 'could not build the removal preview', true); return; }
+    S.removePlan = r; S.sheet = true; render();
+  }
+  else if (act === 'cancel-remove-files') {
+    S.removePlan = null; S.sheet = false; render();
+  }
+  else if (act === 'apply-remove-files') {
+    const p = S.removePlan;
+    if (!p) return;
+    b.disabled = true;
+    const r = await api('/api/storage/generate/apply', { method:'POST',
+      body:JSON.stringify({ token:p.token }) });
+    if (!r.ok) { b.disabled = false; toast(r.error || 'the files were not removed', true); return; }
+    S.removePlan = null; S.sheet = false; S.validation = null;
+    toast('Downloaded files moved to Trash. ComfyUI was stopped; restart it to use remaining workflows.');
+    await load();
   }
   else if (act === 'cancel') {
     await api('/api/comfy/download/' + b.dataset.dl + '/cancel', { method:'POST' });

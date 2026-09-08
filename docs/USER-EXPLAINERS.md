@@ -10,6 +10,52 @@ short, plain, and honest about limits — no marketing voice.
 
 ---
 
+## Install, uninstall, clear conversations and start fresh
+
+Open **Installations & storage** with the `⌫` control on MOT Main. The page deliberately
+separates operations that sound similar but own different things:
+
+- **Uninstall a component runtime** moves only the exact replaceable runtime named in
+  the preview to Trash. Histories, settings, workspaces, documents, outputs and model
+  weights stay. Optional source/build trees also stay when MOT Deck cannot prove every
+  ignored file inside them is replaceable.
+- **Music → Engines → Uninstall…** removes the selected engine integration and its exact
+  shared Hugging Face repository only after showing that shared-cache consequence. It
+  never removes finished songs.
+- **Generate → ⋯ → Remove downloaded files…** removes only the files required by the
+  selected type or model. The workflow catalogue remains, and the preview names any
+  other workflows sharing those files. Inputs, outputs and user workflows stay.
+- **Sessions → ⋯ → Delete all chats in this lane…** applies only to the currently
+  selected Chat/Agent authority (Odysseus) or Hermes authority. Deletion uses each
+  app's supported session operation one row at a time, so a partial result is reported
+  honestly instead of being called atomic. Goose keeps its own supported interactive
+  deletion path; MOT Deck never edits Goose's SQLite database.
+
+Every removal is **Preview, then Apply**. The preview lists exact paths, bytes, what is
+preserved, shared-resource effects and owned processes that must stop. Consent expires
+and is refused if those facts change. Successful removals move to the current user's
+Trash, so space is reclaimed only after Trash is emptied.
+
+**Factory reset** is the broad fresh-start option. It closes MOT Deck, stops only
+processes proven by MOT Deck's launch records, moves the complete canonical
+`~/Library/Application Support/MOT Deck` root to Trash, and reopens the installed app
+for clean core setup. That includes app-contained databases, settings, outputs and
+local runtimes. It deliberately does **not** erase external workspaces, repository
+checkouts, LM Studio/other external model libraries, shared Hugging Face caches outside
+that root, or the standalone/shared Hermes `~/.hermes` home.
+
+**Uninstall MOT Deck** moves that same canonical support root plus the verified
+`local.motdeck.app` bundle to Trash. It refuses a repository/dev copy, an ambiguous app
+identity, symlinked roots, changed preview evidence, or an unowned running process.
+
+The FAT installer always provisions the offline core first: MOT Deck, the runner,
+Hermes, Odysseus, SearXNG, API and Capabilities. **Choose optional tools…** then lets
+you queue only the additional products you want. These optional installations may need
+the network and keep their own onboarding. One failure does not roll back or relabel the
+working core, and every receipt is checked against the exact on-disk install contract.
+
+---
+
 ## Chat lanes — the three chips above the composer
 
 | Chip | What happens | When to use it |

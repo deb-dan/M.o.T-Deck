@@ -152,7 +152,7 @@ const LOG = (o) => Object.assign({
           model:'Qwen3.6-27B-Fable-Q4_K_S', prompt_tokens:87, completion_tokens:27,
           cached_tokens:0, tokens_per_second:86.2, duration_seconds:0.55 }] }, o || {});
 const page = (k, r, l, minted, arm, note, eps) =>
-  M.apiEndpointHtml(k, r) + M.apiEndpointsHtml(eps === undefined ? EPS() : eps)
+  M.apiEndpointHtml(k, r) + M.apiEndpointsHtml(eps === undefined ? EPS() : eps, r)
   + M.apiKeysHtml(k, minted, arm, note) + M.apiLogHtml(l);
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -330,6 +330,8 @@ prose('runner off', off, 2);
 ok(/>Runner off</.test(off), 'runner off: a chip states it');
 ok(/Start it in Mission Control/.test(off), '…and the sentence names where to fix it');
 ok(!/>Serving</.test(off), '…and nothing claims it is serving');
+ok(/0 routes served/.test(off) && /runner unavailable/.test(off),
+   'the endpoint catalogue greys configured routes when the runner is unavailable');
 const loading = page(KEYS(), RUNNER({ loaded:false, port_up:true, live_id:'' }),
                      LOG({ metrics_state:'ok' }));
 prose('runner loading', loading, 2);

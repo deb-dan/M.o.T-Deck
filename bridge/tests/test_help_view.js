@@ -146,8 +146,11 @@ console.log('\n2. the renderer, executed over the real document');
   ok(!/<hr/.test(DOC.sections.map(s => s.html).join('')),
      'the `---` rules are dropped: the layout rules its own sections, and two rules read '
      + 'as a mistake');
-  ok(/<strong>Agent<\/strong>/.test(DOC.sections[0].html), '**bold** inside a table cell works');
-  ok(/<em>/.test(DOC.sections[0].html), '…and *italic*');
+  // Find the semantic section. A new Help section must not
+  // turn an inline-format test into an accidental assertion about section order.
+  const chatLanes = DOC.sections.find(s => /^Chat lanes/.test(s.title));
+  ok(/<strong>Agent<\/strong>/.test(chatLanes.html), '**bold** inside a table cell works');
+  ok(/<em>/.test(chatLanes.html), '…and *italic*');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

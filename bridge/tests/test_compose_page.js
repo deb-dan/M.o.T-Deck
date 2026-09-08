@@ -940,6 +940,12 @@ ok(/id="dockslots"/.test(html) && (html.match(/class="ghost/g) || []).length ===
    'the dock strip stands one live ghost slot and two reserved ones');
 ok(/stem separation \(demucs \/ UVR class\)/.test(html) && !/data-act="stem/.test(html),
    'P6 is NAMED as the first future occupant and NOTHING is built for it — no fake tool');
+ok(/\/api\/storage\/music\/plan/.test(html) && /\/api\/storage\/music\/apply/.test(html),
+   'an engine uninstall is a preview/apply transaction, never a direct delete click');
+ok(/Uninstall…/.test(html) && /Disk space returns only after Trash is emptied/.test(html),
+   'the engine sheet exposes removal and states the recoverable Trash boundary');
+ok(/<b>Preserved:<\/b>/.test(html) && /\(p\.preserve \|\| \[\]\)\.join/.test(html),
+   'the preview visibly renders the backend’s exact preservation list');
 
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);
