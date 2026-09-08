@@ -1,5 +1,10 @@
 # Existing-feature reliability review — 2026-09-08
 
+**Historical source-review checkpoint.** The installation and follow-up evidence in
+`docs/RELEASE-v1.5.92-RELIABILITY.md` supersedes the unshipped/runtime-coverage statements
+below; this original record is retained so candidate evidence is not rewritten as
+installed acceptance.
+
 Local candidate based on `5ee008f` (v1.5.90), reviewed and implemented solo.
 The destination is to make the existing application more reliable without spending
 its features, themes, controls, state, or upstream compatibility. This is not a

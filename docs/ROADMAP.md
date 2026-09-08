@@ -7,7 +7,7 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current shipped release: **v1.5.90** (see `VERSION`). Written 2026-09-08.
+Current shipped release: **v1.5.91**; v1.5.92 is prepared for the final session-integrity fixes (see `VERSION`). Written 2026-09-08.
 
 <!-- current-status:start
 in-progress: U170
@@ -220,9 +220,9 @@ plans, session spillover, audit findings, and user-reported issues — replacing
 
 ## In progress / Next
 
-U170 tracks a local, unshipped review candidate improving existing chat, download,
-storage and model-settings behavior. Its coverage and native release acceptance limits
-are explicit in `docs/REVIEW-2026-09-08-EXISTING-FEATURES.md`; it does not implement the
+U170 tracks the remaining exhaustive review and acceptance coverage after the v1.5.91
+chat, download, storage and model-settings reliability release. The v1.5.92 session
+corrections and installed evidence are in `docs/RELEASE-v1.5.92-RELIABILITY.md`; this work does not implement the
 pending feature queue below. Two narrower follow-ups are intentionally
 not hidden beneath U167. U168 covers
 integration-specific deletion of data in shared or third-party stores (for example the

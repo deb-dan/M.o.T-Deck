@@ -1,6 +1,6 @@
 # MOT Deck — working memory (canonical project home)
 
-> **📍 CURRENT STATE (2026-09-08, v1.5.88 shipped) — supersedes the "2026-08-28, v1.5.12" banner
+> **📍 CURRENT STATE (2026-09-08, v1.5.91 shipped; v1.5.92 prepared) — supersedes the "2026-08-28, v1.5.12" banner
 > below for anything about what's shipped.** Full reader-facing status (done / in
 > progress / next, by theme) now lives in `docs/ROADMAP.md`; the deferred-work ledger is
 > `docs/UNFORGET.md` (unchanged pointer, see below). Since v1.5.12: the component
@@ -60,6 +60,11 @@
 > bundle derive its Finder/Get Info version from the same top-level `VERSION` truth.
 > U159–U165 and
 > `docs/FABLE-v1.5.88-MEDIA-RELOCATION-FIT-WAVE.md` carry the full evidence.
+> v1.5.89–v1.5.90 added the existing ownership-safe removal/reset and optional setup
+> surfaces. v1.5.91 shipped solo reliability corrections for Direct streams, download
+> writer lifetime, storage receipts/recovery and model settings. v1.5.92 prepares two
+> session-integrity corrections; see `docs/RELEASE-v1.5.92-RELIABILITY.md`. U170 stays
+> open for the requested exhaustive review; no pending feature was implemented.
 > Exact-once Direct-history writes remain U139;
 > shell execution confinement remains U72; non-LM-Studio source adapters remain conditional
 > on an inventory plus launch contract (U91); auxiliary-key rotation remains U142; and

@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 import httpx
@@ -189,6 +190,19 @@ async def ody_ensure_session(req: Request) -> JSONResponse:
         return JSONResponse({"error": f"Odysseus unreachable: {e}"}, status_code=502)
 
 
+def _ody_session_time(value):
+    """Odysseus stores UTC without an offset; make that contract explicit for clients."""
+    if not isinstance(value, str):
+        return value
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc).isoformat()
+    return value
+
+
 @app.get("/api/ody/sessions")
 async def ody_sessions() -> JSONResponse:
     """List the user's chat sessions (newest first) for the pane's session rail."""
@@ -209,8 +223,8 @@ async def ody_sessions() -> JSONResponse:
                 "model": _display_model(s.get("model")),  # MLX wire path → registry id
                 "model_status": availability["status"],
                 "model_note": availability["note"],
-                "updated_at": (s.get("last_message_at") or s.get("updated_at")
-                               or s.get("created_at")),
+                "updated_at": _ody_session_time(s.get("last_message_at") or s.get("updated_at")
+                                                or s.get("created_at")),
                 "message_count": s.get("message_count", 0),
             })
         out.sort(key=lambda x: x["updated_at"] or "", reverse=True)
@@ -351,9 +365,11 @@ async def ody_session_duplicate(sid: str, req: Request) -> JSONResponse:
 async def ody_session_delete(sid: str) -> JSONResponse:
     try:
         r = await _ody_req("POST", f"/api/session/{sid}/delete")
-        _thinking_forget(sid)   # drop the direct-lane thinking sidecar rows too
-        _attachment_forget(sid)  # …and any stored image bytes for that session
-        return JSONResponse({"ok": r.status_code == 200})
+        deleted = r.status_code == 200
+        if deleted:
+            _thinking_forget(sid)   # only after the upstream session was deleted
+            _attachment_forget(sid)
+        return JSONResponse({"ok": deleted})
     except Exception:
         return JSONResponse({"ok": False})
 
