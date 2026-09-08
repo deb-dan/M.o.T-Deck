@@ -7,7 +7,8 @@ each with a status and a verify-still-open command) read **`docs/UNFORGET.md`**,
 source of truth for deferred work. This doc summarizes themes and points there rather
 than restating rows.
 
-Current shipped release: **v1.5.92** (see `VERSION`). Written 2026-09-08.
+Current shipped release: **v1.5.92**. A verified but uninstalled v1.5.93 FAT candidate is
+recorded in `docs/BUILD-v1.5.93-CANDIDATE.md`. Written 2026-09-08.
 
 <!-- current-status:start
 in-progress: U170
@@ -237,7 +238,10 @@ release-accepted at this document revision; its
 RAM/ledger/fit experiments were reverted to the exact v1.5.92 implementation and are
 not continuation work. The Voicebox installed-contract and Office AI plugin
 process-crash recovery continuation is committed as `600d915`; it also remains
-unshipped and without native/FAT acceptance. The approved panel-source ceiling exception is tracked separately
+unshipped. A clean v1.5.93 FAT candidate from `0ae3d87` passed artifact, mounted-copy,
+manifest-hash, wheelhouse-inventory and signature verification without overwriting the prior DMG; it
+has not been installed, shipped or accepted through the affected native journeys. The
+receipt and exact hashes are in `docs/BUILD-v1.5.93-CANDIDATE.md`. The approved panel-source ceiling exception is tracked separately
 as U171: 877,700 bytes previously, 885,000 bytes now, with the current page at 880,942
 bytes and a future investigation required. Two narrower follow-ups are intentionally
 not hidden beneath U167. U168 covers
