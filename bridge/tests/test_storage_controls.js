@@ -36,6 +36,8 @@ ok(js.includes('textContent') && !js.includes('innerHTML'),
    'dynamic paths and upstream titles are rendered as text, never HTML');
 ok(js.includes('space returns only after Trash is emptied'),
    'the UI does not claim that a recoverable Trash move immediately frees disk');
+ok(js.includes("plan.bytes === null") && js.includes('Size is not scanned'),
+   'broad reset preview omits an expensive whole-root size scan instead of freezing the bridge');
 ok(js.includes("chatPane.mode === 'hermes'") && js.includes("'odysseus'"),
    'clear-all targets Hermes only in Hermes lane and Odysseus for Chat/Agent');
 ok(css.includes('#storage-dlg') && !/(^|\n)\s*(button|\.card|#chat-inputrow|#cs-resize)\s*\{/.test(css),

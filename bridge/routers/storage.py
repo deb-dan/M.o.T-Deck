@@ -20,7 +20,7 @@ from ..core.events import publish
 from ..core.storageops import (PLAN_TTL_S, RUNTIME_SPECS, StorageRefusal,
                                apply_artifact_plan, apply_runtime_plan, artifact_plan,
                                runtime_installed, runtime_plan, verify_artifact_plan,
-                               verify_runtime_plan, _tree_bytes)
+                               verify_runtime_plan)
 
 
 _PLANS: dict[str, dict] = {}
@@ -548,7 +548,13 @@ def _reset_plan(mode: str) -> dict:
                    "ino": int(helper_st.st_ino), "size": int(helper_st.st_size),
                    "mtime_ns": int(helper_st.st_mtime_ns), "sha256": helper_digest},
         "running": list(running_data.get("running") or []),
-        "bytes": _tree_bytes(ROOT) + (_tree_bytes(app_path) if mode == "full-uninstall" else 0),
+        # Do not recursively size the entire live support root here.  It can contain
+        # hundreds of gigabytes of runtimes and media, and doing that work in this
+        # request would freeze every bridge route while the confirmation sheet says
+        # "Verifying".  Exact identity/path evidence is the safety boundary; byte
+        # totals are presentation only and are therefore omitted truthfully.
+        "bytes": None,
+        "size_note": "Size is not scanned here so the running app stays responsive.",
         "preserve": ["repository checkouts", "external workspaces", "shared ~/.hermes",
                      "LM Studio and other external model-manager libraries",
                      "shared Hugging Face caches outside Application Support"],

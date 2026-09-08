@@ -1,4 +1,5 @@
 from pathlib import Path
+import inspect
 import os
 
 from fastapi.testclient import TestClient
@@ -10,6 +11,13 @@ from bridge.routers import storage as R
 
 
 client = TestClient(facade.app)
+
+
+def test_broad_reset_preview_never_recursively_sizes_the_live_support_root():
+    source = inspect.getsource(R._reset_plan)
+    assert "_tree_bytes(ROOT)" not in source
+    assert '"bytes": None' in source
+    assert '"size_note"' in source
 
 
 def _manifest(root: Path, installed: str = "true") -> None:

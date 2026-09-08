@@ -211,7 +211,10 @@
     body().replaceChildren(el('div', 'cs-empty', 'Verifying the installed app and canonical data root…'));
     try {
       const plan = await api('/api/storage/reset/plan', {mode});
-      const group = section(plan.label, fmtBytes(plan.bytes) + ' moves to Trash · no target is permanently erased by this action');
+      const size = plan.bytes === null || plan.bytes === undefined
+        ? (plan.size_note || 'Size is not scanned while the app is running.')
+        : fmtBytes(plan.bytes) + ' moves to Trash';
+      const group = section(plan.label, size + ' · no target is permanently erased by this action');
       const paths = el('div', 'storage-paths');
       for (const path of plan.moves || []) paths.append(el('div', '', 'MOVE  ' + path));
       group.append(paths);

@@ -12,7 +12,7 @@ Current shipped release: **v1.5.89** (see `VERSION`). Written 2026-09-08.
 <!-- current-status:start
 in-progress: U167
 next: P6 P3 P5 S4 S7 U3
-later: U2 U9 U14 U26 U28 U29 U44 U45 U47 U57 U58
+later: U2 U9 U14 U26 U28 U29 U44 U45 U47 U57 U58 U168 U169
 someday: S2 U4 U5 U6 U8 U43 U46 U68
 blocked-later: P1 U1 U34 U72 U91 U139 U142 U144
 blocked-someday: P2
@@ -203,6 +203,13 @@ combination. This paragraph records work in progress only; U167 may move to Done
 `VERSION` may advance only after the complete gate and non-destructive installed-app
 preview/cancel journeys pass. Binding behavior and ownership matrix:
 `docs/FABLE-v1.5.90-OWNERSHIP-SAFE-UNINSTALL-RESET-SPEC.md`.
+
+Two narrower follow-ups are intentionally not hidden beneath U167. U168 covers
+integration-specific deletion of data in shared or third-party stores (for example the
+standalone Hermes home); it requires one supported owner adapter per store, never a
+generic “wipe everything” glob. U169 covers removal of retained optional source/build
+trees; those trees remain preserved until a future installer records file-level
+ownership digests that can distinguish replaceable seed files from user additions.
 
 The corrective v1.5.80 wave is shipped. Its closure checkpoint is U140 in the ledger;
 the U82–U138 rows remain the adversarial incident trail explaining why each first
