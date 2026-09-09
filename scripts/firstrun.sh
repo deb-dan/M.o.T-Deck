@@ -7,10 +7,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
-say()  { printf "\033[1;36m[firstrun]\033[0m %s\n" "$*"; }
-fail() { printf "\033[1;31m[firstrun]\033[0m %s\n" "$*" >&2; exit 1; }
+say()      { printf "\033[1;36m[firstrun]\033[0m %s\n" "$*"; }
+progress() { printf ">>> PROGRESS: %s | %s\n" "$1" "$2"; say "$2"; }
+fail()     { printf "\033[1;31m[firstrun]\033[0m %s\n" "$*" >&2; exit 1; }
 
-say "MOT Deck first-run in: $ROOT"
+progress 10 "Checking system prerequisites (Xcode tools, Homebrew)…"
 
 # ---------- prerequisites (actionable failures) ----------
 command -v git  >/dev/null || fail "git not found — install Xcode Command Line Tools:  xcode-select --install"
@@ -26,6 +27,7 @@ done
 command -v node >/dev/null || say "Node.js not found — Hermes's dashboard build needs it later ('brew install node')."
 
 # ---------- uv (bootstrap uses it for venvs) ----------
+progress 20 "Configuring uv runtime package manager…"
 # Resolution order — the user's own uv always wins, and nothing is downloaded until
 # every known location has been checked. The explicit path list is the same one
 # install_component.sh uses for VB_UV: a Finder-launched app gets a MINIMAL PATH, so
@@ -86,5 +88,5 @@ if ! git config --get user.email >/dev/null 2>&1; then
   export GIT_COMMITTER_NAME="MOT Deck" GIT_COMMITTER_EMAIL="motdeck@localhost"
 fi
 
-say "Handing off to bootstrap…"
+progress 35 "Handing off to environment bootstrap…"
 exec bash ./scripts/bootstrap.sh --yes

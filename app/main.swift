@@ -3,7 +3,7 @@
 // frame-ancestors (which block iframing) entirely. Auto-starts the bridge on launch.
 // Built by scripts/build_app.sh (which generates Config.swift with motdeckRoot).
 //
-// ⚠️ STANDING RULE (Debi, 2026-08-20): every tab inherits EVERY tab behaviour by
+// ⚠️ STANDING RULE (sample, 2026-08-20): every tab inherits EVERY tab behaviour by
 // construction — split view, tab-drag, ghosts, ⌘R reload, lazy load and the
 // "Not reachable yet" placeholder. NOTHING in this file may hardcode a tab COUNT, and
 // the only tab INDICES that may be written down are the named constants derived from
@@ -87,7 +87,7 @@ let tabRegistry: [MOTDeckTab] = [
     MOTDeckTab(id: "voicestudio", title: "VoiceStudio", url: URL(string: "http://127.0.0.1:3900")!),
     MOTDeckTab(id: "voicebox", title: "Voicebox", url: URL(string: "http://127.0.0.1:17493")!),
     MOTDeckTab(id: "comfyui", title: "ComfyUI", url: URL(string: "http://127.0.0.1:8188")!),
-    // :8899, NOT upstream's default :8888 — that port belongs to Debi's standalone
+    // :8899, NOT upstream's default :8888 — that port belongs to sample's standalone
     // Unsloth app (motdeck.yaml carries the same number and the reason).
     MOTDeckTab(id: "unsloth", title: "Unsloth", url: URL(string: "http://127.0.0.1:8899")!),
     // OpenCode — the second coding lane. Its own server serves its own embedded SPA on
@@ -126,7 +126,7 @@ let tabRegistry: [MOTDeckTab] = [
     // hides the sidebar + topbar and pins the panel to the Music view. It is therefore
     // a second load of the panel document, deliberately — a native tab that is always
     // reachable, while the in-panel Music view keeps working exactly as before.
-    // ⚠️ THE TITLE BECAME "Music Classic" AT THE CONSOLIDATION SLICE (Debi's ruling
+    // ⚠️ THE TITLE BECAME "Music Classic" AT THE CONSOLIDATION SLICE (sample's ruling
     // 2026-08-29: ONE Music door, both looks behind it) AND THE ID DID NOT MOVE — the
     // Goose CLI rule verbatim. `music` is still the id, still `?solo=music`, still the
     // same untouched page; what changed is that the tab called "Music" is now the
@@ -136,7 +136,7 @@ let tabRegistry: [MOTDeckTab] = [
     // why `can_tab` exists there and why switchTab below must keep working for it.
     // v1.5.60: the "Music Classic" tab is GONE — Classic is reached in place (the
     // Studio header's dropdown navigates the one Music tab to ?solo=music and back).
-    // A shell tab here let the ⋯/window path re-create the second Music tab Debi's
+    // A shell tab here let the ⋯/window path re-create the second Music tab sample's
     // one-door ruling removed. Saved layouts naming `music` are SUPERSEDED-mapped.
     // Aider — the coding agent, running in a pseudo-terminal. Also ours, also the
     // bridge origin, but its OWN document (/aider): it loads xterm.js and talks to
@@ -148,7 +148,7 @@ let tabRegistry: [MOTDeckTab] = [
     // source-verify.md item 4). Ours, bridge origin, its own document (/goose): xterm.js
     // plus ws://…/api/pty/goose, so it must not carry the panel's poll loops.
     //
-    // ⚠️ THE TITLE GAINED "CLI" AT THE GOOSE UI SLICE (Debi's naming ruling 2026-08-29)
+    // ⚠️ THE TITLE GAINED "CLI" AT THE GOOSE UI SLICE (sample's naming ruling 2026-08-29)
     // AND THE ID DID NOT MOVE. There are two goose tabs now, and "Goose" alone stopped
     // saying which one; `goose` stays the id because it is also the route, the pidfile
     // and the row in every saved nav.json. LOffice's rule: internal names do not churn
@@ -175,7 +175,7 @@ let tabRegistry: [MOTDeckTab] = [
     // slash form also spares every launch a redirect.
     //
     // ⚠️ IT IS A SECOND, SEPARATE TAB FROM "Goose CLI" ABOVE, ON PURPOSE, AND NEITHER MAY
-    // BE "CLEANED UP" INTO THE OTHER. Debi's ruling (ledger S14) is that both lanes
+    // BE "CLEANED UP" INTO THE OTHER. sample's ruling (ledger S14) is that both lanes
     // coexist; they hold separate goose homes and separate session stores and were proven
     // alive simultaneously. Removing either takes a real surface away from the user.
     //
@@ -186,7 +186,7 @@ let tabRegistry: [MOTDeckTab] = [
                url: URL(string: "http://127.0.0.1:8700/gooseui/")!),
     // LOffice — spreadsheets over vendored Univer, served from OUR bridge (/office).
     // Ours, bridge origin, its own document for the same reason Aider is: it loads
-    // ~10MB of Univer UMD and must not carry the panel's poll loops. Debi suggested
+    // ~10MB of Univer UMD and must not carry the panel's poll loops. sample suggested
     // "Office Lane"; the tab-strip width budget below rules a two-word title out, so
     // the name is LOffice (2026-08-21). The ROUTE stays /office: internal names do
     // not churn with a wordmark.
@@ -215,7 +215,7 @@ let tabRegistry: [MOTDeckTab] = [
     //
     // ⚠️ IT IS A SECOND, SEPARATE TAB FROM "Music" ABOVE, ON PURPOSE, AND NEITHER MAY BE
     // "CLEANED UP" INTO THE OTHER. Music is the shipped view inside the panel; this is
-    // the redesigned surface Debi asked for so the two can be compared live. The ruling
+    // the redesigned surface sample asked for so the two can be compared live. The ruling
     // is that both stay until they choose.
     //
     // ⚠️ IN THE REGISTRY BUT NOT IN navDefaultTopbar — goose's and comfy's note applies
@@ -241,14 +241,14 @@ let tabRegistry: [MOTDeckTab] = [
 // test, because a disagreement would mean the strip and the panel's Appearance editor
 // describe different windows.
 //
-// ⚠️ v1.5.26 — DEBI'S ORDER: MOT Deck · Hermes · Unsloth · OpenCode · Odysseus ·
+// ⚠️ v1.5.26 — sample'S ORDER: MOT Deck · Hermes · Unsloth · OpenCode · Odysseus ·
 // VoiceStudio · ComfyUI · Aider · LOffice · Music · Voicebox. Same eleven ids, new
 // reading order. Changing this list alone changes only a FRESH machine: every machine
 // that has opened the panel has a data/nav.json whose saved order applyNav puts back.
-// bridge/nav.py's `migrate` is the half that makes the reorder visible on Debi's own
+// bridge/nav.py's `migrate` is the half that makes the reorder visible on sample's own
 // Mac — it rewrites a saved layout that is byte-for-byte the OLD default, and leaves a
 // customised one alone.
-// ⚠️ NINE SINCE THE 9+3 RULING (Debi 2026-08-29), NOT ELEVEN — and the strip is still
+// ⚠️ NINE SINCE THE 9+3 RULING (sample 2026-08-29), NOT ELEVEN — and the strip is still
 // the same eleven tabs, because the tenth and eleventh are now the SEED of the
 // last-three window below rather than pins. test_nav_model.py asserts this list equals
 // nav.py's pinned defaults and that the two together equal nav.strip(default_model()).
@@ -364,7 +364,7 @@ final class DropOverlay: NSView {
 // every chat inside it fails against a runner that is gone or serving a different
 // model, and nothing anywhere says so. This strip is that sentence.
 //
-// ⚠️ IT IS ADVISORY AND IT NEVER BLOCKS THE TAB — Debi's advisory-gates ruling. Three
+// ⚠️ IT IS ADVISORY AND IT NEVER BLOCKS THE TAB — sample's advisory-gates ruling. Three
 // properties enforce that, and a future edit must keep all three:
 //   1. it SHORTENS the page rather than covering it (attach() pins the webview's top to
 //      this view's bottom), so no pixel of the component's own UI is ever hidden;
@@ -614,7 +614,7 @@ final class DropWebView: WKWebView {
 // from VoiceStudio, a log file, anything sent as Content-Disposition: attachment) and
 // every `<a download>` click are simply DROPPED unless the host app answers the
 // download delegate. That is exactly the silent-no-op class that broke ⊕ attach
-// (runOpenPanelWith) and ● talk (requestMediaCapturePermissionFor) — Debi hit it as
+// (runOpenPanelWith) and ● talk (requestMediaCapturePermissionFor) — sample hit it as
 // "the download button in the VoiceStudio tab does nothing".
 //
 // One handler instance is shared by all five tabs. It must be RETAINED by the app:
@@ -715,7 +715,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // a hidden holder view (the old `isHidden = true` state with a different owner).
     //
     // v1's control model was "the right pane has its own mini strip and the LEFT ALWAYS
-    // WINS a collision". Debi's verdict after Mac-testing: the mini strip felt
+    // WINS a collision". sample's verdict after Mac-testing: the mini strip felt
     // unresponsive, the right pane felt stuck, and "left wins" was invisible logic that
     // produced a placeholder out of nowhere. v2 replaces it wholesale:
     //   • the mini strip is DELETED — one strip, which routes to the FOCUSED pane;
@@ -752,11 +752,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // Which entries are on the strip, in order, as data/nav.json last said. The shell
     // cannot read the panel's localStorage, which is exactly why that file exists.
     var navPinned: [String] = navDefaultTopbar
-    // ══ THE LAST-THREE WINDOW (Debi's ruling 2026-08-29) ═════════════════════════
+    // ══ THE LAST-THREE WINDOW (sample's ruling 2026-08-29) ═════════════════════════
     // WHAT IT REPLACES, and why the replacement was the ruling: this used to be
     // `tempShown`, an UNBOUNDED session list of everything you had opened from the ⋯
     // menu or from a sidebar row, appended AFTER the (then twelve) pins. So a strip
-    // whose rule said "at most 12" routinely drew fourteen — the creep Debi named.
+    // whose rule said "at most 12" routinely drew fourteen — the creep sample named.
     //
     // Now it is a bounded, PERSISTED window of `navWindowMax` ids, most-recently-opened
     // first, drawn after the nine pins. Opening a tab that is not on the strip puts it
@@ -779,7 +779,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var rightTab = 1
     var focusedPane = 0              // 0 = left, 1 = right — the tab strip's + ⌘R's target
     // ── second instances ("ghosts") ──
-    // Debi's ask: dragging a tab the OTHER pane already shows should be able to open a
+    // sample's ask: dragging a tab the OTHER pane already shows should be able to open a
     // SECOND copy of that app here instead of always swapping. The strip KEEPS the swap
     // (clicking it stays predictable); the DRAG gained this power.
     //
@@ -855,11 +855,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // ── OPENCODE: "New session" → "runner auto session" (ledger S21) ────────────
     //
     // WHAT THIS FIXES, AND WHAT IT DELIBERATELY DOES NOT.
-    // docs/research/2026-08-29-opencode-phantom-sessions.md root-caused the tabs Debi
+    // docs/research/2026-08-29-opencode-phantom-sessions.md root-caused the tabs sample
     // kept finding in OpenCode: they are not sessions. Our /opencode landing route
     // deep-links `/:dir/session` with no draftId, and OpenCode 1.18.23's SPA mints and
     // PERSISTS one draft TAB per boot of that route. Zero server sessions were ever
-    // created (sqlite: 0 rows, GET /session: []). Debi's ruling (S21): LEAVE the landing
+    // created (sqlite: 0 rows, GET /session: []). sample's ruling (S21): LEAVE the landing
     // behaviour alone — the drafts are harmless and prunable with their own ✕ — but stop
     // them calling themselves "New session", because that is what made them look like
     // work she had started and abandoned. They are OURS: one per app launch.
@@ -889,7 +889,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // ZERO VENDORED BYTES: this runs in our webview, in our shell, and writes nothing
     // into anything of theirs. Removing it restores upstream's label on the next launch.
     //
-    // ── THE DISCRIMINATOR (Debi, live bug 2026-08-29): AUTO vs USER drafts ──────
+    // ── THE DISCRIMINATOR (sample, live bug 2026-08-29): AUTO vs USER drafts ──────
     // The first cut relabelled EVERY draft, so clicking + — a deliberate new session —
     // was also branded "runner auto session". That is a LIE-TO-USER of the same family
     // the slice was written to remove, pointed the other way: it renames the user's own
@@ -961,7 +961,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         return String(seg[q])
     }
 
-    // ── GOOSE UI: a per-chat ✕ IN THE SIDEBAR (Debi, asked twice) ───────────────
+    // ── GOOSE UI: a per-chat ✕ IN THE SIDEBAR (sample, asked twice) ───────────────
     //
     // WHAT SHE HIT. The sidebar's CHATS list — the one thing on screen while you are
     // chatting — has NO per-item delete upstream. Read off the pinned v1.48.0 bundle:
@@ -1807,6 +1807,233 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         "<div style='max-width:560px;padding:24px;line-height:1.65'>" +
         "<h2 style='color:#efe7d7;font-weight:500'>\(title)</h2><p>\(body)</p></div></body>"
     }
+
+    func liveSetupHTML(isOffline: Bool = true) -> String {
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset='utf-8'>
+        <style>
+          * { box-sizing: border-box; }
+          body {
+            background: #0b0a10;
+            color: #c9c4d4;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            padding: 24px;
+            user-select: none;
+          }
+          .setup-container {
+            width: 100%;
+            max-width: 640px;
+            background: #14121c;
+            border: 1px solid #282436;
+            border-radius: 12px;
+            padding: 32px;
+            box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+          }
+          .header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 24px;
+          }
+          .pulse-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #39ff96;
+            box-shadow: 0 0 12px #39ff96;
+            animation: pulse 1.8s infinite ease-in-out;
+          }
+          @keyframes pulse {
+            0% { transform: scale(0.9); opacity: 0.7; box-shadow: 0 0 6px #39ff96; }
+            50% { transform: scale(1.2); opacity: 1; box-shadow: 0 0 16px #39ff96; }
+            100% { transform: scale(0.9); opacity: 0.7; box-shadow: 0 0 6px #39ff96; }
+          }
+          .title {
+            color: #efe7d7;
+            font-size: 20px;
+            font-weight: 600;
+            margin: 0;
+          }
+          .status-line {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 8px;
+          }
+          #step-label {
+            color: #efe7d7;
+            font-size: 14px;
+            font-weight: 500;
+          }
+          #pct-label {
+            color: #a49db7;
+            font-size: 13px;
+            font-family: ui-monospace, Menlo, monospace;
+            font-weight: 600;
+          }
+          .bar-track {
+            width: 100%;
+            height: 8px;
+            background: #201c2e;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 14px;
+          }
+          #bar-fill {
+            width: 5%;
+            height: 100%;
+            background: linear-gradient(90deg, #6c5ce7, #39ff96);
+            border-radius: 4px;
+            transition: width 0.35s ease;
+          }
+          .subtitle {
+            color: #8e869f;
+            font-size: 12px;
+            line-height: 1.5;
+            margin-bottom: 18px;
+          }
+          .toggle-btn {
+            background: transparent;
+            border: 1px solid #322d42;
+            color: #a49db7;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            margin-bottom: 12px;
+            transition: all 0.2s ease;
+          }
+          .toggle-btn:hover {
+            background: #201c2e;
+            color: #efe7d7;
+            border-color: #4a425f;
+          }
+          #log-console {
+            background: #09080e;
+            border: 1px solid #201c2e;
+            border-radius: 8px;
+            padding: 12px 14px;
+            font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
+            font-size: 11px;
+            line-height: 1.45;
+            color: #7b748d;
+            height: 160px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            user-select: text;
+          }
+        </style>
+        </head>
+        <body>
+        <div class='setup-container'>
+          <div class='header'>
+            <div class='pulse-dot'></div>
+            <h2 class='title'>Installing MOT Deck</h2>
+          </div>
+          <div class='status-line'>
+            <span id='step-label'>Starting setup…</span>
+            <span id='pct-label'>5%</span>
+          </div>
+          <div class='bar-track'>
+            <div id='bar-fill'></div>
+          </div>
+          <div class='subtitle'>
+            Setting up the local AI stack into <code>~/Library/Application Support/MOT Deck</code>.<br>
+            \(isOffline ? "Everything is pre-bundled — no internet or external tools required." : "Installing runtime dependencies and initializing local models stack via Homebrew &amp; uv.")
+          </div>
+          <button class='toggle-btn' id='toggle-log' onclick='toggleDetails()'>Hide Details</button>
+          <div id='log-console'></div>
+        </div>
+
+        <script>
+          let detailsVisible = true;
+          function toggleDetails() {
+            detailsVisible = !detailsVisible;
+            const c = document.getElementById('log-console');
+            const b = document.getElementById('toggle-log');
+            c.style.display = detailsVisible ? 'block' : 'none';
+            b.textContent = detailsVisible ? 'Hide Details' : 'Show Details';
+          }
+          function setProgress(pct, label) {
+            if (pct != null) {
+              document.getElementById('bar-fill').style.width = pct + '%';
+              document.getElementById('pct-label').textContent = pct + '%';
+            }
+            if (label) {
+              document.getElementById('step-label').textContent = label;
+            }
+          }
+          function appendLog(line) {
+            const c = document.getElementById('log-console');
+            if (!c) return;
+            c.textContent += line + '\\n';
+            c.scrollTop = c.scrollHeight;
+          }
+        </script>
+        </body>
+        </html>
+        """
+    }
+
+    func handleFirstRunLine(_ line: String) {
+        let clean = line.replacingOccurrences(of: "\\x1b\\[[0-9;]*[a-zA-Z]", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if clean.isEmpty { return }
+
+        var pct: Int? = nil
+        var label: String? = nil
+
+        if clean.hasPrefix(">>> PROGRESS:") {
+            let parts = clean.dropFirst(">>> PROGRESS:".count).split(separator: "|", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            if parts.count >= 2 {
+                pct = Int(parts[0])
+                label = parts[1]
+            }
+        } else if clean.contains("[firstrun-fat]") {
+            let msg = clean.replacingOccurrences(of: "[firstrun-fat]", with: "").trimmingCharacters(in: .whitespaces)
+            label = msg
+        } else if clean.contains("[firstrun]") {
+            let msg = clean.replacingOccurrences(of: "[firstrun]", with: "").trimmingCharacters(in: .whitespaces)
+            label = msg
+        } else if clean.contains("[motdeck]") {
+            let msg = clean.replacingOccurrences(of: "[motdeck]", with: "").trimmingCharacters(in: .whitespaces)
+            label = msg
+        }
+
+        DispatchQueue.main.async {
+            if let p = pct, let l = label {
+                let js = "setProgress(\(p), \(self.jsString(l)));"
+                self.panelWV.evaluateJavaScript(js, completionHandler: nil)
+            } else if let l = label {
+                let js = "setProgress(null, \(self.jsString(l)));"
+                self.panelWV.evaluateJavaScript(js, completionHandler: nil)
+            }
+            if !clean.hasPrefix(">>> PROGRESS:") {
+                let logJs = "appendLog(\(self.jsString(clean)));"
+                self.panelWV.evaluateJavaScript(logJs, completionHandler: nil)
+            }
+        }
+    }
+
+    func jsString(_ s: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: [s]),
+              let jsonArray = String(data: data, encoding: .utf8),
+              jsonArray.count >= 2 else {
+            return "\"\(esc(s))\""
+        }
+        return String(jsonArray.dropFirst().dropLast())
+    }
+
     func esc(_ s: String) -> String {
         s.replacingOccurrences(of: "&", with: "&amp;")
          .replacingOccurrences(of: "<", with: "&lt;")
@@ -1833,8 +2060,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         a.addButton(withTitle: "Continue")
         a.addButton(withTitle: "Quit")
         if a.runModal() != .alertFirstButtonReturn { NSApp.terminate(nil); return }
-        panelWV.loadHTMLString(setupHTML("Setting things up…",
-            "Installing the local stack into <code>~/Library/Application Support/MOT Deck</code>.<br>This can take several minutes — progress is logged to<br><code>…/data/logs/firstrun.log</code>.<br><br>This screen continues automatically when MOT Deck is ready."), baseURL: nil)
+        panelWV.loadHTMLString(liveSetupHTML(isOffline: false), baseURL: nil)
         DispatchQueue.global().async { self.doFirstRun() }
     }
 
@@ -1844,6 +2070,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let seed = (Bundle.main.resourcePath ?? "") + "/motdeck-seed.tar.gz"
         try? fm.createDirectory(atPath: dest, withIntermediateDirectories: true)
 
+        handleFirstRunLine(">>> PROGRESS: 5 | Unpacking application seed…")
         let untar = Process()
         untar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
         untar.arguments = ["-xzf", seed, "-C", dest]
@@ -1855,21 +2082,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         try? fm.createDirectory(atPath: logDir, withIntermediateDirectories: true)
         let logFile = logDir + "/firstrun.log"
         fm.createFile(atPath: logFile, contents: nil)
-        let fh = FileHandle(forWritingAtPath: logFile)
+        guard let logHandle = FileHandle(forWritingAtPath: logFile) else {
+            setupFailed("Could not open log file for writing: \(logFile)")
+            return
+        }
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         // login shell so brew (/opt/homebrew/bin) and ~/.local/bin are on PATH for a GUI launch
         p.arguments = ["-lc", "bash '\(dest)/scripts/firstrun.sh' --yes 2>&1"]
         p.currentDirectoryURL = URL(fileURLWithPath: dest)
-        if let fh = fh { p.standardOutput = fh; p.standardError = fh }
+
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+
+        var lineBuffer = ""
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            logHandle.write(data)
+            if let text = String(data: data, encoding: .utf8) {
+                lineBuffer += text
+                while let newlineRange = lineBuffer.range(of: "\n") {
+                    let line = String(lineBuffer[..<newlineRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    lineBuffer.removeSubrange(...newlineRange.lowerBound)
+                    if !line.isEmpty {
+                        self.handleFirstRunLine(line)
+                    }
+                }
+            }
+        }
+
         do { try p.run() } catch { setupFailed("Could not start setup: \(error)"); return }
         p.waitUntilExit()
+        pipe.fileHandleForReading.readabilityHandler = nil
+        try? logHandle.close()
 
         let ok = p.terminationStatus == 0
         DispatchQueue.main.async {
-            if ok { self.resolvedRoot = dest; self.ensureBridgeThenLoad(attempt: 0) }
-            else {
+            if ok {
+                self.panelWV.evaluateJavaScript("setProgress(100, 'Setup complete! Opening Mission Control…'); appendLog('Setup completed successfully.');", completionHandler: nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    self.resolvedRoot = dest
+                    self.ensureBridgeThenLoad(attempt: 0)
+                }
+            } else {
                 self.panelWV.loadHTMLString(self.setupHTML("Setup didn’t finish",
                     "See <code>~/Library/Application Support/MOT Deck/data/logs/firstrun.log</code>. Common causes: Homebrew or Xcode Command Line Tools missing, or no internet. Fix, then reopen MOT Deck.<br><br><pre style='white-space:pre-wrap;color:#6f6a80;font:11px ui-monospace,Menlo,monospace'>\(self.esc(self.tail(logFile, 30)))</pre>"), baseURL: nil)
             }
@@ -1894,8 +2152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         a.addButton(withTitle: "Continue")
         a.addButton(withTitle: "Quit")
         if a.runModal() != .alertFirstButtonReturn { NSApp.terminate(nil); return }
-        panelWV.loadHTMLString(setupHTML("Setting things up…",
-            "Installing the local stack (offline) into<br><code>~/Library/Application Support/MOT Deck</code>.<br>This can take a few minutes — progress is logged to<br><code>…/data/logs/firstrun.log</code>.<br><br>This screen continues automatically when MOT Deck is ready."), baseURL: nil)
+        panelWV.loadHTMLString(liveSetupHTML(), baseURL: nil)
         DispatchQueue.global().async { self.doFirstRunFat() }
     }
 
@@ -1910,21 +2167,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         try? fm.createDirectory(atPath: logDir, withIntermediateDirectories: true)
         let logFile = logDir + "/firstrun.log"
         fm.createFile(atPath: logFile, contents: nil)
-        let fh = FileHandle(forWritingAtPath: logFile)
+        guard let logHandle = FileHandle(forWritingAtPath: logFile) else {
+            setupFailed("Could not open log file for writing: \(logFile)")
+            return
+        }
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         // login shell so any user PATH is present; pass RESOURCES + DEST to the provisioner.
         p.arguments = ["-lc", "bash '\(script)' '\(res)' '\(dest)' 2>&1"]
         p.currentDirectoryURL = URL(fileURLWithPath: dest)
-        if let fh = fh { p.standardOutput = fh; p.standardError = fh }
+
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+
+        var lineBuffer = ""
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            logHandle.write(data)
+            if let text = String(data: data, encoding: .utf8) {
+                lineBuffer += text
+                while let newlineRange = lineBuffer.range(of: "\n") {
+                    let line = String(lineBuffer[..<newlineRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    lineBuffer.removeSubrange(...newlineRange.lowerBound)
+                    if !line.isEmpty {
+                        self.handleFirstRunLine(line)
+                    }
+                }
+            }
+        }
+
         do { try p.run() } catch { setupFailed("Could not start setup: \(error)"); return }
         p.waitUntilExit()
+        pipe.fileHandleForReading.readabilityHandler = nil
+        try? logHandle.close()
 
         let ok = p.terminationStatus == 0 && fm.fileExists(atPath: dest + "/.provisioned")
         DispatchQueue.main.async {
-            if ok { self.resolvedRoot = dest; self.ensureBridgeThenLoad(attempt: 0) }
-            else {
+            if ok {
+                self.panelWV.evaluateJavaScript("setProgress(100, 'Offline provision complete! Opening Mission Control…'); appendLog('Setup completed successfully.');", completionHandler: nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    self.resolvedRoot = dest
+                    self.ensureBridgeThenLoad(attempt: 0)
+                }
+            } else {
                 self.panelWV.loadHTMLString(self.setupHTML("Setup didn’t finish",
                     "See <code>~/Library/Application Support/MOT Deck/data/logs/firstrun.log</code> (and the per-component <code>firstrun_*.log</code> beside it). Fix the reported component, then reopen MOT Deck.<br><br><pre style='white-space:pre-wrap;color:#6f6a80;font:11px ui-monospace,Menlo,monospace'>\(self.esc(self.tail(logFile, 30)))</pre>"), baseURL: nil)
             }
@@ -2401,7 +2689,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
         if menu.items.isEmpty { menu.addItem(NSMenuItem(title: "No hidden tabs", action: nil, keyEquivalent: "")) }
         menu.addItem(NSMenuItem.separator())
-        // The affordance half of Debi's ask. The KEY EQUIVALENT is shown here but the
+        // The affordance half of sample's ask. The KEY EQUIVALENT is shown here but the
         // working binding lives in the View menu (see the menu bar at the bottom of this
         // file): a key equivalent on a menu that only exists while it is popped up would
         // never fire, and ⌘⇧T has to work with a WKWebView holding first responder.
@@ -2415,7 +2703,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
                        in: overflowButton)
     }
 
-    // ══ HIDE / SHOW THE NATIVE TAB STRIP (v1.5.26, Debi) ═════════════════════════════
+    // ══ HIDE / SHOW THE NATIVE TAB STRIP (v1.5.26, sample) ═════════════════════════════
     //
     // WHAT IT DOES: collapses the 44pt strip to 0 so the page extends to the top of the
     // window. ⌘⇧T (View menu) and "Hide Tab Bar" in the ⋯ menu both toggle it; while it
@@ -2482,7 +2770,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
     @objc func overflowPick(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
-        touchWindow(id)        // …the swap Debi asked for: in at the front, oldest out
+        touchWindow(id)        // …the swap sample asked for: in at the front, oldest out
         rebuildTabs()
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         routeTab(idx, toPane: (splitOn && focusedPane == 1) ? 1 : 0)
@@ -2648,7 +2936,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // than removing the padding: `segmentAt` reads exactly these numbers back to hit-test
     // a drag.
     // PHASE 2: this runs again on every strip REBUILD, so the numbers `segmentAt` reads
-    // back are always the ones on screen. Debi's cap of 12 pinned tabs is the budget's
+    // back are always the ones on screen. sample's cap of 12 pinned tabs is the budget's
     // upper bound — twelve of today's titles is ~950-1050pt, still inside ~1090.
     func setSegmentWidths() {
         let f = seg.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
@@ -3667,12 +3955,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         decisionHandler(type == .camera ? .deny : .grant)
     }
 
-    // ══ QUIT EVERYTHING (U55 — Debi's ruling, 2026-09-02) ════════════════════
+    // ══ QUIT EVERYTHING (U55 — sample's ruling, 2026-09-02) ════════════════════
     //
     // BOTH DOORS. ⌘Q ("Quit MOT Deck") stays the default: since
     // v1.5.69 the bridge and every component are setsid'd out of the app's process
     // group on purpose, so closing the window leaves the stack serving and reopening
-    // the app reuses it. ⌥⌘Q is the second door — the one Debi asked for — and it means
+    // the app reuses it. ⌥⌘Q is the second door — the one sample asked for — and it means
     // exactly what it says: every component down, the bridge down, then the app.
     //
     // THE HONESTY RULES THIS UI OBEYS, all three of which are the same rule:
@@ -3873,7 +4161,7 @@ appMenu.addItem(NSMenuItem.separator())
 // ⌘Q — UNCHANGED, and deliberately still the plain quit (v1.5.69 behaviour: the bridge
 // and every component keep serving; reopening the app reuses them).
 appMenu.addItem(withTitle: "Quit MOT Deck", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-// ⌥⌘Q — THE SECOND DOOR (U55, Debi 2026-09-02: "i think we should have an option that
+// ⌥⌘Q — THE SECOND DOOR (U55, sample 2026-09-02: "i think we should have an option that
 // fully quits everything too"). Right next to the plain quit, because that is where a
 // user looks for it, and one modifier away, because it is the same intent with a bigger
 // blast radius.

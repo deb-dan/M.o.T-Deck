@@ -17,8 +17,9 @@
 # checklist starts them (fat first-run installs; §E starts — no duplication).
 set -euo pipefail
 
-say()  { printf "\033[1;36m[firstrun-fat]\033[0m %s\n" "$*"; }
-fail() { printf "\033[1;31m[firstrun-fat]\033[0m %s\n" "$*" >&2; exit 1; }
+say()      { printf "\033[1;36m[firstrun-fat]\033[0m %s\n" "$*"; }
+progress() { printf ">>> PROGRESS: %s | %s\n" "$1" "$2"; say "$2"; }
+fail()     { printf "\033[1;31m[firstrun-fat]\033[0m %s\n" "$*" >&2; exit 1; }
 
 # ── BACKWARDS-SEEDING GUARD ───────────────────────────────────────────────────
 # The provisioner used to seed from whatever bundle happened to be in /Applications,
@@ -96,7 +97,7 @@ if [[ -f "$DEST/motdeck.yaml" ]]; then
 fi
 
 # ---------- 1. extract the seed → runtime root ----------
-say "Provisioning MOT Deck into: $DEST"
+progress 10 "Unpacking application payload into $DEST…"
 mkdir -p "$DEST"
 # A failed first run can leave a usable manifest, credentials, and conversations.
 # macOS bsdtar's keep-old-files resumes missing seed files without replacing any
@@ -115,8 +116,8 @@ LOGDIR="$DEST/data/logs"; mkdir -p "$LOGDIR"
 
 # ---------- 2. relocatable standalone python ----------
 PYDIR="$DEST/data/python-standalone"
+progress 25 "Preparing standalone Python 3.12 runtime…"
 if [[ ! -x "$PYDIR/bin/python3" ]]; then
-  say "Unpacking bundled standalone CPython…"
   rm -rf "$PYDIR"; mkdir -p "$PYDIR"
   tar xzf "$PYTAR" -C "$PYDIR" || fail "could not extract standalone python"
 fi
@@ -128,6 +129,13 @@ say "Using python: $("$PYBIN" --version 2>&1)"
 # Offline pip everywhere: never reach the network, always resolve from the wheelhouse
 # (this also feeds pip's PEP517 build-isolation env, so editable installs of the vendored
 # projects pick up their build backends from the wheelhouse too).
+# Normalize WHEELS to a spaceless path if the app bundle is in a folder with spaces (e.g. "/Applications/MOT Deck.app/...")
+# pip splits PIP_FIND_LINKS on whitespace, causing build-isolation environments to fail or emit warnings.
+SAFE_WHEELS="/tmp/motdeck-wheelhouse"
+rm -f "$SAFE_WHEELS" 2>/dev/null || true
+ln -sfn "$WHEELS" "$SAFE_WHEELS"
+WHEELS="$SAFE_WHEELS"
+
 export PIP_NO_INDEX=1
 export PIP_FIND_LINKS="$WHEELS"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -138,7 +146,8 @@ mkvenv() { # mkvenv <path> <component> <logfile>
   "$PYBIN" -m venv "$vpath" >>"$log" 2>&1 || fail "$comp: venv creation failed — see $log"
   # ensure pip exists (standalone builds ship it, but be defensive) + upgrade from wheelhouse
   "$vpath/bin/python" -m ensurepip --upgrade >>"$log" 2>&1 || true
-  "$vpath/bin/python" -m pip install --no-index --find-links "$WHEELS" -U pip setuptools wheel >>"$log" 2>&1 \
+  "$vpath/bin/python" -m pip install --no-index --find-links "$WHEELS" -U pip "setuptools==83.0.0" wheel >>"$log" 2>&1 \
+    || "$vpath/bin/python" -m pip install --no-index --find-links "$WHEELS" -U pip setuptools wheel >>"$log" 2>&1 \
     || fail "$comp: could not seed pip/setuptools/wheel from the wheelhouse — see $log"
 }
 pipi() { # pipi <venv> <component> <logfile> <pip args…>  — fatal on failure
@@ -152,6 +161,7 @@ pipi_try() { # pipi_try <venv> <logfile> <pip args…>  — NON-fatal; returns p
 }
 
 # ---------- 3. bridge venv ----------
+progress 40 "Creating Bridge environment…"
 BLOG="$LOGDIR/firstrun_bridge.log"; : >"$BLOG"
 mkvenv data/bridge-venv bridge "$BLOG"
 pipi data/bridge-venv bridge "$BLOG" -r bridge/requirements.txt
@@ -159,17 +169,22 @@ pipi data/bridge-venv bridge "$BLOG" -r bridge/requirements.txt
   >>"$BLOG" 2>&1 || fail "bridge: local secret provisioning failed — see $BLOG"
 
 # ---------- 4. hermes venv (editable install of the vendored source; web_dist prebuilt) ----------
+progress 55 "Installing Hermes Agent…"
 HLOG="$LOGDIR/firstrun_hermes.log"; : >"$HLOG"
 mkvenv data/hermes-venv hermes "$HLOG"
-# try the [all] extra first; fall back to the base package (fatal only if BOTH fail).
+# try the [all] extra first; fall back to the base package; then fall back to --no-build-isolation
 if ! pipi_try data/hermes-venv "$HLOG" -e "vendor/hermes[all]"; then
   say "hermes: [all] extra failed offline — retrying base package…"
-  pipi data/hermes-venv hermes "$HLOG" -e "vendor/hermes"
+  if ! pipi_try data/hermes-venv "$HLOG" -e "vendor/hermes"; then
+    say "hermes: retrying with --no-build-isolation…"
+    pipi data/hermes-venv hermes "$HLOG" --no-build-isolation -e "vendor/hermes"
+  fi
 fi
 [[ -f vendor/hermes/hermes_cli/web_dist/index.html ]] \
   || say "WARN: hermes web_dist not found in the seed — dashboard will run headless (API only)."
 
 # ---------- 5. odysseus venv + admin seed ----------
+progress 70 "Installing Odysseus workspace…"
 OLOG="$LOGDIR/firstrun_odysseus.log"; : >"$OLOG"
 mkvenv data/odysseus-venv odysseus "$OLOG"
 pipi data/odysseus-venv odysseus "$OLOG" -r vendor/odysseus/requirements.txt
@@ -185,6 +200,7 @@ ODY_PASSWORD="$("$DEST/data/bridge-venv/bin/python" scripts/local_secrets.py get
 ( cd vendor/odysseus && "$DEST/data/odysseus-venv/bin/python" "$DEST/scripts/seed_odysseus_jan.py" ) >>"$OLOG" 2>&1 || true
 
 # ---------- 6. searxng venv + settings ----------
+progress 80 "Setting up SearXNG search engine…"
 SLOG="$LOGDIR/firstrun_searxng.log"; : >"$SLOG"
 mkvenv data/searxng-venv searxng "$SLOG"
 pipi data/searxng-venv searxng "$SLOG" -U pyyaml msgspec typing-extensions pybind11
@@ -208,6 +224,7 @@ EOF
 fi
 
 # ---------- 7. mlx runtime venv ----------
+progress 90 "Configuring Apple Silicon MLX neural engines…"
 # PINNED from motdeck.yaml build.mlx_*_pin — the same values build_app.sh bundled into
 # the wheelhouse. Asking for anything else here fails OFFLINE ("no matching distribution").
 # Empty pin ⇒ fall back to unpinned so a hand-edited yaml can't hard-block provisioning.
@@ -232,9 +249,11 @@ LS="$DEST/data/llamacpp/build/bin/llama-server"
 [[ -f "$LS" ]] || say "WARN: bundled llama-server missing at $LS — the GGUF runner won't start until scripts/install_llamacpp.sh is run (needs internet)."
 
 # ---------- 9. seed the model registry (empty on a fresh Mac — models download later) ----------
+progress 96 "Finalizing local model registry…"
 ( "$DEST/data/bridge-venv/bin/python" scripts/seed_registry.py ) >>"$LOGDIR/firstrun_registry.log" 2>&1 || \
   say "note: registry seed produced no models yet (expected on a fresh Mac — download models from the Models pane)."
 
 # ---------- 10. done. Bridge is started by main.swift (ensureBridgeThenLoad); §E starts components. ----------
+rm -f "$SAFE_WHEELS" 2>/dev/null || true
 touch "$DEST/.provisioned"
-say "Offline provision complete. Components installed (stopped). Mission Control will open; the setup checklist starts them."
+progress 100 "Offline provision complete! Launching MOT Deck…"

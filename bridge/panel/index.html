@@ -143,7 +143,7 @@
      impeccable's `undersized-ui-text` floor is 11px for anything interactive, any
      furniture label, and any run of ≤20 characters. Editorial measured 59 sites under
      it. Raising all 59 to 11px is not debt repayment, it is a redesign of the thing
-     Debi explicitly ruled must stay: the tracked mono micro-caps voice (kickers,
+     sample explicitly ruled must stay: the tracked mono micro-caps voice (kickers,
      stamps, .navlbl, .cs-title, .build, the metric labels). So the slice split the
      finding instead of averaging it:
 
@@ -198,7 +198,7 @@
      icons must be hidden with the attribute ABSENT. The studio block reverses it. */
   .st-only { display:none; }
   /* MOTDECK-DESIGN AXIS: the ✦ chip's FIRST-CLICK loading state. The studio design
-     is a separately fetched asset (Debi's amendment), so the one beat between the
+     is a separately fetched asset (sample's amendment), so the one beat between the
      click and the paint is SHOWN rather than swallowed. This is the only studio-design
      rule that lives in Editorial's sheet, and it styles nothing but that one chip. */
   #design-chip.loading { opacity:.55; pointer-events:none; }
@@ -386,7 +386,7 @@
      and the measure is added, so the value the renderer had is the value it still has,
      plus a cap. 58ch of the mono '0' advance at 11px ≈ 384px ≈ 70 estimator-characters. */
   .card .meta.wrap { white-space:normal; overflow:visible; margin-top:5px; max-width:58ch; }
-  /* U15 — THE REASON LINE. It exists because the alternative was Debi reading a raw
+  /* U15 — THE REASON LINE. It exists because the alternative was sample reading a raw
      llama.cpp log line on a card, or nothing at all. WRAPS (a filesystem path is the
      point of the sentence, so truncating it removes the actionable half) and is capped
      at the same 58ch measure as .meta.wrap. Token-only colours: --warn for the rule,
@@ -449,10 +449,10 @@
   #view-chat:not([hidden]) { display:flex; flex-direction:column;
       height:calc(100vh - 128px); overflow:hidden; }
   #chat-scroll { flex:1 1 auto; min-height:0; overflow-y:auto;
-      max-width:none; width:100%; margin-top:6px; padding-right:2px;   /* Fable: fill width + reflow (was 760px cap); minimal gap to divider (Debi) */
+      max-width:none; width:100%; margin-top:6px; padding-right:2px;   /* Fable: fill width + reflow (was 760px cap); minimal gap to divider (sample) */
       scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
   /* ---------- CHAT DENSITY (2026-08-28) ----------
-     Debi's research direction: the chat lane carries too much dead space. Three
+     sample's research direction: the chat lane carries too much dead space. Three
      judgment calls, all of them VALUE changes to rules that already existed — no new
      rules, no layout rewrite, and deliberately NOT a terminal:
        · turn gap        30 → 22px. 30px is a paragraph break between turns; 22px is
@@ -653,7 +653,7 @@
   .coach .coach-foot button { margin-left:6px; }
   #chat-bar { flex:none; max-width:760px; width:100%; margin-top:8px;
       border-top:1px solid var(--line); padding-top:14px; }
-  /* FABLE compact pass (Debi 2026-08-06): the composer row got clunky as chips
+  /* FABLE compact pass (sample 2026-08-06): the composer row got clunky as chips
      accumulated (4 lanes + Tools + select + pill) — ~40% smaller footprint. */
   /* ⚠️ FOUND BY THE ADVERSARIAL PASS (v1.5.24), at 820×600 with the sessions rail OPEN.
      This row is `nowrap`, so below ~950px it pushed its own tail off the right edge of
@@ -677,7 +677,7 @@
      summary. They shrink to an ellipsis; the full text stays in the title. */
   .mode-note { font:10.5px var(--mono); color:var(--faint); letter-spacing:.08em; margin-left:6px; opacity:.75;
                min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  /* ══ THE COMPOSER IS ONE BOUNDED FIELD (v1.5.26, Debi) ══════════════════════════
+  /* ══ THE COMPOSER IS ONE BOUNDED FIELD (v1.5.26, sample) ══════════════════════════
      WHAT WAS WRONG: Editorial's composer was a bordered textarea with its controls
      floating OUTSIDE it — Send, ● talk, auto and conv sat in the row beside the box,
      so the "message box" was one object and "the things you do to a message" were four
@@ -693,14 +693,14 @@
      own words (`Send`, `● talk`, `auto`, `conv`); nothing here touches a colour token,
      a family or a case. */
   /* ══ v1.5.33 — THE CONTROLS ARE PART OF THE FIELD, NOT OBJECTS SITTING IN IT ═════
-     Debi, on the non-Studio looks: "the plus button and the others though, they feel
+     sample, on the non-Studio looks: "the plus button and the others though, they feel
      like they're outside the box… like in lm studio which doesn't demarcate it."
      v1.5.26 moved the controls INSIDE the field but left each of them wearing its own
      outline and its own ground — a bordered chip (⊕), an outlined ghost (● talk) and a
      bordered track (the audio switch) stacked inside a bordered field. Four edges in a
      row is what reads as "not professional": the field already draws the boundary, so
      anything inside it drawing a second one is a box in a box.
-     THE ANSWER IS THE ONE STUDIO ALREADY SHIPPED HERE and Debi called great: the
+     THE ANSWER IS THE ONE STUDIO ALREADY SHIPPED HERE and sample called great: the
      quiet controls lose their border and their ground entirely and become ink, with the
      ground appearing on hover only; Send stays the single filled accent, because a
      control row with no anchor is the opposite failure. Editorial keeps its inks, its
@@ -729,7 +729,7 @@
      dialogs) keeps its size. Rounded to whole pixels: 8.75px would be a fractional
      size that WebKit rounds unpredictably across zoom levels.
      v1.5.26: they are now INSIDE the field, so they gain an explicit height (they no
-     longer take it from the textarea's line box) and the rounded-square radius Debi
+     longer take it from the textarea's line box) and the rounded-square radius sample
      named. Send stays the one filled accent control; ● talk is the quiet ghost beside
      it, which is how the 2026-08-13 "talk is subordinate to Send" ruling survives the
      reorder that put the mic first. */
@@ -750,7 +750,7 @@
      to out-specify twice. */
   #chat-talk .talk-t { font-family:var(--mono); }
 
-  /* ══ THE AUDIO-MODE SWITCH (v1.5.26, Debi's design) ═════════════════════════════
+  /* ══ THE AUDIO-MODE SWITCH (v1.5.26, sample's design) ═════════════════════════════
      ONE vertical three-position switch, far right INSIDE the field, replacing the two
      separate `auto` and `conv` chips. TOP hands-free · MIDDLE off · BOTTOM conversation,
      with a knob that slides to the engaged position.
@@ -779,7 +779,7 @@
      Every rule is scoped under #chat-audiosw so it outranks `button.primary` without
      touching it: the two ends keep the `primary` class they have always carried, and
      every existing selector that names #chat-auto / #chat-conv still resolves. */
-  /* v1.5.33, TWO CHANGES, BOTH DEBI'S, BOTH GEOMETRY-PRESERVING:
+  /* v1.5.33, TWO CHANGES, BOTH sample'S, BOTH GEOMETRY-PRESERVING:
      1. THE TRACK LOSES ITS OUTLINE AND ITS GROUND (was `background:var(--bg);
         border:1px solid var(--line2)`). It was the third demarcated object inside a
         bordered field. The border is kept at 1px and made TRANSPARENT rather than
@@ -787,7 +787,7 @@
         test_audio_switch.js pins — the switch is not re-laid-out, only un-drawn. The
         state signal does not weaken: the knob (::after) is always painted, so there is
         always a filled block on screen saying which of the three positions is engaged.
-     2. THE SIDE SPACE SHRINKS BY ~A THIRD. Debi: "the auto/off/conv pill could be a
+     2. THE SIDE SPACE SHRINKS BY ~A THIRD. sample: "the auto/off/conv pill could be a
         bit less space on both sides so it just pushes to the left and the box can
         expand a bit… both sides space needs to shrink by a 3rd." The space on its left
         is the row's 8px flex gap and on its right the row's 8px padding; a flex gap
@@ -1071,7 +1071,7 @@
   .fit-consent .fc-act button.go { color:var(--gold); border-color:var(--gold); }
   .fit-consent .fc-hedge { margin-top:9px; font:10.5px var(--mono); color:var(--faint); line-height:1.5; }
 
-  /* ══ THE VERDICT TOOLTIP — CHIP FIRST, WORDS ON DEMAND (Debi, 2026-08-29) ══════
+  /* ══ THE VERDICT TOOLTIP — CHIP FIRST, WORDS ON DEMAND (sample, 2026-08-29) ══════
      WHAT WAS WRONG, in her words: "it's so texty/lengthy and is not visually appealing
      like lm studio or unsloth… the long text should be when someone then hovers".
      Every verdict printed its whole sentence INLINE — need, usable-after-eject, the
@@ -1337,7 +1337,7 @@
   body.rail-slim aside .pk-open { display:none; }
   body.rail-slim #rail-toggle { right:auto; left:50%; transform:translateX(-50%); }
 
-  /* ══ THE THIRD STATE — THE SIDEBAR FULLY HIDDEN (v1.5.26, Debi) ═════════════════
+  /* ══ THE THIRD STATE — THE SIDEBAR FULLY HIDDEN (v1.5.26, sample) ═════════════════
      `full` → `slim` (56px icon rail) → `hidden`. The 56px rail already reclaimed 160px;
      this reclaims the last 56 and leaves a 14px labelled edge strip, which is the SAME
      grammar as the collapsed sessions rail (#cs-reopen) and office.html's #rail-tab:
@@ -1376,10 +1376,10 @@
      full-width. The reading measure is NOT bounded per-message in Editorial, by ruling.
      Live-measured: the assistant turn runs 107ch and the user turn 99ch on a 1280px
      window, both over impeccable's 85 trip point. KEPT as an argued exception — the
-     ruling is Debi's and it is about EDITORIAL specifically; studio is the design that
+     ruling is sample's and it is about EDITORIAL specifically; studio is the design that
      caps the lane (--sd-lane 600px / --sd-measure 70ch), which is the honest place for
      a measure to be a design decision rather than a silent override of a ruling. */
-  /* Fable (Debi: reclaim side/top/bottom, LM-Studio-tight): the Chat view fills the whole
+  /* Fable (sample: reclaim side/top/bottom, LM-Studio-tight): the Chat view fills the whole
      webview. Override main's default padding:34/44/60 — that side+bottom padding was the dead
      space. main becomes a full-height flex column; #view-chat flex-fills it (no magic px math). */
   body.chat-mode main { max-width:none; padding:8px 18px 10px; height:100vh;
@@ -1416,19 +1416,19 @@
   /* ══ THE COLLAPSED SESSIONS RAIL — A SLIM REOPEN STRIP (v1.5.24) ════════════════
      WHAT WAS WRONG, measured on the served panel before this change: the collapsed rail
      was already 24px wide, so the literal "wide empty column" in the screenshots is not
-     reproducible in the shipped code — but the SHAPE Debi named is exactly right and was
+     reproducible in the shipped code — but the SHAPE sample named is exactly right and was
      the real defect. The strip was a 24px column ~640px tall with a 22×22px chevron
      parked at the top of it and 600px of nothing underneath: a lone button floating in
      an empty column. And the target was 22×22px in Editorial and 22×14px in studio
      (studio zeroes the border and the height) — a fifth of the 44px floor the sidebar
      rail is already fenced at, on the ONE control that gets your sessions back.
 
-     WHAT IT IS NOW, per Debi's ratified proposal and office.html's collapsed-rail
+     WHAT IT IS NOW, per sample's ratified proposal and office.html's collapsed-rail
      pattern (#files → #rail-tab): the pane IS the reopener. One full-height labelled
      button, vertical text, nothing else in the strip.
        · 34px wide — office.html's OWN reopener width (`body.railoff #files{width:34px}`),
          i.e. the house precedent. v1.5.24 shipped 44 to clear the hit floor on the
-         narrow axis with no argument; Debi's v1.5.26 ruling is that 44 still reads as
+         narrow axis with no argument; sample's v1.5.26 ruling is that 44 still reads as
          "even bigger space… should really be smaller" and that the LOffice strip fits.
          ⚠️ 34 IS NOT A HIT-TARGET REGRESSION: the floor is about the TARGET, and this
          target is 34 × the full rail height (≈718px live; `min-height` below floors the
@@ -1446,7 +1446,7 @@
      the transcript with no JS — measured 1078px → 1068px main at 34px, vs 950px open.
      Expand restores exactly: the width comes from --sessions-width, which this rule
      never touches, so a rail dragged to 500px collapses and reopens at 500px. ══ */
-  /* ⚠️ v1.5.33 — 34px → 26px (Debi, 2026-08-29: "that SESSIONS is a bit big still").
+  /* ⚠️ v1.5.33 — 34px → 26px (sample, 2026-08-29: "that SESSIONS is a bit big still").
      This is the THIRD ruling on this number (24 → 44 → 34 → 26) and it now goes BELOW
      office.html's house 34px, so the house-precedent argument above no longer carries
      it. What carries it is the same arithmetic, restated: the target is the FULL-HEIGHT
@@ -1480,7 +1480,7 @@
      viewer share the leftover space (after the sessions rail) by flex-grow ratio, so the
      layout stays adaptive; --art-*-grow are set by the divider drag (default 0.5 / 0.5). */
   #artifact-viewer { flex:var(--art-view-grow, 1) 1 0; min-width:240px; display:none; flex-direction:column;
-      min-height:0; overflow:hidden; padding-left:1px; }   /* Fable: no border-left (divider is the separator) + minimal gap (Debi) */
+      min-height:0; overflow:hidden; padding-left:1px; }   /* Fable: no border-left (divider is the separator) + minimal gap (sample) */
   body.artifact-open #artifact-viewer { display:flex; }
   body.artifact-open #chat-main { flex:var(--art-chat-grow, 1) 1 0; min-width:240px; }
   /* draggable vertical divider between the chat column and the viewer (only while split) */
@@ -1488,7 +1488,7 @@
      visible bar so the handle is discoverable (faint by default, gold on hover/active). */
   .caps-skills-head { display:flex; align-items:center; gap:10px; width:100%; background:none;
       border:0; padding:0; cursor:pointer; text-align:left; }   /* Fable: collapsible Skills header */
-  #art-divider { display:none; flex:none; width:4px; align-self:stretch; cursor:col-resize;   /* Fable: slim handle (Debi: minimize the dead band) */
+  #art-divider { display:none; flex:none; width:4px; align-self:stretch; cursor:col-resize;   /* Fable: slim handle (sample: minimize the dead band) */
       position:relative; z-index:8; touch-action:none; color:var(--line2); }
   body.artifact-open:not(.artifact-expanded) #art-divider { display:block; }
   #art-divider::after { content:''; position:absolute; top:0; left:50%; transform:translateX(-50%);
@@ -1655,7 +1655,7 @@
   body.solo main { padding-top:18px; max-width:none; }
 
   /* ============ MUSIC STUDIO DECK — #view-music[data-mview="studio"] ============
-     Fable design (2026-08-20, FABLE-MUSIC-DECK-SPEC.md), from Debi's VoiceStudio
+     Fable design (2026-08-20, FABLE-MUSIC-DECK-SPEC.md), from sample's VoiceStudio
      Launchpad reference. A PER-PAGE alternate layout, not a third global theme:
        · Every selector below is prefixed #view-music[data-mview="studio"] — with the
          attribute absent (the default, 'classic') the Music page is byte-for-byte the
@@ -1746,7 +1746,7 @@
   /* ============================ end music deck ================================== */
 
   /* ====== APPEARANCE OVERLAY — #navdlg (STUDIO PHASE 2 §A v2, 2026-08-21) ========
-     Debi rejected v1's shape (a static settings section with up/down buttons and Hide
+     sample rejected v1's shape (a static settings section with up/down buttons and Hide
      chips): her reference is Unsloth's "Customize sidebar", and the STANDING DOCTRINE is
      that a design reference is LITERAL — match the interaction, not an approximation. So
      this is a floating card ON TOP of whatever you were doing: translucent and
@@ -1761,7 +1761,7 @@
      without it the declared width above would silently be a lie. */
   /* The GROUND (translucency, blur, edge, radius, shadow) is NO LONGER declared here — it
      comes from the shared `.float-surface` grammar below, which every floating surface in
-     the panel now wears (Debi's uniformity ruling, 2026-08-21). What stays here is only
+     the panel now wears (sample's uniformity ruling, 2026-08-21). What stays here is only
      what is particular to THIS card: its size and its own backdrop. */
   #navdlg { padding:0; width:min(560px,92vw); max-width:none; max-height:80vh; overflow:hidden; }
   /* deliberately FAINT: the whole point is that you can still see the page behind it. */
@@ -1791,7 +1791,7 @@
   /* ========================= end appearance overlay ============================== */
 
   /* ====== FLOATING-SURFACE GRAMMAR + VIEW PEEK (2026-08-21) =======================
-     Debi's uniformity ruling after the Customize overlay landed: the panel had SEVEN
+     sample's uniformity ruling after the Customize overlay landed: the panel had SEVEN
      different answers to "what does a surface floating above the page look like" — the
      install dialog and the log dialog wore the flat --card2 dialog ground, the two
      popovers wore --card with a tighter radius, the setup card had its own 16px radius,
@@ -1816,7 +1816,7 @@
      (It is also the other half of the popover close-on-scroll fix: the popovers
      already ignore scroll events raised inside themselves, but before this the chain
      to the page raised an OUTSIDE scroll event the moment the list hit its end, which
-     is exactly the close Debi kept hitting.)
+     is exactly the close sample kept hitting.)
 
      WHAT IS **NOT** UNIFIED, deliberately: the page DIMMER behind each surface. The
      grammar is about the surface; how hard the page is dimmed underneath is a property
@@ -1837,7 +1837,7 @@
   .float-surface, .float-surface * { overscroll-behavior:contain; }
 
   /* ---- view PEEK: a full view borrowed ON TOP of the page you are already on ----
-     Debi: Models / Music / Capabilities should be reachable for a quick change without
+     sample: Models / Music / Capabilities should be reachable for a quick change without
      leaving what you were doing. The mechanism is REPARENTING, not a copy: the real
      #view-X node is moved into the overlay and moved back to its exact position on
      close, so its render code, its state and its event wiring are untouched. */
@@ -1868,7 +1868,7 @@
   /* ===================== end floating-surface grammar ============================ */
 
   /* ============ OPTIONAL "STUDIO" CHROME — html[data-chrome="studio"] ============
-     Fable design (2026-08-20, FABLE-STUDIO-CHROME-SPEC.md), from Debi's Unsloth
+     Fable design (2026-08-20, FABLE-STUDIO-CHROME-SPEC.md), from sample's Unsloth
      screenshots. This REPLACES the parked "compact" axis wholesale: compact was three
      failed attempts at what Studio actually is (uniform control sizing, real buttons,
      and ICON buttons where a glyph says it better than a word). A stored legacy
@@ -2082,7 +2082,7 @@
     height:var(--st-hs); font-size:var(--st-fs-s); font-family:var(--st-font); letter-spacing:normal;
     text-transform:none; color:var(--fg); background:var(--st-btn);
     border-color:var(--st-edge); border-radius:6px; padding:0 9px; }
-  /* (5) FORM FIELDS (PHASE 2 §C — the ruling that closes the Music-page gap). Debi
+  /* (5) FORM FIELDS (PHASE 2 §C — the ruling that closes the Music-page gap). sample
      read ▣ as "not restyling the Music page"; the audit found the buttons there always
      did and the FIELDS never did — and that page is two textareas, three boxes, a
      slider and a select, i.e. most of its visual mass. Conservative by design: fields
@@ -2109,7 +2109,7 @@
      The earlier version of this rule repainted the textarea itself with --st-inp and
      an edge, undoing the one-bounded-field contract above whenever Studio chrome was
      selected without the separate Studio design sheet. That created the exact
-     box-inside-a-box appearance Debi reported even though every control was correctly
+     box-inside-a-box appearance sample reported even though every control was correctly
      inside #chat-inputrow in the DOM. Keep only the typography inheritance here; the
      textarea must remain transparent and borderless in every axis combination. */
   html[data-chrome="studio"] #chat-input {
@@ -2224,7 +2224,7 @@
       aria-label="Customize navigation"><span class="ico">⋯</span> Customize</a></nav>
   <div class="navlbl" id="sidecomponents-lbl">Components</div>
   <nav id="sidecomponents"></nav>
-  <!-- side-foot removed 2026-07-23 (Debi: hidden in final app). CSS rule kept for now. -->
+  <!-- side-foot removed 2026-07-23 (sample: hidden in final app). CSS rule kept for now. -->
 </aside>
 
 <main>
@@ -2273,7 +2273,7 @@
 
     <div id="chat-body">
       <div id="chat-sessions">
-        <!-- COLLAPSED: the whole rail becomes this labelled reopener (v1.5.24, Debi's
+        <!-- COLLAPSED: the whole rail becomes this labelled reopener (v1.5.24, sample's
              ratified slim-strip). REAL MARKUP hidden by a class, which is the pattern
              office.html's #rail-tab already established — one collapse grammar for the
              app instead of two. It is the ONLY thing in the strip while collapsed, so
@@ -2359,7 +2359,7 @@
               title="Dictate — record and transcribe into the message box"
               aria-label="Dictate into the message box" hidden><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-mic"/></svg></span><span class="ed-only">● talk</span></button>
             <button class="primary" id="chat-send" onclick="sendChat()" title="Send message (Enter)" aria-label="Send message"><span class="st-only"><svg class="st-ico" aria-hidden="true"><use href="#i-send"/></svg></span><span class="ed-only">Send</span></button>
-            <!-- ══ THE AUDIO-MODE SWITCH (v1.5.26, Debi's design) ═══════════════════════
+            <!-- ══ THE AUDIO-MODE SWITCH (v1.5.26, sample's design) ═══════════════════════
                  ONE vertical three-position switch replaces the separate `auto` and
                  `conv` chips. TOP = hands-free dictation, MIDDLE = off (the resting
                  state), BOTTOM = conversation. Clicking the engaged position again, or
@@ -2372,7 +2372,7 @@
                  keep painting the controls they always painted, and there is not one
                  branch anywhere asking "is the switch showing?". Only the MIDDLE is new,
                  and all it does is call the same togglers. `talk` (push-to-talk) stays
-                 on the mic button, per Debi's split.
+                 on the mic button, per sample's split.
 
                  role=radiogroup + role=radio + aria-checked: three mutually exclusive
                  positions IS a radio group, and every zone is a real <button>, so it is
@@ -2555,7 +2555,7 @@
       <div><span class="chip" id="music-view-chip" onclick="toggleMusicView()"
                  title="Switch this page between the editorial layout and the Studio deck"
                  >✦ Studio view</span>
-        <!-- THE REVERSE DOOR (Debi 2026-08-29, "ONE door, both looks"). The Studio page's
+        <!-- THE REVERSE DOOR (sample 2026-08-29, "ONE door, both looks"). The Studio page's
              header dropdown brings you here; this is the way back, and it is the SMALLEST
              possible addition to this view — one chip in the existing header row, in the
              page's existing .chip grammar, ZERO new CSS (test_music_deck.js counts the
@@ -3150,7 +3150,7 @@ const NAV_ENTRIES = [
   { id:'chat',    label:'Chat',            ico:'✳', kind:'view', view:'chat',   tab:'Chat' },
   { id:'models',  label:'Models',          ico:'⇄', kind:'view', view:'models', tab:'Models' },
   // MUSIC CLASSIC — the original Music view, untouched. It is NOT A BAR ENTRY any more
-  // (nav.py gives it `bars: ()`): Debi's 2026-08-29 ruling is ONE Music door with both
+  // (nav.py gives it `bars: ()`): sample's 2026-08-29 ruling is ONE Music door with both
   // looks behind it, so the row and the tab below are the door and this is the second
   // look. It stays in this table for three jobs that all still need it — SOLO_VIEWS
   // derives `?solo=music` from here, showView() highlights by `view`, and the shell's
@@ -3166,7 +3166,7 @@ const NAV_ENTRIES = [
   // ⚠️ THE ID IS STILL `compose` (the route, the tab id, the row in every saved
   // nav.json) and only the LABEL moved — Goose CLI's rule verbatim: internal names do
   // not churn with a wordmark. nav.py's SUPERSEDED map rewrites a saved `music` row into
-  // this one IN PLACE, so Debi's strip and sidebar keep their positions.
+  // this one IN PLACE, so sample's strip and sidebar keep their positions.
   { id:'compose', label:'Music',           ico:'♫', kind:'lane', view:null,     tab:'Music', url:'/compose', prefersTab:true },
   // GENERATE — our own ComfyUI-driving page at /comfy (v1.5.36). The LABEL is what it
   // does, the id is its route. It is NOT the `comfyui` component row further down: that
@@ -3175,7 +3175,7 @@ const NAV_ENTRIES = [
   // toggle, and a sidebar row wearing a chrome control's glyph reads as that control.
   { id:'comfy',   label:'Generate',        ico:'❖', kind:'lane', view:null,     tab:'Generate', url:'/comfy', prefersTab:true },
   { id:'aider',   label:'Aider',           ico:'⌨', kind:'lane', view:null,     tab:'Aider',   url:'/aider',  prefersTab:true },
-  // THE GOOSE PAIR (nav.py carries the argument; both lanes stay, Debi's S14 ruling).
+  // THE GOOSE PAIR (nav.py carries the argument; both lanes stay, sample's S14 ruling).
   // ⚠️ ONLY THE LABELS MOVED: `goose` is still the id, the route and the pidfile.
   // ⚠️ /gooseui/ KEEPS ITS TRAILING SLASH — the vendored bundle resolves its assets
   // relatively, and without it they hit the panel's own /assets/ mount and the tab paints
@@ -3220,14 +3220,14 @@ const NAV_SIDEBAR_ONLY = ['logs','help','api'];
 const NAV_ALWAYS = ['logs','help','api'];
 /* …and the entries the model may put on NO bar (nav.py's `bars: ()`). `music` is the
    Classic look, reached from the Studio page's header switcher rather than from a row
-   of its own — Debi's ONE-Music-door ruling. It is not "sidebar-only" and it is not
+   of its own — sample's ONE-Music-door ruling. It is not "sidebar-only" and it is not
    `always`: those two say WHERE a row may live, this one says there is no row. */
 const NAV_OFFBAR = ['music'];
 /* An id whose ROW is now another entry's row — mirrors nav.py's SUPERSEDED. The saved
    layout is rewritten IN PLACE (same position, same pin), never dropped-and-appended. */
 const NAV_SUPERSEDED = { music:'compose' };
-const NAV_TOPBAR_MAX = 12;        // Debi's ruling — mirrored in bridge/nav.py
-/* THE 9 + 3 STRIP (Debi 2026-08-29): the twelve are nine stable pins in the user's own
+const NAV_TOPBAR_MAX = 12;        // sample's ruling — mirrored in bridge/nav.py
+/* THE 9 + 3 STRIP (sample 2026-08-29): the twelve are nine stable pins in the user's own
    order, then a three-slot most-recently-opened window over everything else. */
 const NAV_TOPBAR_PINS = 9;
 const NAV_TOPBAR_MRU = 3;
@@ -3236,7 +3236,7 @@ const NAV_DEFAULT_SIDEBAR = ['mc','chat','models','compose','comfy','aider','goo
                              'help','api',
                              'odysseus','hermes','voicestudio','voicebox','comfyui','unsloth',
                              'opencode','deepseek'];
-/* ⚠️ v1.5.26 — DEBI'S ORDER (mirrored from bridge/nav.py's DEFAULT_TOPBAR, which is the
+/* ⚠️ v1.5.26 — sample'S ORDER (mirrored from bridge/nav.py's DEFAULT_TOPBAR, which is the
    authority, and from app/main.swift's navDefaultTopbar; test_nav_model.py asserts all
    three agree). Same eleven ids, new reading order. */
 /* ⚠️ NINE SINCE THE 9+3 RULING, NOT ELEVEN — and the strip a fresh machine draws is
@@ -3539,7 +3539,7 @@ function navShellNote(id, why) {
   row.appendChild(s);
   setTimeout(() => { if (s.parentNode) s.parentNode.removeChild(s); }, 8000);
 }
-/* THE LAST-THREE WINDOW, from this side (Debi 2026-08-29). A sidebar row that opens a
+/* THE LAST-THREE WINDOW, from this side (sample 2026-08-29). A sidebar row that opens a
    tab which is not currently on the strip is exactly the ⋯-menu case: that tab takes the
    first swappable slot and the oldest of the three falls off. The SHELL does the same
    thing for its own menu, and both go through the bridge, so the two can never disagree
@@ -3585,11 +3585,11 @@ function openComponent(name) {
    place the panel names that tab. Inside the app it is the chromeless `?solo=music`
    native tab (title "Music Classic"); in a browser, or in a shell too old to know it,
    the in-panel Music view is the same page and is what you get.
-   ⚠️ It is NOT a nav row: `music` is declared on no bar (Debi's ONE-Music-door ruling),
+   ⚠️ It is NOT a nav row: `music` is declared on no bar (sample's ONE-Music-door ruling),
    so this is reached from the Studio's header dropdown and from ⌘K, never from the
    sidebar — and it must therefore never depend on a row existing. */
 /* OPEN THE STUDIO — the one Music door, and the reverse of the Classic header's chip.
-   REVISED per Debi's live feedback (2026-08-29): when THIS document is the solo
+   REVISED per sample's live feedback (2026-08-29): when THIS document is the solo
    Classic load (?solo=music) — i.e. we are sitting INSIDE the one Music tab wearing
    the Classic look — the switch back is an IN-PLACE navigation, mirroring the
    Studio dropdown's in-place navigation the other way. A switchTab here would ask
@@ -3706,7 +3706,7 @@ function healthOf(c) {
    the walked journeys are in bridge/tests/test_dep_signal.py §6) ──────────────
      1. A FAILURE ALWAYS SHOWS ITS REASON, here on the card. `c.last_error.text` is a
         SENTENCE from the bridge (components.start_failure_reason), never the raw log —
-        the raw log stays one click away under View log. What Debi's screen had shown
+        the raw log stays one click away under View log. What sample's screen had shown
         was `2.49.854.040 W srv operator(): unauthorized: Invalid API Key`.
      2. A NAME ON A CARD THAT IS NOT SERVING IS AN INTENT, AND SAYS SO: "serving X"
         only when the runner answers with X, "pinned X" otherwise.
@@ -3747,7 +3747,7 @@ function cardHTML(name, c, isBridge, prov) {
     why = 'serving ' + served + ' right now, but the pin still points at '
         + c.pin_intent + ' — “Pin this model” makes the two agree without a reload.';
   } else if (le) {
-    // ⚠️ A GREEN CARD MAY NEVER CARRY A BARE FAILURE SENTENCE (U60). Debi's screenshot:
+    // ⚠️ A GREEN CARD MAY NEVER CARRY A BARE FAILURE SENTENCE (U60). sample's screenshot:
     // "Online · serving Qwen3.5-9B-Q4_0" with "no model is pinned — pick one in Models"
     // on the line below it. The bridge now RETRACTS the reason once the component has
     // read running+ok twice — but the panel is where the lie was VISIBLE, and it must
@@ -3812,7 +3812,7 @@ function cardHTML(name, c, isBridge, prov) {
           : `<button class="primary" onclick="planInstall('${name}')">Install</button>`;
     }
     // THE ACTION THAT ACTUALLY FIXES IT. Retry on a runner whose model file is gone is
-    // the dead end Debi clicked five times, so wherever the reason points at the model
+    // the dead end sample clicked five times, so wherever the reason points at the model
     // library, the library is one click away — and the Retry beside it is no longer the
     // only thing to press.
     if (wantsModels) {
@@ -3913,18 +3913,31 @@ async function planInstall(name) {
 }
 
 async function startRunner() {
-  // ISSUE 2 state machine: the runner must NEVER auto-load a previously-ejected
-  // model. If no model is designated active, route the user to the Models pane to
-  // pick one (Load sets it live + starts the runner). Otherwise start as normal.
-  let active = null;
-  try { active = (await (await fetch('/api/models')).json()).active; } catch {}
-  if (!active) {
-    // the setup checklist is a modal scrim — leaving it open would hide the very
-    // page we are sending the user to (Debi hit exactly this).
+  // Check if any ready model is installed on disk.
+  // On first install, runner.model in motdeck.yaml is set to a default pin, but NO models
+  // are downloaded yet (or the pinned model file is missing). Directing the user to
+  // the Models view lets them select, scan, or download a model rather than failing.
+  let modelsData = null;
+  try { modelsData = await (await fetch('/api/models')).json(); } catch {}
+  const installed = (modelsData && modelsData.installed) || [];
+  const active = modelsData && modelsData.active;
+  const activeModel = installed.find(m => m.id === active);
+  const activeReady = activeModel && (activeModel.file === 'ok' || !activeModel.file || activeModel.file === 'checking') && !activeModel.absent;
+
+  if (!active || installed.length === 0 || !activeReady) {
     try { if (typeof closeSetup === 'function') closeSetup(); } catch (e) {}
     showView('models');
     const st = document.getElementById('models-stamp');
-    if (st) st.textContent = 'NO MODEL LOADED — SELECT ONE BELOW, THEN “LOAD”';
+    if (installed.length === 0) {
+      if (st) st.textContent = 'NO MODELS DOWNLOADED YET — SEARCH OR DOWNLOAD A MODEL BELOW';
+      if (!browseView && typeof toggleModelsBrowse === 'function') {
+        toggleModelsBrowse();
+      }
+      feed('runner', 'No models found on disk. Opened Models to search and download a model.');
+    } else {
+      if (st) st.textContent = 'NO MODEL LOADED — SELECT ONE BELOW, THEN “LOAD”';
+      feed('runner', 'Pinned model not ready on disk. Opened Models to select a model.');
+    }
     return;
   }
   return startWithPlan('runner');
@@ -4771,7 +4784,7 @@ function apiKeysHtml(keys, minted, arm, note) {
        + (armed ? 'Confirm' : 'Revoke') + '</button></div></div>';
   });
   /* THE BUILT-IN IS LISTED BUT NEVER REVEALED — not its value and not a prefix of it.
-     Debi's brief keeps it as the built-in and keeps every existing route working, so
+     sample's brief keeps it as the built-in and keeps every existing route working, so
      hiding it here would make the page describe a system with fewer keys than it has;
      showing four characters of a thirteen-character secret would be the other mistake.
      It is a row with a name, a source and no button. */
@@ -5349,7 +5362,7 @@ function showView(v) {
 }
 
 /* ---------- VIEW PEEK — open a whole view ON TOP of the page you are on ----------
-   Debi: Models / Capabilities / Music should be reachable for a quick change without
+   sample: Models / Capabilities / Music should be reachable for a quick change without
    losing what you were doing; normal navigation stays exactly as it is.
 
    The mechanism is REPARENTING, not a second copy: the real `#view-X` node is moved
@@ -5489,7 +5502,7 @@ function railState(pref, view) {
   if (pref === 'full') return 'full';
   return view === 'chat' ? 'slim' : 'full';
 }
-/* PURE (unit-tested): the next state in Debi's cycle. Deliberately a table and not
+/* PURE (unit-tested): the next state in sample's cycle. Deliberately a table and not
    arithmetic — three states with a wrap is exactly where an index rotation quietly
    grows a fourth. */
 function railNext(state) {
@@ -5559,9 +5572,9 @@ function toggleSessionsRail() {
 // PURE (unit-tested): clamp the artifact-pane fraction to a sane 25%–75%.
 function clampArtSplit(f){ f = parseFloat(f); if (!isFinite(f)) return 0.42; return Math.max(0.25, Math.min(0.75, f)); }
 // PURE (unit-tested): clamp the sessions-rail width to 180–560px (BUG 3: raised max 420→560).
-function clampSessionsWidth(w){ w = parseFloat(w); if (!isFinite(w)) return 204; return Math.max(120, Math.min(560, w)); }  // Fable: min 180→120 (Debi: allow a tinier list, Odysseus-like)
+function clampSessionsWidth(w){ w = parseFloat(w); if (!isFinite(w)) return 204; return Math.max(120, Math.min(560, w)); }  // Fable: min 180→120 (sample: allow a tinier list, Odysseus-like)
 
-let _artFrac = 0.42;   // Fable: default artifact share (Debi: 50% felt too big for HTML); drag persists user choice
+let _artFrac = 0.42;   // Fable: default artifact share (sample: 50% felt too big for HTML); drag persists user choice
 function setArtifactSplit(frac){
   _artFrac = clampArtSplit(frac);
   const r = document.documentElement.style;
@@ -5889,7 +5902,7 @@ function showCapsSection(sec) {
 }
 
 /* ---------- APPEARANCE v2: the CUSTOMIZE overlay (STUDIO PHASE 2 §A, 2026-08-21) ------
-   v1 was a static settings section with ↑ ↓ buttons and Hide chips. Debi rejected the
+   v1 was a static settings section with ↑ ↓ buttons and Hide chips. sample rejected the
    SHAPE, not the plumbing: her reference is Unsloth's "Customize sidebar" — a floating
    panel over the current page, rows dragged by a handle, a switch per row, live. The
    standing doctrine is that a design reference is LITERAL, so v2 is that interaction.
@@ -5940,7 +5953,7 @@ function navRowHtml(bar, r) {
 function navBarHtml(bar) {
   const rows = navGet()[bar] || [];
   const shown = rows.filter(r => r.pinned).length;
-  /* THE 9+3 READOUT (Debi 2026-08-29). It says "pinned of 9", not "shown of 12",
+  /* THE 9+3 READOUT (sample 2026-08-29). It says "pinned of 9", not "shown of 12",
      because the switches on this bar control NINE slots — the other three are the
      window and are not switchable. Naming the window here is the honest half: a cap
      that used to read 12 and now reads 9, with nothing said, looks like something was
@@ -6556,7 +6569,7 @@ function hermesToolsetNote(t, snap) {
   return base;
 }
 
-/* PURE: the two-layer sentence for the skills row. Debi's confusion was real and
+/* PURE: the two-layer sentence for the skills row. sample's confusion was real and
    structural — Hermes's own Skills→ALL page says "78/78 enabled" (the LIBRARY on
    disk) while this switch is about the INDEX in the prompt. Both are true at once;
    say so on the row rather than leaving two apps to be cross-read. */
@@ -6609,7 +6622,7 @@ function renderHermesTools() {
   const head = '<span class="cap-h">Hermes tools</span>';
   // NAME the surface. These switches govern Hermes's `cli` platform
   // (platform_toolsets.cli) — the lane this chat runs on — and nothing else. Say
-  // that here, and say the thing that sent Debi to cross-check two apps and find
+  // that here, and say the thing that sent sample to cross-check two apps and find
   // them disagreeing: Hermes's own Skills → TOOLSETS page fetches once when it
   // opens and never live-updates (SkillsPage.tsx:155-174 — a useEffect keyed only
   // on the profile), so a change made here is invisible over there until that tab
@@ -7273,7 +7286,7 @@ function renderSkills() {
       <div class="cap-card">${rows}</div>`;
   }
 
-  // Fable (Debi): the skills list is long + read-only → collapse the whole group behind
+  // Fable (sample): the skills list is long + read-only → collapse the whole group behind
   // one clickable "Skills" header; expands on click. Default collapsed.
   const nBi = errBi ? '?' : bi.length, nUser = errUser ? '?' : user.length;
   return `<div class="caps-group">
@@ -7629,7 +7642,7 @@ async function initChat() {
    picker (live_id + the entry's capabilities) — no extra poll.
 
    ⚠️ 2026-08-28 — THE ⊕ USED TO EXIST ON THE CHAT LANE ONLY, and that was legacy
-   accident, not capability (Debi found it; the ruling is "every path has what it
+   accident, not capability (sample found it; the ruling is "every path has what it
    can handle depending on the model"). All three lanes have a REAL image path:
      chat   → /api/chat/direct sends OpenAI parts straight to the runner. Vision is
               a HARD requirement here: the bridge refuses the turn without it.
@@ -8109,7 +8122,7 @@ function renderModelPop(){
     if (modelHasTools(m)) pill('vision', 'tools');
     const fmt = m.format || m.engine || ''; if (fmt) pill('fmt', fmt);
     if (m.size_bytes) pill('fmt', fmtGB(m.size_bytes));
-    // ══ THE VERDICT, BESIDE THE SIZE (Debi, 2026-08-29: "the drop down too should
+    // ══ THE VERDICT, BESIDE THE SIZE (sample, 2026-08-29: "the drop down too should
     // sort of have that or rather show the fits.. over by, etc"). SAME engine, same
     // chip class, same tooltip as the Models pane — this picker is where a switch is
     // actually chosen, and choosing a model that will not fit from a list that knew
@@ -8408,13 +8421,13 @@ function speakText(raw){
   s = s.replace(/```[\s\S]*/, ' ');        // an unterminated fence (truncated turn)
   s = s.replace(/`/g, '');                 // inline-code delimiters (keep the words)
   // Markdown EMPHASIS markers — the engine read "**Temperature**" as
-  // "asterisk asterisk Temperature…" (Debi 2026-08-13). Strip the markers, keep
+  // "asterisk asterisk Temperature…" (sample 2026-08-13). Strip the markers, keep
   // the words. Bounded (1-3) so a literal lone * in prose survives.
   s = s.replace(/(\*{1,3})(\S(?:[^*]*?\S)?)\1/g, '$2');  // **bold** / *em* / ***both***
   s = s.replace(/(__|_)(\S(?:[^_]*?\S)?)\1/g, '$2');     // __bold__ / _em_
   s = s.replace(/^#{1,6}\s+/gm, '');                     // heading hashes
   s = s.replace(/^\s*[-*+]\s+/gm, '');                   // list bullets
-  // Emoji / pictographs — the engine tries to PRONOUNCE them (Debi 2026-08-14:
+  // Emoji / pictographs — the engine tries to PRONOUNCE them (sample 2026-08-14:
   // "attempts to read the smiley faces and says something weird"). Strip the
   // symbol planes; ordinary punctuation and accented letters survive.
   s = s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu, ' ');
@@ -8897,7 +8910,7 @@ function appendTranscript(text, focus){
      would decode as garbage on the bridge.
    • NOT streaming / LocalAgreement. That needs a persistent whisper model, which
      would collide with the one-shot render lock. GATE 2 measured whisper-base at
-     0.75-0.90s per utterance on Debi's Mac with run 2 ≈ run 1, i.e. cold start does
+     0.75-0.90s per utterance on sample's Mac with run 2 ≈ run 1, i.e. cold start does
      NOT dominate — so v1 rides the existing one-shot endpoint and needs no worker.
    • NOT silero-VAD yet. That is 2.2MB of vendored onnx+wasm; an energy VAD costs
      zero bytes and GATE 1 proved AudioWorklet actually runs here (550 process()
@@ -9159,7 +9172,7 @@ function toggleAuto(){
   if (autoVad || autoStarting) stopAuto(''); else startAuto('auto');
 }
 
-/* ══ THE AUDIO-MODE SWITCH (v1.5.26, Debi's design) ═══════════════════════════
+/* ══ THE AUDIO-MODE SWITCH (v1.5.26, sample's design) ═══════════════════════════
    A three-position vertical switch — TOP hands-free, MIDDLE off, BOTTOM conversation —
    over the state that already exists. There is NO new state here and no new persistence:
    `autoOn()` / `convOn()` are still the only truth, the two ends are still #chat-auto and
@@ -9187,7 +9200,7 @@ function renderAudioSwitch(){
   a.setAttribute('aria-checked', String(pos === 'auto'));
   c.setAttribute('aria-checked', String(pos === 'conv'));
   off.setAttribute('aria-checked', String(pos === 'off'));
-  // GREY, NOT HIDE, WITH THE REASON IN THE TITLE (Debi's standing rule). Push-to-talk
+  // GREY, NOT HIDE, WITH THE REASON IN THE TITLE (sample's standing rule). Push-to-talk
   // and hands-free listening are mutually exclusive in the CODE — startAuto calls
   // stopTalk and toggleTalk calls stopAuto — so with the switch engaged the mic button
   // silently cancelled the mode the user had just chosen. Now it says why it is quiet.
@@ -9425,7 +9438,7 @@ function stopAuto(reason){
 }
 
 /* ═══ CONVERSATION MODE — hands-free speak ⇄ reply ════════════════════════════
-   Debi's ask: speak, and MOT Deck answers OUT LOUD, then listens again.
+   sample's ask: speak, and MOT Deck answers OUT LOUD, then listens again.
 
        LISTENING ──utterance──▶ THINKING ──transcript──▶ WAITING (turn streams)
             ▲                                                │
@@ -9572,7 +9585,7 @@ function convStep(st, ev, detail){
   return { st: s, action: null };
 }
 
-/* PURE: the chip's label for a phase. Exactly the three states Debi sees. */
+/* PURE: the chip's label for a phase. Exactly the three states sample sees. */
 function convLabel(st){
   const p = st ? st.phase : 'off';
   if (p === 'listening') return 'listening';
@@ -10397,7 +10410,14 @@ function renderList(r){
   const col = document.getElementById('models-listcol'); col.innerHTML = '';
   const aux = r.aux || {};
   if (!(r.installed || []).length){
-    col.innerHTML = '<div class="cs-empty">No installed models in the registry (data/models.json). Run scripts/seed_registry.py or download a model via Search / Download.</div>';
+    col.innerHTML = '<div class="cs-empty" style="padding: 28px 16px; text-align: center;">'
+      + '<div style="font-weight: 600; font-size: 13px; margin-bottom: 8px; color: var(--fg);">No Models Installed Yet</div>'
+      + '<div style="font-size: 11px; color: var(--dim); max-width: 380px; margin: 0 auto 16px; line-height: 1.5;">'
+      + 'Download an LLM to run offline inference with MOT Deck, or rescan to detect models from LM Studio or local folders.</div>'
+      + '<div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">'
+      + '<button class="chip primary" onclick="toggleModelsBrowse()" style="padding: 6px 14px; font-weight: 600;">SEARCH & DOWNLOAD ⌄</button>'
+      + '<button class="chip" onclick="rescanModels()" style="padding: 6px 14px;">RESCAN FOLDERS</button>'
+      + '</div></div>';
     renderHiddenRow(col, r, 'chat');
     return;
   }
@@ -10736,7 +10756,7 @@ function markAudioSelRows(){
     el.classList.toggle('sel', el.dataset.aid === aSel));
 }
 /* ---------- the fp32→bf16 nudge ----------
-   Nothing automatic: an installed model is a file Debi chose, and swapping it behind
+   Nothing automatic: an installed model is a file sample chose, and swapping it behind
    her back would strand the clip pinned to it. This is ONE faint sentence on the
    detail pane of an OmniVoice entry that is carrying the 3.27 GB fp32 weights, for
    which a 2.04 GB bf16 build of the SAME checkpoint exists (same 612,577,280 params,
@@ -10905,7 +10925,7 @@ function renderAudioVoice(a){
   // labelled honestly rather than as "off".
   chip('model default', !cur,
        (a.voice_source === 'config' && a.voices && a.voices.length)
-         // Debi 2026-08-13: a voiceless render ERRs on CustomVoice-type models, so
+         // sample 2026-08-13: a voiceless render ERRs on CustomVoice-type models, so
          // the bridge now falls back to the model's own first declared voice.
          ? 'Uses the model’s first declared voice (' + a.voices[0] + ')'
          : 'Let the engine choose (mlx-audio picks a random named voice per render)',
@@ -10915,7 +10935,7 @@ function renderAudioVoice(a){
     // tag is a faint suffix INSIDE the existing chip — no new CSS primitive, and the
     // user learns it from the picker instead of from a surprise accent.
     const dial = a.dialects || {};
-    // Kokoro declares 54 — a wall of chips is worse than none (Debi 2026-08-13).
+    // Kokoro declares 54 — a wall of chips is worse than none (sample 2026-08-13).
     // Show the first 12 (a pinned voice beyond the cap is always included) and a
     // free-text box for the rest.
     const CHIP_CAP = 12;
@@ -10977,7 +10997,7 @@ function renderVoiceClips(a, box){
   lab.className = 'md-loadphase'; lab.style.marginTop = '16px';
   lab.textContent = 'Voice · reference clip' + (cur ? '' : ' · model default');
   // An explicit un-pin beside the label. 'model default' already does this, but it
-  // reads as a CHOICE among clips rather than as "undo what I pinned" — and Debi
+  // reads as a CHOICE among clips rather than as "undo what I pinned" — and sample
   // asked for the undo to be findable.
   if (cur) lab.appendChild(clearPinLink('Un-pin ' + cur, () => setEntryRef(a.id, '')));
   box.appendChild(lab);
@@ -11413,7 +11433,7 @@ async function setVoiceDefault(id, role){
   } catch { voiceErr = 'could not reach the bridge'; }
   initModels();      // re-read /api/models → voice block + default pills
   // the COMPOSER caches this too (AUDIO chip, ▶ speak chips, ● talk visibility) —
-  // without this refresh the talk button only appeared after a full ⌘R (Debi hit it)
+  // without this refresh the talk button only appeared after a full ⌘R (sample hit it)
   loadVoiceCfg();
 }
 
@@ -11504,7 +11524,7 @@ function renderAudioGet(){
     if (owned){ b.textContent = 'In library'; b.disabled = true; }
     else { b.textContent = 'Get'; b.onclick = async () => {
              // the button must TELL THE TRUTH: a refused download resets it and puts
-             // the reason ON THE CARD (the stamp-line message was invisible — Debi
+             // the reason ON THE CARD (the stamp-line message was invisible — sample
              // watched "Starting…" for 30 minutes on a 400).
              b.disabled = true; b.textContent = 'Starting…';
              const res = await dlStart(s.repo, s.file,
@@ -11524,7 +11544,7 @@ function renderAudioGet(){
 }
 
 /* ---------- SEARCH HF (T2): voice-model discovery ----------
-   The five starters answer "what should I get first"; this answers Debi's actual
+   The five starters answer "what should I get first"; this answers sample's actual
    question, "why are there only these models". Everything below is display; every
    VERDICT (engine, licence, downloadable-or-not) comes from the bridge probe, so
    the panel can never talk a user into a download the bridge would refuse.
@@ -11700,7 +11720,7 @@ function markSelRows(){
    .cap-count, all from the Capabilities grammar. */
 let samplingOpen = false;
 
-/* PURE (v2.1, Debi ask — LM Studio reference). One tooltip per settings row.
+/* PURE (v2.1, sample ask — LM Studio reference). One tooltip per settings row.
    The prose comes from the BRIDGE (`f.help`, SAMPLING_HELP / LOAD_HELP) so a field
    can never be drawn without an explanation and the wording lives in one place;
    the panel only appends the range and the reset convention. Unit-tested. */
@@ -11943,7 +11963,7 @@ function renderLoad(m){
 }
 
 /* ── Models → detail → the SHARED "Apply & reload" row (v2.1) ─────────────────
-   Debi: "sometimes there's no button to click apply." Correct, and it was a real
+   sample: "sometimes there's no button to click apply." Correct, and it was a real
    hole: the chip lived INSIDE the Load group, which an MLX model does not have —
    yet an MLX model's saved sampling values DO ride its launch line (--temp/--top-p/
    --top-k/--min-p/--max-tokens), so it could have pending launch changes with no
@@ -12687,7 +12707,7 @@ async function dlRetry(id){
 
 /* PURE (v2.1 bug fix). What the byline over an assistant reply should say.
 
-   THE BUG Debi hit: she switched from an MLX model to a gguf one; Models said the
+   THE BUG sample hit: she switched from an MLX model to a gguf one; Models said the
    gguf was LIVE and the chat header agreed (stampFor already prefers the live
    runner), but the per-message byline on NEW Hermes- and Agent-lane replies still
    read the OLD model — as an ugly absolute path, `/USERS/…/MUSE-GLIMMER-…-MLX`.
@@ -13137,7 +13157,7 @@ function addRehydratedThinking(wrap, text){
 }
 
 function scrollChat(force){
-  // Sticky autoscroll (Fable, Debi report): only follow the stream if the user is
+  // Sticky autoscroll (Fable, sample report): only follow the stream if the user is
   // already near the bottom — scrolling up mid-generation must NOT be yanked back.
   const sc = document.getElementById('chat-scroll');
   const nearBottom = (sc.scrollHeight - sc.scrollTop - sc.clientHeight) < 120;
@@ -13331,7 +13351,7 @@ async function approveHermes(card, choice){
 // ── Hermes — interactive ASK cards (the `clarify` tool) ─────────────────────
 // Hermes's clarify tool BLOCKS the agent thread on a gateway prompt and renders
 // a picker on its own dashboard. Our lane had no surface for it, so a turn that
-// asked a question just sat "working" until something timed out (Debi's "test"
+// asked a question just sat "working" until something timed out (sample's "test"
 // repro). Same class as approvals, so same grammar: the card reuses the .approval
 // CSS wholesale (ZERO new rules) and carries the .approval class, which means
 // expireApprovals() freezes ask cards on turn end for free.
@@ -13527,7 +13547,7 @@ function expireApprovals(holder){
 /* ============================================================================
    TURN LIFECYCLE — THE PANEL OWNS THE END OF ITS OWN TURN (2026-08-14)
    ----------------------------------------------------------------------------
-   THE WEDGE THIS FIXES (Debi, Hermes lane, local 4B): a turn stuck in prefill
+   THE WEDGE THIS FIXES (sample, Hermes lane, local 4B): a turn stuck in prefill
    never produced a terminal frame, and EVERY escape hatch was slaved to the
    stream. `chatPane.busy` (then a bare `chatBusy` global) is cleared only in
    sendChat's finally, which only runs when `reader.read()` returns or throws —
@@ -13591,7 +13611,7 @@ function forceEndTurn(reason){
   const where = t.stage || 'unknown';
   const why = reason || 'stopped';
   // DIAGNOSTIC: name the stage the turn died in — console for a log capture,
-  // feed for Debi. Without this, "it just hung" is undiagnosable from a report.
+  // feed for sample. Without this, "it just hung" is undiagnosable from a report.
   try { console.warn('[turn] force-end · lane=' + t.lane + ' · stage=' + where + ' · ' + why); } catch (_) {}
   try { feed('chat', 'turn force-ended at ' + where + ' — ' + why); } catch (_) {}
   if (t.holder){ try { chatStatus(t.holder, '✓', 'interrupted (forced) · ' + where); } catch (_) {} }
@@ -14428,7 +14448,7 @@ function openArtifact(opts){
   document.getElementById('art-kind').textContent = kind;
   renderArtifact(kind, content, filename);
 }
-// Pin (Debi design, 2026-08-06): an artifact follows its conversation — switching
+// Pin (sample design, 2026-08-06): an artifact follows its conversation — switching
 // session/lane or starting a new chat CLOSES it, unless pinned. Pin state dies
 // with the artifact (closing always unpins).
 let artPinned = false;
@@ -14840,7 +14860,7 @@ let musicTplOpen = null;   // templates disclosure; null = decide from the libra
 const musicPromptOpen = new Set();   // library rows whose prompt panel is expanded
 
 /* ---------- the per-page STUDIO DECK ----------
-   Debi's ask, verbatim: "a new button just for the Music page that totally revamps
+   sample's ask, verbatim: "a new button just for the Music page that totally revamps
    everything when clicked". This is a VIEW toggle, not a third global theme — it sets
    one attribute on #view-music and the one sanctioned CSS block does the rest. It is
    independent of ◐ (theme) and ▣ (chrome) and composes with both. */
@@ -15091,7 +15111,7 @@ function musicTpls(){ return ((musicSnap || {}).templates) || []; }
 
 /* The disclosure defaults OPEN only on a fresh install: with no tracks the gallery IS
    the page's teaching material, and with tracks it is six cards between the user and
-   the Generate button they came for (v1.2 C2 — Debi had to scroll to reach Generate). */
+   the Generate button they came for (v1.2 C2 — sample had to scroll to reach Generate). */
 function musicTplsOpen(){
   return musicTplOpen === null ? !musicLib.length : !!musicTplOpen;
 }
@@ -15165,12 +15185,12 @@ function musicTplCard(t){
 }
 
 /* One place the page moves the user to the form — a prefill that happens 900px below
-   the fold reads as "the button did nothing" (Debi's report, classic view included). */
+   the fold reads as "the button did nothing" (sample's report, classic view included). */
 function musicScrollToCreate(){
   const el = document.getElementById('music-create-wrap');
   if (!el || !el.scrollIntoView) return;
   /* SAME BUG, SECOND COPY (swept 2026-08-28): `behavior:'smooth'` is a silent
-     no-op in this WKWebView, so this function — written precisely because Debi
+     no-op in this WKWebView, so this function — written precisely because sample
      reported "the button did nothing" — did nothing in the app. */
   try { el.scrollIntoView({block: 'start'}); }
   catch (e) { try { el.scrollIntoView(true); } catch (e2) { /* not scrollable */ } }
@@ -15655,7 +15675,7 @@ function renderMusicLibrary(){
     const txt = document.createElement('div'); txt.className = 'cap-txt';
     // THREE LINES, always (v1.2 C3): name+pills, one meta line, the player. The prompt
     // used to be printed in full on every row, so eight tracks buried the page —
-    // Debi's report. It now lives behind a faint chip, with re-use beside it.
+    // sample's report. It now lives behind a faint chip, with re-use beside it.
     const open = musicPromptOpen.has(t.name);
     txt.innerHTML = `<div class="cap-name">${esc(t.name)}`
       + (t.engine ? ` <span class="cap-pill">${esc(t.engine)}</span>` : '')
@@ -15767,7 +15787,7 @@ const commands = () => {
   const cmds = [
     {t:'Open chat', k:'✳', f:()=>showView('chat')},
     {t:'MOT Deck', k:'◫', f:()=>showView('mc')},
-    // ONE Music door here too (Debi 2026-08-29): ⌘K Music opens the Studio, exactly as
+    // ONE Music door here too (sample 2026-08-29): ⌘K Music opens the Studio, exactly as
     // the sidebar row does; Classic is its own named command rather than the thing you
     // get by accident. `openMusicClassic` is the same call the Studio's switcher makes.
     {t:'Music', k:'♫', f:()=>navOpen('compose')},

@@ -6,8 +6,9 @@ cd "$(dirname "$0")/.."
 MOT_DECK_ROOT="$(pwd)"
 YES=0; [[ "${1:-}" == "--yes" || "${1:-}" == "-y" ]] && YES=1
 
-say()  { printf "\033[1;36m[motdeck]\033[0m %s\n" "$*"; }
-fail() { printf "\033[1;31m[motdeck]\033[0m %s\n" "$*" >&2; exit 1; }
+say()      { printf "\033[1;36m[motdeck]\033[0m %s\n" "$*"; }
+progress() { printf ">>> PROGRESS: %s | %s\n" "$1" "$2"; say "$2"; }
+fail()     { printf "\033[1;31m[motdeck]\033[0m %s\n" "$*" >&2; exit 1; }
 
 ask() { # ask "question" -> returns 0 on yes; --yes answers everything
   [[ $YES -eq 1 ]] && { say "$1 -> yes (--yes)"; return 0; }
@@ -25,7 +26,7 @@ fi
 say "Disk: ${avail_gb}GB free — ok."
 
 # ---------- 1. prerequisites ----------
-say "Checking prerequisites..."
+progress 45 "Checking prerequisites and Python 3.12 runtime…"
 command -v brew >/dev/null || fail "Homebrew is required: https://brew.sh"
 
 need_brew=()
@@ -53,7 +54,7 @@ say "Using Python: $($PY --version)"
 
 # ---------- 2. git repo + pinned submodules ----------
 if [[ ! -d .git ]]; then
-  say "Initializing git repository..."
+  progress 55 "Initializing Git workspace…"
   git init -b main
 fi
 
@@ -78,11 +79,13 @@ add_submodule() { # add_submodule <name>
 }
 
 mkdir -p vendor data
+progress 65 "Adding pinned Hermes agent submodule…"
 add_submodule hermes
+progress 75 "Adding pinned Odysseus workspace submodule…"
 add_submodule odysseus
 
 # ---------- 3. bridge venv ----------
-say "Setting up bridge environment..."
+progress 85 "Setting up Bridge environment & dependencies…"
 if [[ ! -d data/bridge-venv ]]; then
   uv venv data/bridge-venv --python "$PY"
 fi
@@ -92,6 +95,7 @@ uv pip install -q -r bridge/requirements.txt
 deactivate
 # Generate launch/admin credentials before any component installer can consume them.
 # Values stay in data/.env.local (0600) and are never printed.
+progress 95 "Generating local credentials and workspace secrets…"
 data/bridge-venv/bin/python scripts/local_secrets.py ensure "$MOT_DECK_ROOT" --fresh
 
 # ---------- 4. first commit ----------
@@ -101,4 +105,4 @@ if ! git rev-parse HEAD >/dev/null 2>&1; then
   say "Initial commit created."
 fi
 
-say "Bootstrap complete. Next: ./scripts/start.sh then open http://127.0.0.1:8700"
+progress 100 "Bootstrap complete! Launching MOT Deck…"
