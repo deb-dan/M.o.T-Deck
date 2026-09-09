@@ -1,0 +1,17 @@
+# Model gearbox policy (M2) — see docs/motdeck-architecture.md §7
+privacy:
+  - match: ["~/finance/**", "~/health/**", "*.env", "**/secrets*"]
+    route: local-only
+
+tasks:
+  chat:           { prefer: local }
+  summarize:      { prefer: local }
+  agentic-coding: { prefer: cloud, fallback: local }
+
+escalation:
+  start: local
+  escalate_on: [tool_call_failure_x2, context_overflow, user_request]
+
+budget:
+  cloud_daily_usd: 5.00
+  on_exceeded: local_only_and_notify

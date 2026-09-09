@@ -1,0 +1,165 @@
+/* Panel-side unit test for the Audio tab's HF SEARCH helpers (T2).
+ *
+ * The functions are EXTRACTED from bridge/panel/index.html by name (the pattern
+ * test_audio_rows.js established) rather than copied, so an edit in the panel trips
+ * this test instead of silently drifting from it.
+ *
+ * Run: node bridge/tests/test_audio_search.js   (from repo root)
+ */
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.resolve(__dirname, '..', '..');
+const html = fs.readFileSync(path.join(ROOT, 'bridge', 'panel', 'index.html'), 'utf8');
+
+let fails = [];
+function check(name, cond) {
+  console.log((cond ? 'PASS' : 'FAIL') + ' ' + name);
+  if (!cond) fails.push(name);
+}
+
+function grab(name) {
+  const at = html.indexOf('function ' + name + '(');
+  if (at < 0) throw new Error('function ' + name + ' not found in the panel');
+  let i = html.indexOf('{', at), depth = 0, inStr = null, prev = '';
+  for (let j = i; j < html.length; j++) {
+    const c = html[j];
+    if (inStr) { if (c === inStr && prev !== '\\') inStr = null; }
+    else if (c === '"' || c === "'" || c === '`') inStr = c;
+    else if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return html.slice(at, j + 1); }
+    prev = c;
+  }
+  throw new Error('unbalanced braces extracting ' + name);
+}
+
+// fmtGB is a dependency of audioProbeSummary — take the panel's own copy.
+eval(grab('fmtGB'));
+eval(grab('audioLicPill'));
+eval(grab('audioLicText'));
+eval(grab('audioLicNote'));
+eval(grab('audioProbeSummary'));
+eval(grab('audioGetState'));
+eval(grab('audioStarterDetail'));
+
+// ── licence pills (reuse the existing fit-pill palette; no new CSS) ───────────
+check('an ok licence is the green pill', audioLicPill('ok') === 'fit-ok');
+check('an unknown licence is the AMBER pill', audioLicPill('unknown') === 'fit-slow');
+check('a non-commercial licence is the RED pill', audioLicPill('nc') === 'fit-no');
+check('an unrecognised badge degrades to green rather than blank',
+      audioLicPill('') === 'fit-ok' && audioLicPill(undefined) === 'fit-ok');
+check('the three classes are ones the stylesheet already defines',
+      ['fit-ok', 'fit-slow', 'fit-no'].every(c => html.includes('.' + c + ' {')));
+
+check('the licence id is shown verbatim when known',
+      audioLicText({ license: 'cc-by-nc-sa-4.0' }) === 'cc-by-nc-sa-4.0');
+check('a missing licence says so instead of showing nothing',
+      audioLicText({ license: '' }) === 'licence unknown'
+      && audioLicText(null) === 'licence unknown');
+
+// ── the licence NOTE line (known-mistag overrides) ───────────────────────────
+const OV_REASON = 'weights CC-BY-NC per upstream README; code Apache-2.0';
+check('an override reason earns its own line',
+      audioLicNote({ badge: 'unknown', reason: OV_REASON }) === OV_REASON);
+check('a use-restricted reason earns a line too',
+      audioLicNote({ badge: 'unknown', reason: 'use-restricted licence' })
+      === 'use-restricted licence');
+check('"licence unknown" does NOT — the pill already says it',
+      audioLicNote({ badge: 'unknown', reason: 'licence unknown' }) === '');
+check('an nc row says it through the disabled-Get line, not twice',
+      audioLicNote({ badge: 'nc', reason: 'non-commercial licence' }) === '');
+check('an ok row with no reason prints nothing',
+      audioLicNote({ badge: 'ok', reason: '' }) === '');
+check('junk never throws',
+      audioLicNote(null) === '' && audioLicNote(undefined) === ''
+      && audioLicNote({}) === '');
+// Both surfaces must show it — a mistag warning on one screen only is worse than none.
+check('the search ROW renders the licence note',
+      /audioLicNote\(m\)/.test(html));
+check('the probe CARD renders the licence note + the source url',
+      /audioLicNote\(p\)[\s\S]{0,260}p\.source_url/.test(html));
+
+// ── the OmniVoice bf16 starter card ──────────────────────────────────────────
+check('the recommended starter is the bf16 MLX OmniVoice',
+      /repo: 'mlx-community\/OmniVoice-bfloat16'/.test(html));
+check('it is offered as a tts-mlx whole-repo download',
+      /OmniVoice-bfloat16'[\s\S]{0,120}fmt: 'tts-mlx'/.test(html));
+check('its size is the measured 2.04 GB, not a guess',
+      /OmniVoice-bfloat16'[\s\S]{0,160}~2\.04 GB/.test(html));
+check('its card states BOTH licence terms',
+      /code Apache-2\.0 · weights CC-BY-NC \(upstream README\)/.test(html));
+check('it sits FIRST in the starter list',
+      html.indexOf("mlx-community/OmniVoice-bfloat16")
+        < html.indexOf("ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF"));
+check('the two Qwen3-TTS starters are DEMOTED, not removed',
+      /repo: 'ggml-org\/Qwen3-TTS-12Hz-1\.7B-Base-GGUF'/.test(html)
+      && /repo: 'mlx-community\/Qwen3-TTS-12Hz-1\.7B-Base-8bit'/.test(html)
+      && (html.match(/below OmniVoice/g) || []).length === 2);
+const starterDetail = audioStarterDetail({ desc:'quality', warn:'needs a package',
+                                           repo:'owner/model', lic:'Apache-2.0' });
+check('starter detail keeps description, dependency warning, provenance and licence',
+      ['quality', 'Caution: needs a package', 'owner/model', 'Apache-2.0']
+        .every(s => starterDetail.includes(s)));
+check('starter rows are compact at rest and expose detail to hover and keyboard focus',
+      /tabindex="0" role="note" title="\$\{escAttr\(detail\)\}"/.test(html)
+      && !/white-space:normal">\$\{esc\(s\.desc\)\}/.test(html));
+
+// ── the probe summary line ───────────────────────────────────────────────────
+check('a tts-mlx probe reads engine · size · voices',
+      audioProbeSummary({ format: 'tts-mlx', size_bytes: 1932735283, voice_count: 9 })
+      === 'TTS · MLX · 1.8 GB · 9 named voices');
+check('one voice is singular',
+      audioProbeSummary({ format: 'tts-mlx', size_bytes: 0, voice_count: 1 })
+      === 'TTS · MLX · 1 named voice');
+// The two STT labels now NAME their engine: there are two selectable ASR engines and
+// "Speech-to-text · MLX" alone would no longer say which one a row is.
+check('no voices ⇒ no voice clause (never claim 0 voices as a feature)',
+      audioProbeSummary({ format: 'stt-mlx', size_bytes: 1073741824, voice_count: 0 })
+      === 'Speech-to-text · MLX (whisper) · 1.0 GB');
+check('the second STT engine is labelled distinctly from whisper',
+      audioProbeSummary({ format: 'stt-mlx-audio', size_bytes: 2508288736 })
+      === 'Speech-to-text · MLX (mlx-audio / Parakeet) · 2.3 GB');
+check('an unmeasured size is omitted, not printed as 0 GB',
+      audioProbeSummary({ format: 'unknown', size_bytes: 0 }) === 'unrecognised');
+check('a transformers verdict is labelled in plain words',
+      audioProbeSummary({ format: 'transformers' }) === 'transformers checkpoint');
+check('the gguf lane is labelled by its engine',
+      audioProbeSummary({ format: 'tts-gguf', size_bytes: 1481763717 })
+      === 'TTS · llama.cpp · 1.4 GB');
+check('an unknown format falls through to its own name (no crash)',
+      audioProbeSummary({ format: 'weird-new-lane' }) === 'weird-new-lane');
+check('audioProbeSummary survives a missing probe', audioProbeSummary(null) === '');
+
+// ── the Get button: it must never lie ────────────────────────────────────────
+check('a downloadable probe gives an enabled Get',
+      JSON.stringify(audioGetState({ can_get: true, format: 'tts-mlx' }))
+      === JSON.stringify({ disabled: false, label: 'Get', reason: '' }));
+const nc = audioGetState({ can_get: false, block_reason: 'non-commercial licence' });
+check('a blocked probe disables the button', nc.disabled === true);
+check('…and carries the bridge’s OWN reason, not a panel guess',
+      nc.reason === 'non-commercial licence');
+check('…and stops calling itself Get', nc.label === 'Unavailable');
+check('a blocked probe with no reason still says something',
+      audioGetState({ can_get: false }).reason.length > 0);
+check('a failed probe is disabled, not silently enabled',
+      audioGetState(null).disabled === true && audioGetState(undefined).disabled === true);
+
+// ── wiring facts (read from the panel source) ────────────────────────────────
+for (const frag of ['/api/models/hf/audio?kind=', '/api/models/hf/audio/probe?repo=',
+                    'id="as-results"', 'id="as-kind"', 'function toggleAudioSearch',
+                    'function audioSearch', 'function audioProbe']) {
+  check('the panel wires ' + frag, html.includes(frag));
+}
+check('the three search lanes are the bridge’s three kinds',
+      ['value="tts"', 'value="tts-gguf"', 'value="stt"'].every(v => html.includes(v)));
+check('Get routes through the EXISTING download manager with the probed hint',
+      html.includes("dlStart(p.repo, p.file || '',") &&
+      html.includes('voice_format: p.format, mmproj: p.mmproj'));
+check('a refused download puts its reason ON the card (truthful-Get rule)',
+      /audioProbe[\s\S]*?mp-err[\s\S]*?download failed/.test(html));
+check('the search section is collapsed by default (the starters stay first)',
+      html.includes('<div id="as-body" hidden>'));
+
+console.log(fails.length ? '\nFAILED: ' + fails.join(', ')
+                         : '\nall audio-search panel checks passed');
+process.exit(fails.length ? 1 : 0);

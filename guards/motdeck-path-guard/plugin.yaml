@@ -1,0 +1,17 @@
+name: motdeck-path-guard
+version: "0.1.0"
+description: "Path-guard fence for Hermes file writes. write_file/patch targets are
+  matched against a policy allowlist (session workspace, ~/.hermes, MOT Deck data
+  dir, temp): inside → proceed untouched; a hard-deny root (~/.ssh, ~/.aws, ~/.gnupg,
+  keychains, the agent's own config) → blocked outright; anything else escalates into
+  the SAME human approval gate dangerous shell commands use, so the MOT Deck panel
+  renders it with its existing approval card. Fail-closed: any internal error
+  escalates rather than allowing. Seeded to ~/.hermes/plugins/ by MOT Deck
+  (scripts/start_component.sh); source of truth = guards/motdeck-path-guard/ in the
+  MOT Deck repo — do not hand-edit the seeded copy."
+author: "MOT Deck"
+kind: standalone
+hooks:
+  - pre_tool_call
+provides_hooks:
+  - pre_tool_call

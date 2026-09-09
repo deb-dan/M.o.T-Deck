@@ -1,0 +1,5 @@
+# The per-size review sheet make_icon.swift leaves behind. It is DELIBERATELY written to
+# disk (it is what a human opens to check the 16px slot, which is the whole reason the
+# art is drawn per size instead of downscaled once) — but it is a build product of
+# app/MOTDeck.icns, which IS committed, so it does not belong in git.
+MOTDeck.iconset/

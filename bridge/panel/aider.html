@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="/assets/identity-migration.js"></script>
+<!-- The boot beacon: the title starts in the booting state and the inline script
+     below changes it, so "the scripts never ran" is answerable from the shell
+     (webView.title) as well as from the static banner in the body. -->
+<title>Aider · booting…</title>
+<meta name="motdeck-build" content="aider-2026-08-29a">
+<!-- The Aider tab is its OWN document, deliberately not the panel: it is a terminal,
+     it loads xterm.js, and it must not carry the panel's poll loops. The palette
+     values below are the panel's tokens, copied (a separate document cannot inherit
+     :root) — keep them in step by eye if the panel's palette ever moves. -->
+<script>
+  // S10 — same read-only theme/chrome contract as Goose CLI. This must run in the
+  // head, before CSS paints, and it must whitelist values rather than half-paint an
+  // unknown preference. The design axis is intentionally absent: Aider has no
+  // surface-specific Studio layout sheet, so claiming it would be a false design.
+  (function () {
+    window.syncSkin = function () {
+      var theme = null, chrome = null;
+      try {
+        theme = localStorage.getItem('motdeck-theme');
+        chrome = localStorage.getItem('motdeck-chrome');
+      } catch (e) { return; }
+      var d = document.documentElement;
+      if (theme === 'light' || theme === 'gold' || theme === 'cyber')
+        d.setAttribute('data-theme', theme);
+      else d.removeAttribute('data-theme');
+      if (chrome === 'studio') d.setAttribute('data-chrome', 'studio');
+      else d.removeAttribute('data-chrome');
+    };
+    window.syncSkin();
+  })();
+</script>
+<link rel="stylesheet" href="/assets/vendor/xterm.css">
+<style>
+  :root{
+    --bg:#0b0910; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f36; --line2:#2f2946; --fg:#efe9dc; --cream:#efe9dc;
+    --dim:#a49bbb; --faint:#6f6885; --gold:#c9a44d; --bad:#c96d5a; --ok:#7fa87f;
+  }
+  html[data-theme="light"]{
+    --bg:#faf7f0; --bg2:#f2eee3; --card:#ffffff; --card2:#faf6ec;
+    --line:#e6dfcf; --line2:#d6ccb4;
+    --cream:#221d14; --fg:#3d372b; --dim:#5a5447; --faint:#716a5a;
+    --gold:#886522; --ok:#177e5d; --bad:#b13d3d;
+  }
+  html[data-theme="gold"]{
+    --bg:#070608; --bg2:#0c0a09; --card:#131110; --card2:#1a1613;
+    --line:#2b2318; --line2:#3c301f;
+    --cream:#f4ecdc; --fg:#cfc7b6; --dim:#a39b88; --faint:#8d7f69;
+    --gold:#e8bf76; --ok:#4fc79b; --bad:#e77070;
+  }
+  html[data-theme="cyber"]{
+    --bg:#080c16; --bg2:#0b101d; --card:#111828; --card2:#162032;
+    --line:#1f2b45; --line2:#2c3c5e;
+    --cream:#e6edf7; --fg:#b9c6dd; --dim:#99a4b8; --faint:#7b88a6;
+    --gold:#7dd3fc; --ok:#4ade80; --bad:#fb7185;
+  }
+  html[data-chrome="studio"]{
+    --st-btn:#332b50; --st-hi:#453b6b; --st-edge:#574b83}
+  html[data-chrome="studio"][data-theme="light"]{
+    --st-btn:#e3d9c0; --st-hi:#d5c7a6; --st-edge:#b9a878}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--fg);
+       font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       display:flex;flex-direction:column;overflow:hidden}
+  header{flex:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+         padding:10px 16px;border-bottom:1px solid var(--line);background:var(--bg2)}
+  .name{font-family:Georgia,"Times New Roman",serif;font-size:16px;color:var(--cream)}
+  .pill{font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;
+        text-transform:uppercase;padding:4px 8px;border:1px solid var(--line2);
+        border-radius:6px;color:var(--dim);white-space:nowrap}
+  .pill.on{color:var(--gold);border-color:var(--gold)}
+  .pill.bad{color:var(--bad);border-color:var(--bad)}
+  button{font:12px/1 -apple-system,BlinkMacSystemFont,sans-serif;color:var(--fg);
+         background:var(--card2);border:1px solid var(--line2);border-radius:8px;
+         padding:6px 13px;cursor:pointer}
+  button:hover{border-color:var(--gold)}
+  button:disabled{opacity:.45;cursor:default}
+  /* ⚠️ THE INK ON A CREAM-FILLED CONTROL IS var(--bg), NEVER A HARDCODED NEAR-BLACK
+     (bug-echo W-06, the same shape as the .ap-cmd class fixed in v1.5.13). `#171420` was
+     a literal copy of the panel's dark background: right by coincidence in this palette,
+     and invisible the moment a light palette reaches this page — in light, --cream is
+     DARK ink (#221d14) and dark-on-dark reads as an empty rectangle. var(--bg) inverts
+     with the palette by construction, which is why index.html's own light block spells
+     it exactly this way: html[data-theme="light"] button.primary { color:var(--bg) }. */
+  button.primary{background:var(--cream);color:var(--bg);border-color:var(--cream)}
+  .grow{flex:1 1 auto}
+  #note{flex:none;padding:8px 16px;color:var(--faint);font-size:11.5px;
+        border-bottom:1px solid var(--line);background:var(--bg2);display:flex;
+        align-items:center;gap:6px;flex-wrap:wrap}
+  #note b{color:var(--dim);font-weight:600}
+  #wrap{flex:1 1 auto;min-height:0;padding:8px 10px 10px;background:var(--bg)}
+  #term{width:100%;height:100%}
+  /* ⚠️ THE STATUS LINE IS TOGGLED BY CLASS, NEVER BY style.display.
+     v1 hid it with `display:none` here and re-showed it with `style.display=''` —
+     which removes the inline declaration and falls straight back to this rule, so
+     EVERY message on this page was structurally invisible (that is why a failed
+     install read as "nothing happened"). A class cannot be defeated that way. */
+  /* The STATIC fallback banner — plain markup, visible by default, removed by the
+     first line of the inline script. A page whose scripts never ran (a stale cached
+     document, a dead web content process) used to be indistinguishable from an empty
+     one; now it says so. Same treatment as office.html. */
+  #boot{padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card);
+        color:var(--gold);font-size:12.5px;line-height:1.55;flex:none}
+  #boot b{color:var(--cream);font-weight:600}
+  #boot code{font:11px ui-monospace,Menlo,monospace;color:var(--dim)}
+  #msg{flex:none;padding:10px 16px;font-size:12px;white-space:pre-wrap;display:none}
+  #msg.show{display:block}
+  #msg.warn{color:var(--bad)}
+  #msg.info{color:var(--faint)}
+  #logwrap{flex:none;display:none;padding:0 16px 10px}
+  #logwrap.show{display:block}
+  #logbox{margin:0;max-height:170px;overflow:auto;background:var(--card);
+          border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+          font:10.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+          color:var(--dim);white-space:pre-wrap}
+  .link{background:none;border:0;padding:0;color:var(--dim);font:11.5px/1 -apple-system,
+        BlinkMacSystemFont,sans-serif;text-decoration:underline;cursor:pointer}
+  .link:hover{color:var(--gold);border-color:transparent}
+  #foot{flex:none;padding:7px 16px 9px;color:var(--faint);font-size:10.5px;
+        border-top:1px solid var(--line);background:var(--bg2)}
+  /* Zero-specificity refinements must follow the base controls or source order makes
+     the axis a silent no-op. The terminal canvas deliberately remains dark because
+     Aider's ANSI palette is authored for a dark terminal; the surrounding chrome is
+     what follows all four app palettes. */
+  :where(html[data-chrome="studio"]) button{
+    background:var(--st-btn);border-color:var(--st-edge);border-radius:8px}
+  :where(html[data-chrome="studio"]) button:hover{
+    background:var(--st-hi);border-color:var(--gold)}
+  :where(html[data-chrome="studio"]) button.primary{
+    background:var(--cream);color:var(--bg);border-color:var(--st-edge)}
+  :where(html[data-chrome="studio"]) .pill{
+    background:var(--st-btn);border-color:var(--st-edge);border-radius:8px}
+</style>
+</head>
+<body>
+<div id="boot"><b>If you can read this, this page's scripts did not run.</b>
+  That is almost always a stale cached copy of the document. Press <b>⌘R</b> to reload
+  this tab; if it survives that, run <code>./scripts/ship.sh</code> and reload again.
+  Build <code>aider-2026-08-29a</code>.</div>
+<header>
+  <span class="name">Aider</span>
+  <span class="pill" id="p-install">checking…</span>
+  <span class="pill" id="p-model">model —</span>
+  <span class="pill" id="p-ws">not connected</span>
+  <span class="grow"></span>
+  <button class="link" id="lnk-log" style="display:none">view log</button>
+  <button id="btn-install" style="display:none">Install aider</button>
+  <button id="btn-start" class="primary" style="display:none">Start</button>
+  <button id="btn-stop" style="display:none">End session</button>
+</header>
+<div id="note">
+  <span class="pill" title="Aider edits only inside this workspace; it asks before a change, never auto-commits, and git provides /undo and /diff.">workspace · <b id="ws-dir">data/aider-workspace</b></span>
+  <span class="pill" title="Reload reattaches and replays bounded terminal scrollback.">reattach · <b id="sbk">256</b>KB</span>
+  <span class="pill" title="With no tab attached the session stays alive for this grace period. End session or /exit stops it immediately.">grace · <b id="grace">10 minutes</b></span>
+</div>
+<div id="msg"></div>
+<div id="logwrap"><pre id="logbox"></pre></div>
+<div id="wrap"><div id="term"></div></div>
+<div id="foot" title="Aider is a tab-owned lane, not a component. Its history lives in the workspace, so it reattaches rather than offering a separate session picker.">Full behavior: MOT Deck → Help → Aider.</div>
+
+<script src="/assets/vendor/xterm.js"></script>
+<script src="/assets/vendor/xterm-addon-fit.js"></script>
+<script>
+// First thing: take the static fallback banner down. From here on its presence on
+// screen means exactly one thing — this line never ran.
+(function () {
+  const b = document.getElementById('boot');
+  if (b) b.remove();
+  document.title = 'Aider — MOT Deck';
+})();
+'use strict';
+// The two UMD bundles expose either the class directly or a module namespace holding
+// it, depending on the build. Ask for both rather than betting on one.
+const TermCtor = (window.Terminal && window.Terminal.Terminal) || window.Terminal;
+const FitCtor  = (window.FitAddon && window.FitAddon.FitAddon) || window.FitAddon;
+
+const el = id => document.getElementById(id);
+let term = null, fit = null, sock = null, state = null;
+let logOpen = false, pollTimer = 0, lastErr = null;
+
+// The panel can change its preference while this first-party tab remains open.
+// storage covers sibling documents; focus/visibility cover suspended WebViews.
+window.addEventListener('storage', ev => {
+  if (!ev || !ev.key || ev.key === 'motdeck-theme' || ev.key === 'motdeck-chrome')
+    syncSkin();
+});
+window.addEventListener('focus', () => syncSkin());
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) syncSkin();
+});
+
+// kind: 'info' for an ordinary progress note, anything else (default) for a failure.
+function say(text, kind) {
+  const m = el('msg');
+  m.textContent = text || '';
+  m.className = text ? ('show ' + (kind === 'info' ? 'info' : 'warn')) : '';
+}
+
+// EVERY request on this page goes through here, so a non-2xx or a dead bridge can
+// never be swallowed: v1 did a bare `await fetch(...)` with no status check, so a
+// 409/503 looked exactly like success — i.e. like nothing happening at all.
+async function jfetch(url, opts) {
+  let r;
+  try {
+    r = await fetch(url, Object.assign({ cache: 'no-store' }, opts || {}));
+  } catch (e) {
+    throw new Error('the bridge is not answering (' + e + ')');
+  }
+  let body = null;
+  try { body = await r.json(); } catch (e) { body = null; }
+  if (!r.ok) throw new Error((body && (body.error || body.detail)) || ('HTTP ' + r.status));
+  return body;
+}
+
+// The install log is the EXISTING panel log source (GET /api/logs/<name>), rendered
+// inline here because this document is not the panel and cannot open its log dialog.
+async function loadLog() {
+  const box = el('logbox');
+  try {
+    const j = await jfetch('/api/logs/aider-install?lines=60');
+    const lines = (j && j.lines) || [];
+    box.textContent = lines.length ? lines.join('\n')
+      : 'the install log is empty — the installer has not written anything yet.';
+  } catch (e) {
+    box.textContent = 'could not read the install log: ' + e.message;
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+function showLog(on) {
+  logOpen = !!on;
+  el('logwrap').className = logOpen ? 'show' : '';
+  el('lnk-log').textContent = logOpen ? 'hide log' : 'view log';
+  el('lnk-log').style.display = '';
+  if (logOpen) loadLog();
+}
+el('lnk-log').onclick = () => showLog(!logOpen);
+
+function ensureTerm() {
+  if (term) return term;
+  if (!TermCtor) { say('xterm.js is missing — run ./scripts/fetch_vendor_assets.sh'); return null; }
+  term = new TermCtor({
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 12.5, cursorBlink: true, scrollback: 5000,
+    theme: { background: '#0b0910', foreground: '#efe9dc', cursor: '#c9a44d',
+             selectionBackground: '#2f2946' }
+  });
+  if (FitCtor) { fit = new FitCtor(); term.loadAddon(fit); }
+  term.open(el('term'));
+  refit();
+  term.onData(d => { if (sock && sock.readyState === 1) sock.send(new TextEncoder().encode(d)); });
+  return term;
+}
+
+// FitAddon proposes cols/rows from the element size; the SERVER owns the real winsize,
+// so every fit is followed by the one control message the wire carries.
+let refitPending = 0;
+function refit() {
+  if (!term) return;
+  cancelAnimationFrame(refitPending);
+  refitPending = requestAnimationFrame(() => {
+    try { if (fit) fit.fit(); } catch (e) { /* element not laid out yet */ }
+    sendResize();
+  });
+}
+function sendResize() {
+  if (!term || !sock || sock.readyState !== 1) return;
+  const c = Math.max(2, term.cols | 0), r = Math.max(1, term.rows | 0);
+  sock.send(new TextEncoder().encode('\x1b[RESIZE:' + c + ';' + r + ']'));
+}
+window.addEventListener('resize', refit);
+
+async function loadStatus() {
+  try {
+    state = await jfetch('/api/aider/status');
+  } catch (e) { state = { ok: false, error: String(e.message || e) }; }
+  paint();
+  return state;
+}
+
+function paint() {
+  const s = state || {};
+  const connected = sock && sock.readyState === 1;
+  const dead = s.ok === false;                 // the lane itself is unavailable
+  const inst = !!s.installing;
+  el('p-install').textContent = dead ? 'lane unavailable'
+    : inst ? 'installing…' : (s.installed ? 'installed' : 'not installed');
+  el('p-install').className = 'pill' + (s.installed ? ' on' : (dead ? ' bad' : ''));
+  el('p-model').textContent = s.model_ready ? ('model · ' + s.model) : 'no model loaded';
+  el('p-model').className = 'pill' + (s.model_ready ? '' : ' bad');
+  // THE THREE SESSION STATES, and the middle one is new: a session can be RUNNING with
+  // no page on it (this tab was reloaded, or closed and reopened). Saying only
+  // 'not connected' there would hide a live agent holding the workspace.
+  // ⚠️ FOUR STATES, AND THE FOURTH IS sample'S OWN SCREENSHOT (2026-08-29, ledger U10):
+  // this chip read NOT CONNECTED while the terminal below said "aider is already
+  // running in another window". The chip had no word for "running, somebody else has
+  // it", so it reported the only other thing it knew — and contradicted its own page.
+  const elsewhere = !connected && s.running && s.attached;
+  el('p-ws').textContent = connected ? 'session live'
+    : elsewhere ? 'running · another window'
+    : (s.detached ? ('running · detached ' + Math.max(0, s.grace_left | 0) + 's')
+                  : 'not connected');
+  el('p-ws').className = 'pill' + (connected || s.detached || elsewhere ? ' on' : '');
+  if (s.workspace) el('ws-dir').textContent = s.workspace;
+  if (s.scrollback_kb) el('sbk').textContent = s.scrollback_kb;
+  if (s.grace_s) el('grace').textContent = Math.round(s.grace_s / 60) + ' minutes';
+  // The button STAYS VISIBLE while installing, wearing the state — it is the control
+  // that was clicked, so it is where the answer belongs.
+  el('btn-install').style.display = (!dead && (!s.installed || inst)) ? '' : 'none';
+  el('btn-install').disabled = inst;
+  el('btn-install').textContent = inst ? 'installing…' : 'Install aider';
+  el('btn-start').style.display = (s.installed && !connected) ? '' : 'none';
+  // The button SAYS WHAT IT WILL DO — "Start" beside a running session was half of
+  // sample's dead end: the label promised a new session and the bridge refused.
+  el('btn-start').textContent = elsewhere ? 'Take over'
+    : (!connected && s.detached) ? 'Reattach' : 'Start';
+  // A RUNNING session can ALWAYS be joined — the model check gates STARTING a new one.
+  el('btn-start').disabled = !s.model_ready && !s.detached && !elsewhere;
+  // End stays reachable while a session is running anywhere: that is exactly when the
+  // user needs it, and hiding it would leave a running agent with no off switch.
+  el('btn-stop').style.display = (connected || s.detached || elsewhere) ? '' : 'none';
+  if (inst || s.install_error) el('lnk-log').style.display = '';
+
+  // Failure is reported ONCE per distinct error, so a poll cannot re-open a log the
+  // user just closed — and a healthy paint never clobbers a websocket message.
+  if (dead) {
+    say('the aider lane is not available on this bridge: ' + (s.error || 'unknown'));
+  } else if (s.install_error && s.install_error !== lastErr) {
+    lastErr = s.install_error;
+    say('install failed:\n' + s.install_error);
+    showLog(true);
+  }
+}
+
+// Poll while an install runs — a clone + an online pip resolve takes minutes.
+function watchInstall() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const s = await loadStatus();
+    if (logOpen) loadLog();
+    if (!s.installing) {
+      clearInterval(pollTimer);
+      pollTimer = 0;
+      if (s.installed && !s.install_error) say('aider is installed.', 'info');
+    }
+  }, 3000);
+}
+
+el('btn-install').onclick = async () => {
+  say('');
+  lastErr = null;
+  const b = el('btn-install');
+  b.disabled = true;
+  try {
+    await jfetch('/api/aider/install', { method: 'POST' });
+  } catch (e) {
+    b.disabled = false;
+    say('could not start the install: ' + e.message);
+    showLog(true);
+    return;
+  }
+  say('installing aider — an online, one-time install; it takes several minutes. '
+      + 'The log below updates as it runs.', 'info');
+  showLog(true);
+  await loadStatus();
+  watchInstall();
+};
+
+el('btn-start').onclick = () => start();
+// ⚠️ ENDING IS A POST, NOT sock.close(). Closing the socket is now exactly what a ⌘R
+// does, and the bridge deliberately reads that as "the page went away" — so the old
+// handler would have made the End button mean "detach", i.e. a control that promises
+// to stop an agent and instead leaves it running. The POST kills the process; the
+// socket then closes because the child is gone.
+el('btn-stop').onclick = async () => {
+  const b = el('btn-stop'), connection = sock;
+  b.disabled = true;
+  try {
+    await jfetch('/api/aider/end', { method: 'POST' });
+    // The receipt belongs to the connection that requested End. A failed request
+    // keeps that terminal attached so the user can retry.
+    if (connection && sock === connection) connection.close();
+  } catch (e) { say('could not end the session: ' + e.message); }
+  finally { b.disabled = false; }
+  await loadStatus();
+};
+
+function start() {
+  if (sock && sock.readyState <= 1) return;
+  const t = ensureTerm();
+  if (!t) return;
+  say('');
+  t.reset();
+  const q = '?cols=' + (t.cols | 0) + '&rows=' + (t.rows | 0);
+  const connection = sock = new WebSocket('ws://' + location.host + '/api/pty/aider' + q);
+  sock.binaryType = 'arraybuffer';
+  sock.onopen = () => { if (sock !== connection) return; paint(); sendResize(); t.focus(); };
+  sock.onmessage = ev => {
+    if (sock !== connection) return;
+    const d = ev.data;
+    if (typeof d === 'string') t.write(d);
+    else t.write(new Uint8Array(d));
+  };
+  sock.onclose = ev => {
+    if (sock !== connection) return;
+    sock = null;
+    paint();
+    if (ev.code === 4403) say('refused: this page is not allowed to open the terminal.');
+    else if (ev.code === 4409) say('aider is already running in another window.');
+    else if (ev.code === 4412) say('');            // the message came through the terminal
+    // 'detached' is the bridge saying the CHILD IS STILL ALIVE and this socket simply
+    // went away — never printed as "session ended", which would be a lie the user
+    // would act on by starting a second one.
+    else if (ev.reason === 'detached') { /* the page is going away; say nothing */ }
+    // Another window took the session. The child is ALIVE — "session ended" would be
+    // the lie and silence would be the dead end.
+    else if (ev.reason === 'takeover')
+      say('another window took this session — Take over brings it back.', 'info');
+    else if (t) t.write('\r\n\x1b[2m— session ended —\x1b[0m\r\n');
+    loadStatus();
+  };
+  sock.onerror = () => { if (sock === connection) say('the terminal connection failed.'); };
+  paint();
+}
+
+(async function boot() {
+  ensureTerm();
+  const s = await loadStatus();
+  // An install started before this tab was opened (or reloaded) keeps being watched.
+  if (s.installing) { say('an install is already running.', 'info'); watchInstall(); }
+  // THE ⌘R PATH. `start()` opens the same socket either way; the bridge decides
+  // whether that is a spawn or a reattach (attach_verdict), so a reloaded tab lands
+  // back in its running session with the scrollback replayed. `s.detached` is enough
+  // on its own: a live session is reattachable even with the runner since unloaded.
+  else if (s.installed && (s.model_ready || s.detached)) start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,2488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="motdeck-build" content="oo-2026-08-29b">
+<title>LOffice — editor</title>
+<script src="/assets/identity-migration.js"></script>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════════
+  LOffice — OUR OWN first-party integration of the vendored ONLYOFFICE editors.
+  Served by bridge/app.py at /oo-edit?doc=<name>[&embed=1], with the three
+  cross-origin-isolation headers bridge/oo.py stamps on this page AND on every
+  /oo/* response. Nothing here is third-party code: this file drives the bundle
+  through its published surface and never patches a vendored byte (AGPL ruling #2).
+
+  ── WHAT CHANGED AT oo-2026-08-28a: THIS IS AN EMBEDDABLE EDITOR NOW ────────────
+  sample ruled LOffice a ONE-EDITOR app (roadmap §8): this stopped being a separate
+  full page you navigate to and became the editing surface at the CENTRE of the
+  LOffice layout, inside a same-origin iframe, with LOffice's own dark strip, file
+  rail and AI panel around it.
+
+  So the page has TWO shapes, decided by one query parameter:
+    · `embed=1` — the LOffice centre column. Our own header and footer are hidden by
+      CSS (`body.embed`): the strip above and the rail beside it belong to the parent,
+      and two Save buttons stacked on top of each other is exactly the duplicated
+      chrome the ruling removes.
+    · no `embed` — the standalone page, header and footer and all. Kept deliberately:
+      it is the rollback if the embed ever misbehaves, and it is the way to open the
+      editor on a workbook without the rest of LOffice.
+
+  ── THE PARENT ↔ CHILD CONTRACT, AND IT IS THE ONLY ONE ─────────────────────────
+  Parent and child are SAME-ORIGIN (both on the bridge), so this is direct property
+  access, ONE object in each direction, and NO postMessage. Said plainly because
+  "pick one and document it" was the instruction and postMessage is the obvious other
+  candidate: it would buy nothing here (no origin boundary to cross), it would make
+  every call asynchronous and correlation-id-shaped, and it would have to serialise a
+  2000-cell op plan through structured clone for no reason. The one thing it WOULD buy
+  — surviving a cross-origin move — is a move the COEP requirement forbids anyway.
+
+    PARENT → CHILD.  The child, once its editor holds a document, publishes
+      window.LOfficeEmbed = {
+        contract : 1,                        // bumped if any signature below changes
+        open(name)      -> Promise<{ok, error, ms, swap}>   swap the document in place
+        save(force)     -> Promise<{ok, error, status, bytes, backup, mtime}>
+        reload()        -> Promise<{ok, error}>             re-read the CURRENT doc
+        applyOps(list, sheet) -> {ok, error, done}          the builder-API writes
+        probe()         -> {ready, doc, dirty, saving, editorTag}
+        destroy()       -> void
+      }
+    CHILD → PARENT.  The parent, BEFORE it creates the iframe, publishes
+      window.LOfficeHost = {
+        contract : 1,
+        register(embed) -> void              the child hands its API object up
+        event(ev)       -> void              {kind, ...}
+      }
+    EVENT KINDS, and the parent may ignore any of them:
+      boot   {step, pct}      progress while the editor comes up
+      ready  {doc, mtime, ms} the editor holds that document and is interactive
+      state  {dirty}          onDocumentStateChange — THE dirty flag for the strip
+      saved  {bytes, backup, mtime}
+      error  {text, fatal}    fatal = the editor is not usable; fall back to tier 1
+    The parent is ready before the child exists (it creates the iframe), so the child
+    never has to wait for it; a child that finds no host runs standalone.
+
+  ── HOW THE INTEGRATION WORKS, AND WHY IT IS SHAPED LIKE THIS ───────────────────
+
+  The vendored bundle is CryptPad's build of ONLYOFFICE. It is a DocumentServer
+  client: left alone it loads socket.io and waits forever for a server to answer.
+  MEASURED, not assumed — a WKWebView probe on 2026-08-27 served this exact bundle
+  with full cross-origin isolation and a plain `document.url` pointing at a real
+  .xlsx: the ribbon rendered, `crossOriginIsolated === true`, SharedArrayBuffer was
+  present, ZERO console errors, and it sat at "Loading spreadsheet" for 90 seconds
+  without ever fetching the workbook. Only 26 requests, one of them socket.io.
+
+  So the integration has three parts, all of them documented in the bundle's own
+  sources (`web-apps/apps/api/documents/api-orig.js` is shipped unminified):
+
+    1. x2t.wasm, driven BY US, converts .xlsx → Editor.bin before the editor opens
+       and Editor.bin → .xlsx when we save. `dist/x2t/x2t.js` is a plain Emscripten
+       module (no pthreads, no SharedArrayBuffer) exporting exactly `ccall` and `FS`
+       plus one entry point, `main1(paramsXmlPath)`. Measured in WKWebView: an .xlsx
+       became an Editor.bin in 20ms and came back out again with rc=0 both ways.
+       ⚠️ IT IS LOADED ONCE PER PAGE, NOT ONCE PER DOCUMENT. That is what makes the
+       document SWAP cheap: `loadX2T()` is idempotent and the 57 MB wasm compile is
+       paid on the first open only.
+
+    2. `connectMockServer` — CryptPad's own addition to `api.js`, which is part of
+       the bundle we vendor. It answers the editor's collaboration handshake in-page:
+       `handleAuth` replies to `auth` by itself and hands the editor the Editor.bin
+       URL, so all we implement is the handful of lock/save messages a SINGLE user
+       generates. There is no co-editing protocol here and none is needed — one
+       user's edits already live in their own editor instance.
+
+    3. THE SAVE HOOK — `asc_nativeGetFile()`, called on the editor instance inside
+       the iframe. Said plainly because it is the one design decision most likely to
+       be questioned: this is NOT the `onSaveDocument` event and NOT `downloadAs`.
+         · `onSaveDocument` (the `canSaveDocumentToBinary` path) IS implemented in
+           this bundle, but sdkjs only takes its zero-server branch when
+           `isOpenOOXInBrowser` is true, which requires `Asc.Addons.ooxml === true`
+           — and nothing in this bundle ever sets `Asc.Addons`. Its other branch
+           calls `downloadAs`, i.e. asks a DocumentServer to convert. Dead end.
+         · `downloadAs`/`onDownloadAs` returns a URL the server produced. Same dead
+           end, and it would also need a download delegate in the tab.
+         · `asc_nativeGetFile()` is sdkjs's synchronous serialiser
+           (`new AscCommonExcel.BinaryFileWriter(this.wbModel).Write()`) and returns
+           the live document as an `XLSY;v2;<len>;<base64>` string. It is what
+           CryptPad itself saves with. The iframe is same-origin, so reaching the
+           instance is a property access, not a hack.
+       We then run that string back through x2t and POST the .xlsx to the bridge.
+
+    4. THE BUILDER API, added at oo-2026-08-28a for the AI panel's Apply button.
+       The SAME inner instance also carries sdkjs's document-builder surface —
+       `GetActiveSheet()`, `GetRange(a1)`, `SetValue`, `SetBold`, `SetNumberFormat`,
+       `AddSheet`, `GetRows(r).Insert(shift)` and so on (all verified present in the
+       vendored `sdkjs/cell/sdk-all.js`, and `GetActiveSheet().GetRange().SetValue()`
+       was the v1.5.4 proof). Running the AI's validated ops through it rather than
+       through our tier-1 model means THE EDITOR'S OWN UNDO covers an AI apply: ⌘Z
+       inside the editor takes it back, which is the whole point of one editor.
+
+  ── WHAT THIS PAGE DELIBERATELY DOES NOT DO ────────────────────────────────────
+  · No autosave. Save is explicit (the Save button, ⌘S, or the parent's strip) because
+    it OVERWRITES the workbook, and the bridge takes a daily .bak and refuses a save
+    whose file changed underneath it.
+  · No co-editing, no comments, no chat, no plugins, no history.
+  · No PRINT. `document.permissions.print: false` — the serverless bundle's Print
+    expects a DocumentServer and throws. It is turned off through the PUBLISHED config
+    (api-orig.js line 49 documents the key), never by patching a vendored byte, and
+    LOffice's Help → About names the limitation.
+  · No third-party origin, ever: a COEP page refuses cross-origin subresources, and
+    every byte here comes from this bridge.
+  ═══════════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  :root{
+    --bg:#0b0910; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f36; --line2:#2f2946; --fg:#efe9dc;
+    --dim:#a49bbb; --faint:#6f6885; --gold:#c9a44d; --bad:#c96d5a; --ok:#7fa87f;
+    --ctl-h:28px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden}
+  body{background:var(--bg);color:var(--fg);
+       font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       display:flex;flex-direction:column}
+  header{flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px;
+         border-bottom:1px solid var(--line);background:var(--bg2)}
+  header .name{font-weight:600;max-width:38vw;overflow:hidden;text-overflow:ellipsis;
+               white-space:nowrap}
+  header .tag{font:10px/1 -apple-system,sans-serif;letter-spacing:.09em;
+              text-transform:uppercase;padding:0 9px;height:18px;line-height:18px;
+              border:1px solid var(--line2);border-radius:9px;color:var(--gold)}
+  header .sp{flex:1 1 auto}
+  button{height:var(--ctl-h);padding:0 12px;border-radius:8px;cursor:pointer;
+         font:12px/1 -apple-system,BlinkMacSystemFont,sans-serif;color:var(--fg);
+         background:var(--card2);border:1px solid var(--line2)}
+  button:hover:not(:disabled){background:var(--card)}
+  button:disabled{opacity:.42;cursor:default}
+  button.primary{border-color:var(--gold);color:var(--gold)}
+  #state{color:var(--dim);font-size:12px;max-width:34vw;overflow:hidden;
+         text-overflow:ellipsis;white-space:nowrap}
+  #note{display:none;flex:none;align-items:baseline;gap:10px;padding:7px 12px;
+        border-bottom:1px solid var(--line);background:var(--card);font-size:12px}
+  #note.on{display:flex}
+  #note.bad{border-bottom-color:var(--bad)}
+  #note.bad #note-text{color:var(--bad)}
+  #note.ok #note-text{color:var(--ok)}
+  #note-text{flex:1 1 auto}
+  #note-acts{flex:none;display:flex;gap:6px}
+  #note-acts button{height:22px;padding:0 10px;font-size:11px}
+  #note-x{flex:none;height:22px;padding:0 8px;font-size:11px;border-color:transparent;
+          background:transparent;color:var(--faint)}
+  #stage{flex:1 1 auto;position:relative;min-height:0;background:var(--bg)}
+  #editor{position:absolute;inset:0}
+  #editor iframe{border:0}
+  #boot{position:absolute;inset:0;display:flex;flex-direction:column;
+        align-items:center;justify-content:center;gap:14px;padding:28px;
+        text-align:center;background:var(--bg)}
+  #boot.gone{display:none}
+  #boot h1{margin:0;font-size:17px;font-weight:600}
+  #boot p{margin:0;max-width:56ch;color:var(--dim)}
+  #boot code{background:var(--card);border:1px solid var(--line2);border-radius:5px;
+             padding:2px 6px;font-size:12px;color:var(--gold);
+             font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  #bar{width:min(420px,70vw);height:4px;border-radius:2px;background:var(--card2);
+       overflow:hidden}
+  #bar i{display:block;height:100%;width:0;background:var(--gold);
+         transition:width .25s ease}
+  #boot .steps{color:var(--faint);font-size:12px;white-space:pre-line;text-align:left}
+  #boot.bad h1{color:var(--bad)}
+  footer{flex:none;padding:6px 12px;border-top:1px solid var(--line);
+         background:var(--bg2);color:var(--faint);font-size:11px;
+         display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+  footer a{color:var(--dim)}
+  footer .agpl{color:var(--dim)}
+  /* ══ EMBEDDED: our own chrome gets out of the way ═══════════════════════════
+     ONE class, set once from the query parameter, and every surface the PARENT
+     already provides is hidden by CSS rather than by a script that could half-run.
+     The parent's dark strip carries the name, the save state and the Save button;
+     the parent's Help → About carries the AGPL attribution from the same
+     bridge-side ATTRIBUTION this footer renders. Nothing is duplicated, and the
+     interstitial (#boot) stays: it is what the CENTRE column looks like while the
+     editor comes up, and the parent draws its own read-only grid behind it. */
+  body.embed>header,body.embed>footer{display:none}
+  /* the whole point of the embed: no gap, no border, no second frame */
+  body.embed{background:#fff}
+  body.embed #stage{background:#fff}
+  body.embed #boot{background:transparent}
+  /* A COLD boot in the embed is the ONLY time this overlay is worth seeing: the
+     parent's own grid is behind it, so the overlay is deliberately thin — a status
+     line and a bar, not a wall of text (`#boot p` is the parent's job to say). */
+  body.embed #boot p,body.embed #boot .steps{color:#5b5b5b}
+  body.embed #boot h1{color:#181818;font-size:14px;font-weight:600}
+  body.embed #boot{gap:10px;justify-content:flex-start;padding-top:34px}
+  /* ══ THE AI PROGRESS CHIP (v1.5.31) ═════════════════════════════════════════
+     Over the EDITOR IFRAME, not inside it: the thing it has to be legible on top of
+     is the editor's own full-frame block overlay, which lives in the child document.
+     Explicit light colours, deliberately, for the same reason `body.embed` above sets
+     white — the editor is pinned to `default-light` and a spreadsheet is a white page
+     under EVERY motdeck design, so a chip following our dark tokens would be the one
+     dark object on a white sheet. Verified under Editorial and Studio, light + dark. */
+  /* ⚠️ BOTTOM, NOT TOP, AND THAT IS A SCREENSHOT FINDING. The first draft sat at
+     top:12px and landed square across the ONLYOFFICE ribbon's tab row — it covered
+     Layout/Formula/Data and the document title, i.e. it hid the ribbon the user had
+     just used in order to tell them about the thing they had just started. Above the
+     status bar it is clear of both the ribbon and the editor's own centred block box. */
+  #aichip{position:absolute;bottom:52px;left:50%;transform:translateX(-50%);z-index:6;
+          display:none;align-items:center;gap:10px;max-width:min(560px,86%);
+          padding:8px 10px 8px 12px;border-radius:10px;
+          background:#ffffff;border:1px solid #d9d5cb;
+          box-shadow:0 6px 20px rgba(20,18,12,.16);
+          font:12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+          color:#181818}
+  #aichip.on{display:flex}
+  #aichip .dot{flex:none;width:8px;height:8px;border-radius:50%;background:#c9a44d;
+               animation:aichip-pulse 1.1s ease-in-out infinite}
+  @keyframes aichip-pulse{0%,100%{opacity:.25}50%{opacity:1}}
+  @media (prefers-reduced-motion:reduce){#aichip .dot{animation:none;opacity:.8}}
+  #aichip .txt{flex:1 1 auto;min-width:0}
+  #aichip-t{display:block;font-weight:600;white-space:nowrap;overflow:hidden;
+            text-overflow:ellipsis}
+  #aichip-n{display:block;color:#6b6658;font-size:11px;white-space:nowrap;
+            overflow:hidden;text-overflow:ellipsis}
+  #aichip-stop{flex:none;height:24px;padding:0 10px;font-size:11px;color:#181818;
+               background:#f3f1ea;border:1px solid #d9d5cb;border-radius:7px}
+  #aichip-stop:hover:not(:disabled){background:#e9e6dc}
+</style>
+</head>
+<body>
+<header>
+  <button id="btn-back" title="Back to the LOffice grid">‹ LOffice</button>
+  <span class="tag">editor</span>
+  <span class="name" id="docname">—</span>
+  <span class="sp"></span>
+  <span id="state"></span>
+  <!-- Download as PDF lives here too, not only in LOffice's ⋯ menu, because this page
+       is ALSO the standalone rollback surface: an editor you can reach but cannot get a
+       PDF out of would be a dead end for the one feature that replaces Print. Hidden in
+       the embed (the header is), where LOffice's own File / ⋯ menus carry it. -->
+  <button id="btn-pdf" disabled title="Make a PDF of this document as it would print, and save it to Downloads">PDF</button>
+  <button id="btn-save" class="primary" disabled title="Overwrite this workbook (⌘S)">Save</button>
+</header>
+
+<!-- ⚠️ NO window.confirm / window.alert ANYWHERE ON THIS PAGE. A WKWebView whose host
+     does not implement the JS-panel delegates shows neither, and confirm() returns
+     FALSE without a pixel on screen — recorded in bridge/tests/test_office_ai.js as
+     the rule this lane learned the hard way. So every question and every failure is
+     THIS strip: a sentence plus, at most, one button that does the thing.
+     EMBEDDED, the strip is still used — it is the one place a 409 can be answered
+     without leaving the editor — and it renders INSIDE the centre column. -->
+<div id="note"><span id="note-text"></span><span id="note-acts"></span>
+  <button id="note-x" title="Dismiss">✕</button></div>
+
+<div id="stage">
+  <div id="editor"></div>
+  <!-- The AI progress chip. Empty and hidden until a ribbon AI action is actually
+       streaming; see "TRAP SIX" in the script below for why it exists at all. -->
+  <div id="aichip"><span class="dot"></span><span class="txt"><span id="aichip-t"></span
+    ><span id="aichip-n"></span></span><button id="aichip-stop"
+    title="Stop this AI action — nothing will be written into the document">Stop</button></div>
+  <div id="boot">
+    <h1 id="boot-title">Opening the editor…</h1>
+    <div id="bar"><i></i></div>
+    <p id="boot-msg">The first open compiles a 57 MB WebAssembly converter and a
+      large editor bundle. Later opens are cached.</p>
+    <div class="steps" id="boot-steps"></div>
+    <button id="boot-back" style="display:none">‹ Back to LOffice</button>
+  </div>
+</div>
+
+<footer>
+  <!-- ⚖️ AGPL-3.0 attribution, condition #3 of the 2026-08-27 ruling. Rendered from
+       bridge/oo.py's ATTRIBUTION so this and the LOffice About sheet cannot drift.
+       HIDDEN in the embed — and that is not a licence corner cut: the LOffice page
+       around it renders the SAME ATTRIBUTION in Help → About, from the same route,
+       and test_oo_lane.py pins both. -->
+  <span class="agpl" id="attrib">Editing by ONLYOFFICE · AGPL-3.0</span>
+  <span id="attrib-src"></span>
+</footer>
+
+<script>
+'use strict';
+// ── the constants that are actually decisions ────────────────────────────────
+const OO_BASE  = '/oo/dist/v9';
+const X2T_BASE = '/oo/dist/x2t';
+const API_JS   = OO_BASE + '/web-apps/apps/api/documents/api.js';
+
+// x2t infers the INPUT format from the file extension and writes its output to
+// `<input> + "." + <format>` — CryptPad's convention, kept because it is the one the
+// converter is exercised with every day. `m_bIsNoBase64` false is likewise
+// CryptPad's: the Editor.bin the editor expects is the `XLSY;v2;len;base64` text
+// form, and the same flag on the way back still yields a real binary .xlsx.
+const DOC_TYPES = {xlsx: 'cell', xlsm: 'cell', csv: 'cell',
+                   docx: 'word', pptx: 'slide'};
+
+const el = (id) => document.getElementById(id);
+const qs = new URLSearchParams(location.search);
+const DOC0 = (qs.get('doc') || '').trim();
+const EMBED = qs.get('embed') === '1';
+
+// ── THE HOST, i.e. the other half of the contract at the top of this file ─────
+// Resolved ONCE, in a try/catch, and never assumed: a standalone page has no parent
+// and an embed whose parent somehow has no LOfficeHost must still work as a page.
+const HOST = (function () {
+  try {
+    if (window.parent && window.parent !== window && window.parent.LOfficeHost) {
+      return window.parent.LOfficeHost;
+    }
+  } catch (e) { /* cross-origin parent: impossible here, but never throw for it */ }
+  return null;
+})();
+
+// Every report to the parent goes through here, so a host that throws (or a parent
+// that navigated away mid-flight) can never take the editor down with it.
+function tell(kind, data) {
+  if (!HOST || typeof HOST.event !== 'function') return;
+  const ev = {kind: kind, doc: DOC};
+  if (data) for (const k in data) ev[k] = data[k];
+  try { HOST.event(ev); } catch (e) { console.log('[oo host] ' + e); }
+}
+
+let steps = [];
+let DOC = DOC0;              // the workbook the editor currently holds
+let openedMtime = null;      // the mtime the editor opened — the write-back fence
+let editor = null;           // the DocsAPI.DocEditor (the CryptPad wrapper instance)
+let x2t = null;              // window.Module, once the wasm runtime is up
+let apiLoaded = false;       // api.js has executed (once per page, like x2t)
+let saving = false;
+let ready = false;
+let dirtyNow = false;
+let editorTag = '';
+let openSeq = 0;             // guards a swap that a later swap superseded
+let cancelOpening = null;   // settles a superseded frame's pending ready promise
+// ⚠️ TWO COUNTERS FOR ONE FINDING (L1), AND THEY EXIST TO BE MEASURED. `extSaves` is how
+// many times the EDITOR'S own Save control was routed into our write-back; `heldClears` is
+// how many times a `dirty:false` that no write-back produced was REFUSED. A probe can read
+// both off `probe()` and prove the fix rather than infer it — which is exactly what the
+// hunt could not do before.
+let extSaves = 0;
+let heldClears = 0;
+
+if (EMBED) document.body.classList.add('embed');
+
+function step(msg, pct) {
+  steps.push(msg);
+  if (steps.length > 9) steps = steps.slice(-9);
+  el('boot-steps').textContent = steps.join('\n');
+  if (typeof pct === 'number') el('bar').firstElementChild.style.width = pct + '%';
+  tell('boot', {step: msg, pct: (typeof pct === 'number' ? pct : null)});
+}
+function state(msg) { el('state').textContent = msg || ''; }
+
+// The ONLY question-and-answer primitive on this page. `acts` is a list of
+// {label, run}; the strip is dismissible and replaces itself, so two failures in a
+// row cannot stack into a wall of text.
+function note(text, kind, acts) {
+  const box = el('note');
+  el('note-text').textContent = text || '';
+  const holder = el('note-acts');
+  holder.innerHTML = '';
+  (acts || []).forEach((a) => {
+    const btn = document.createElement('button');
+    btn.textContent = a.label;
+    if (a.primary) btn.className = 'primary';
+    btn.addEventListener('click', () => { noteClear(); a.run(); });
+    holder.appendChild(btn);
+  });
+  box.className = 'on' + (kind ? ' ' + kind : '');
+}
+function noteClear() { el('note').className = ''; el('note-acts').innerHTML = ''; }
+
+// A FATAL failure. The overlay stays up saying why — and the parent is told, so the
+// LOffice page can put its own working grid back rather than leaving a dead frame in
+// the middle of the layout.
+function fail(title, msg, showBack) {
+  el('boot').classList.remove('gone');
+  el('boot').classList.add('bad');
+  el('boot-title').textContent = title;
+  el('boot-msg').innerHTML = msg;
+  el('bar').style.display = 'none';
+  if (showBack !== false && !EMBED) el('boot-back').style.display = '';
+  ready = false;
+  tell('error', {text: title + ' — ' + String(msg).replace(/<[^>]*>/g, ''),
+                 fatal: true});
+}
+function goBack() { location.href = '/office'; }
+el('btn-back').addEventListener('click', goBack);
+el('boot-back').addEventListener('click', goBack);
+el('note-x').addEventListener('click', noteClear);
+
+// ── x2t ──────────────────────────────────────────────────────────────────────
+// The wasm build's own pre-js sets `Module.noInitialRun`, `Module.noExitRuntime`
+// and, crucially, `Module.locateFile` — derived from `document.currentScript`'s
+// `src` ATTRIBUTE via `new URL(...)`. A relative src therefore throws
+// "cannot be parsed as a URL" before anything loads (measured, twice). The src MUST
+// be absolute, and we must NOT set locateFile ourselves: pre-js overwrites it.
+//
+// ⚠️ IDEMPOTENT, AND THAT IS WHAT MAKES THE DOCUMENT SWAP FAST. The 57 MB compile is
+// the expensive half of a cold open; a swap must not pay it again, so a second call
+// returns the module that is already up.
+function loadX2T() {
+  if (x2t) return Promise.resolve(x2t);
+  return new Promise((resolve, reject) => {
+    window.Module = {
+      noInitialRun: true,
+      print: (t) => console.log('[x2t] ' + t),
+      printErr: (t) => console.log('[x2t err] ' + t),
+      onAbort: (t) => reject(new Error('x2t aborted: ' + t)),
+      onRuntimeInitialized: function () {
+        const M = window.Module;
+        try {
+          ['/working', '/working/media', '/working/fonts', '/working/themes']
+            .forEach((d) => { try { M.FS.mkdir(d); } catch (e) { /* exists */ } });
+        } catch (e) { return reject(e); }
+        x2t = M;
+        resolve(M);
+      }
+    };
+    const s = document.createElement('script');
+    s.src = location.origin + X2T_BASE + '/x2t.js';
+    s.onerror = () => reject(new Error('could not load ' + X2T_BASE + '/x2t.js'));
+    document.body.appendChild(s);
+  });
+}
+
+// Synchronous, on the main thread, exactly as CryptPad runs it. It is fast enough
+// that a worker would buy latency and cost us a postMessage copy of the document:
+// 20ms for a real workbook, measured.
+function x2tConvert(data, inName, outFormat) {
+  const M = x2t;
+  if (!M) throw new Error('the converter is not loaded');
+  const inPath = '/working/' + inName;
+  const outPath = inPath + '.' + outFormat;
+  try {
+  try { M.FS.unlink(outPath); } catch (e) { /* first run */ }
+  M.FS.writeFile(inPath, data);
+  M.FS.writeFile('/working/params.xml',
+    '<?xml version="1.0" encoding="utf-8"?>'
+    + '<TaskQueueDataConvert xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+    + ' xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
+    + '<m_sFileFrom>' + inPath + '</m_sFileFrom>'
+    + '<m_sThemeDir>/working/themes</m_sThemeDir>'
+    + '<m_sFileTo>' + outPath + '</m_sFileTo>'
+    + '<m_bIsNoBase64>false</m_bIsNoBase64>'
+    + '</TaskQueueDataConvert>');
+  const rc = M.ccall('main1', 'number', ['string'], ['/working/params.xml']);
+  if (rc !== 0) throw new Error('x2t returned ' + rc + ' converting to ' + outFormat);
+  const out = M.FS.readFile(outPath);
+  return out;
+  } finally {
+    // Failed conversions retain large inputs too unless both exits clean them.
+    for (const path of [inPath, outPath]) {
+      try { M.FS.unlink(path); } catch (e) { /* absent */ }
+    }
+  }
+}
+
+// ══ DOWNLOAD AS PDF ═══════════════════════════════════════════════════════════
+//
+// This replaces Print, which the serverless bundle cannot do (its Print expects a
+// document server), and it is the ONE route to a PDF that this build actually has.
+// Everything below is measured; the three findings are each a silent failure.
+//
+// ⚠️ FINDING 1 — THE DOCUMENT MODEL CANNOT BE CONVERTED TO PDF IN THIS BUILD.
+// x2t's `m_nFormatFrom` values come from `Asc.c_oAscFileType` (read live out of the
+// vendored sdkjs, not guessed): XLSY=4098, PDF=513. `4098 → 513` returns rc 80 —
+// refused. That is not a bug: in ONLYOFFICE's own server the bin→PDF step runs sdkjs
+// itself inside x2t's embedded JS engine (hence its `m_sScriptsCacheDirectory` /
+// `m_sAllFontsPath` parameters), and a wasm build has no such engine. Plain
+// `<extension>.pdf` with no format code is refused the same way.
+//
+// ⚠️ FINDING 2 — THE ROUTE THAT WORKS IS THE EDITOR'S OWN PRINT METAFILE.
+// `asc_nativeGetPDF(options)` returns sdkjs's print command buffer for the LIVE
+// document. x2t converts THAT with
+// `m_nFormatFrom = Asc.c_oAscFileType.CANVAS_SPREADSHEET (8194)` — CANVAS_WORD 8193
+// and CANVAS_PRESENTATION 8195 for the other two — and `m_nFormatTo = 513`. Its
+// wasm carries the matching writer: `NSOnlineOfficeBinToPdf::ConvertBufferToPdf` and
+// `CPdfFile::OnlineWordToPdf`. Result on a real workbook: A4 page, real text
+// operators, two SUBSETTED EMBEDDED TrueType faces, 33 KB, 13 ms.
+//
+// ⚠️ FINDING 3 — TWO PRECONDITIONS THAT FAIL SILENTLY IF YOU GET THEM WRONG.
+//   (a) `m_bIsNoBase64` MUST BE **true** here. The print buffer is raw binary, while
+//       every other conversion on this page passes CryptPad's base64 text form. With
+//       `false` x2t base64-DECODES the raw bytes, finds no pages, and still returns
+//       rc 0 — handing back a structurally valid PDF with `/Count 0`. A perfectly
+//       well-formed EMPTY document is exactly the lie this lane must not ship, which
+//       is why `pdfPageCount` below re-reads the output and refuses a zero.
+//   (b) THE FONTS MUST BE IN x2t's FILESYSTEM FIRST. With an empty /working/fonts the
+//       conversion does not fail politely: it aborts the wasm module with "Out of
+//       bounds memory access", and every later conversion in that page — INCLUDING
+//       SAVE — dies with it. So `mountFonts` runs first, its count is checked, and a
+//       failure means we do not attempt the conversion at all.
+//
+// ⚠️ FINDING 4 — THE THREE EDITORS DISAGREE ABOUT HOW TO ASK, AND ONLY ONE CALL WORKS
+// FOR ALL THREE. `asc_nativePrint(undefined, undefined, undefined)` builds the buffer
+// itself in the SPREADSHEET api and returns it — but the word and slide apis treat that
+// argument shape as "the desktop host is driving" and return nothing at all (measured:
+// "the editor produced no print layout for this document" on a .docx that was open and
+// ready). The call that is implemented in all three is `asc_nativeGetPDF(options)`,
+// which loops the pages into a renderer and hands back its whole buffer.
+// Its one catch: it reports the VALID LENGTH by calling `window.native.Save_End(...)` —
+// a desktop host hook — and returns the UNSLICED buffer (5 MB of mostly zeros). So we
+// install a `window.native.Save_End` in the editor frame that captures that length.
+// That is the same kind of thing this page already does with `window.APP`: providing the
+// host object sdkjs documents itself as calling, not patching sdkjs.
+//
+// ⚠️ FINDING 5 — AND IT IS THE ONE THAT SAYS THE EXPORT IS HONEST. A PRESENTATION edited
+// through sdkjs's BUILDER api (`slide.AddObject`, `presentation.AddSlide`) exports a PDF
+// with the right number of pages and NO CONTENT — repeatably, and it never recovers
+// within the page. Chased to the end, because "the PDF is empty" is exactly the class of
+// lie this lane exists to prevent, and the answer is that it is not a lie:
+//   · the added shape is not in the PDF, AND IT IS NOT ON SCREEN EITHER — the slide
+//     canvas and the slide thumbnail are both blank (screenshot taken to check);
+//   · `asc_nativeCalculate()` does not help; `WordControl.m_oLogicDocument.Recalculate()`
+//     makes the shape appear on screen AND in the PDF (1897 → 15449 bytes).
+// So the builder api adds to the model without laying it out, and the export renders
+// what is laid out — i.e. exactly what the user sees, which is the promise. Nothing in
+// LOffice edits a PRESENTATION through the builder api (the AI panel's applyOps writes
+// CELLS, and a spreadsheet's live edit does reach the PDF — proven with a never-saved
+// marker). A UI edit cannot hit this: the user seeing the text IS the recalculation.
+// The internal `Recalculate()` is deliberately NOT called from here — reaching into a
+// non-public sdkjs member to paper over a path the product does not use would be the
+// wrong trade.
+const PDF_CANVAS_FORMAT = {cell: 8194, word: 8193, slide: 8195};
+const PDF_FORMAT = 513;                    // Asc.c_oAscFileType.PDF
+let fontsMounted = 0;                      // how many faces are in x2t's FS
+let x2tDead = false;                        // the wasm aborted; nothing may use it again
+
+// The font list comes from the bridge (/api/oo/fonts reads the vendored directory), so
+// a bundle bump that adds a face cannot leave this quietly short. Idempotent: a second
+// export pays nothing.
+async function mountFonts() {
+  if (fontsMounted > 0) return fontsMounted;
+  const M = x2t;
+  if (!M) throw new Error('the converter is not loaded');
+  let list;
+  try {
+    list = await (await fetch('/api/oo/fonts', {cache: 'no-store'})).json();
+  } catch (e) {
+    throw new Error('could not ask the bridge for the editor fonts (' + e + ')');
+  }
+  const names = (list && list.files) || [];
+  if (!names.length) throw new Error('the editor bundle has no fonts to render with');
+  try { M.FS.mkdir('/working/fonts'); } catch (e) { /* exists */ }
+  const base = (list.base || '/oo/dist/v9/fonts/fonts') + '/';
+  // Fetched in parallel (they are same-origin, immutable-cached assets) and written
+  // sequentially, because the wasm FS is not concurrent.
+  const got = await Promise.all(names.map((n) =>
+    fetch(base + encodeURIComponent(n))
+      .then((r) => (r.ok ? r.arrayBuffer().then((a) => [n, new Uint8Array(a)]) : null))
+      .catch(() => null)));
+  let n = 0;
+  got.forEach((p) => { if (p) { M.FS.writeFile('/working/fonts/' + p[0], p[1]); n++; } });
+  // ALL OR NOTHING. A partial font set is the case that renders the wrong glyphs
+  // without saying so — and a missing font is a fetch we can retry, not a defect to
+  // work around.
+  if (n !== names.length) {
+    throw new Error('only ' + n + ' of ' + names.length + ' editor fonts loaded — '
+                    + 'not converting with an incomplete font set');
+  }
+  fontsMounted = n;
+  return n;
+}
+
+// The page count, read back out of the produced PDF. This exists because the failure
+// mode above is a VALID pdf with no pages: `%PDF` alone is not proof of anything.
+//
+// ⚠️ SCANNED OVER THE WHOLE FILE, ON THE BYTES, AND BOTH OF THOSE ARE FIXES FOR A BUG
+// THIS FUNCTION ALREADY HAD. The first version decoded only the last 4 KB, on the
+// reasoning that the page tree sits near the trailer. It does in x2t's EMPTY output
+// (1.4 KB) and it does NOT in its real output (33 KB) — so the check refused a perfectly
+// good PDF, and refused it with the message meant for the empty one. Measured live.
+// The `/Count` values of nested page-tree nodes are partial, so the MAXIMUM is the total.
+function pdfPageCount(bytes) {
+  if (!bytes || bytes.length < 8) return -1;
+  if (bytes[0] !== 0x25 || bytes[1] !== 0x50 || bytes[2] !== 0x44 || bytes[3] !== 0x46) {
+    return -1;                                                   // not "%PDF"
+  }
+  const NEEDLE = [0x2F, 0x43, 0x6F, 0x75, 0x6E, 0x74];           // "/Count"
+  let best = 0;
+  for (let i = 0, end = bytes.length - NEEDLE.length; i <= end; i++) {
+    if (bytes[i] !== 0x2F) continue;
+    let hit = true;
+    for (let k = 1; k < NEEDLE.length; k++) {
+      if (bytes[i + k] !== NEEDLE[k]) { hit = false; break; }
+    }
+    if (!hit) continue;
+    let j = i + NEEDLE.length;
+    while (j < bytes.length && (bytes[j] === 0x20 || bytes[j] === 0x0A
+                                || bytes[j] === 0x0D || bytes[j] === 0x09)) j++;
+    let num = 0, digits = 0;
+    while (j < bytes.length && bytes[j] >= 0x30 && bytes[j] <= 0x39) {
+      num = num * 10 + (bytes[j] - 0x30); j++; digits++;
+      if (digits > 7) break;                                     // not a page count
+    }
+    if (digits > 0 && num > best) best = num;
+  }
+  return best;
+}
+
+// Returns {ok:true, bytes, pages, ms} or {ok:false, error}. NEVER throws: the parent
+// turns whatever comes back into one sentence in the strip.
+async function exportPdf() {
+  if (x2tDead) {
+    return {ok: false, error: 'the converter stopped working earlier in this window — '
+                              + 'reopen this document before exporting or saving'};
+  }
+  if (!ready) return {ok: false, error: 'the editor is not ready yet'};
+  const api = innerEditor();
+  if (!api || typeof api.asc_nativeGetPDF !== 'function') {
+    return {ok: false, error: 'this editor build cannot produce a print layout'};
+  }
+  const t0 = (window.performance && performance.now()) || Date.now();
+  const generation = openSeq, name = DOC;
+  try {
+    await mountFonts();
+  } catch (e) {
+    return {ok: false, error: String(e.message || e)};
+  }
+  if (!ready || generation !== openSeq || name !== DOC || api !== innerEditor()) {
+    return {ok: false, error: 'the document changed while its PDF was being prepared'};
+  }
+  const ext = (name.split('.').pop() || 'xlsx').toLowerCase();
+  const from = PDF_CANVAS_FORMAT[DOC_TYPES[ext] || 'cell'];
+  if (!from) return {ok: false, error: 'there is no print layout for a .' + ext};
+  const M = x2t;
+  const inPath = '/working/print.bin';
+  const outPath = '/working/print.pdf';
+  let out;
+  try {
+    // The LIVE document, not the saved file — see the note on the parent's menu item.
+    // `Save_End` is the length report; see finding 4. Installed fresh each time so a
+    // stale length from a previous export can never be reused.
+    let printedLen = 0;
+    const frame = window.frames[0];
+    frame.native = frame.native || {};
+    frame.native.Save_End = function (_name, len) { printedLen = Number(len) || 0; };
+    const data = api.asc_nativeGetPDF({});
+    if (!data || !data.length || !printedLen) {
+      return {ok: false, error: 'the editor produced no print layout for this document'};
+    }
+    const buf = data.slice(0, Math.min(printedLen, data.length));
+    try { M.FS.unlink(outPath); } catch (e) { /* first run */ }
+    M.FS.writeFile(inPath, buf);
+    M.FS.writeFile('/working/params.xml',
+      '<?xml version="1.0" encoding="utf-8"?>'
+      + '<TaskQueueDataConvert xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+      + ' xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
+      + '<m_sFileFrom>' + inPath + '</m_sFileFrom>'
+      + '<m_sThemeDir>/working/themes</m_sThemeDir>'
+      + '<m_sFontDir>/working/fonts</m_sFontDir>'
+      + '<m_sFileTo>' + outPath + '</m_sFileTo>'
+      + '<m_nFormatFrom>' + from + '</m_nFormatFrom>'
+      + '<m_nFormatTo>' + PDF_FORMAT + '</m_nFormatTo>'
+      // ⚠️ true, and finding 3(a) above is the whole reason.
+      + '<m_bIsNoBase64>true</m_bIsNoBase64>'
+      + '</TaskQueueDataConvert>');
+    let rc;
+    try {
+      rc = M.ccall('main1', 'number', ['string'], ['/working/params.xml']);
+    } catch (e) {
+      // An abort takes the module with it. Say so once, loudly, and stop trusting it —
+      // a save attempted after this point would fail, and it must not fail silently.
+      x2tDead = true;
+      tell('error', {text: 'the converter stopped working: ' + (e.message || e),
+                     fatal: false});
+      return {ok: false, error: 'the converter stopped working (' + (e.message || e)
+                                + '). Reopen this document before saving.'};
+    }
+    if (rc !== 0) return {ok: false, error: 'the converter refused this document (x2t '
+                                            + rc + ')'};
+    out = M.FS.readFile(outPath);
+    try { M.FS.unlink(inPath); M.FS.unlink(outPath); } catch (e) { /* fine */ }
+  } catch (e) {
+    return {ok: false, error: String(e.message || e)};
+  } finally {
+    for (const path of [inPath, outPath]) {
+      try { M.FS.unlink(path); } catch (e) { /* absent */ }
+    }
+  }
+  const pages = pdfPageCount(out);
+  if (pages <= 0) {
+    return {ok: false, error: pages < 0
+      ? 'what came back is not a PDF'
+      : 'the converter produced a PDF with no pages — nothing was downloaded'};
+  }
+  const ms = Math.round(((window.performance && performance.now()) || Date.now()) - t0);
+  return {ok: true, bytes: out, pages: pages, ms: ms,
+          name: DOC.replace(/\.[^.]+$/, '') + '.pdf'};
+}
+
+// ⚠️ THE DOWNLOAD MECHANISM, AND IT IS THE ONE THE SHELL DOCUMENTS AS WORKING.
+// A WKWebView saves nothing by itself. MOT Deck shell answers two delegates
+// (app/main.swift, "download routing"):
+//   · `decidePolicyFor navigationResponse` → .download when it CANNOT show the MIME.
+//     That is what makes the existing "Download .xlsx" work — a navigation to
+//     /api/office/download/<name>. It would NOT work for a PDF: WebKit CAN show
+//     application/pdf, so that navigation would REPLACE the editor with a PDF viewer.
+//   · `decidePolicyFor navigationAction` → .download when `shouldPerformDownload` is
+//     set, which WebKit sets for an `<a download>` click "including the blob: URLs a
+//     SPA builds client-side". So that is the route: a blob of our own bytes and a
+//     synthetic anchor click. The shell then saves into ~/Downloads with never-clobber
+//     " (n)" suffixing and reveals the file in Finder — no bridge round trip, no temp
+//     file on disk, and nothing to clean up if the user cancels.
+// Proven in a real WKWebView with a download delegate wired into the probe motdeck.
+function saveBlob(bytes, filename) {
+  const url = URL.createObjectURL(new Blob([bytes], {type: 'application/pdf'}));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  // The revoke is deferred: revoking synchronously after click has raced the download
+  // start in WebKit before. 60s is far longer than a same-process blob read needs.
+  setTimeout(() => {
+    try { URL.revokeObjectURL(url); } catch (e) { /* fine */ }
+    try { a.remove(); } catch (e) { /* fine */ }
+  }, 60000);
+}
+
+// ONE implementation for both surfaces: LOffice's menu calls this through the contract,
+// and the standalone page's own PDF button calls it directly. Returns the result so the
+// caller can put the reason on screen rather than guessing.
+let pdfBusy = false;
+async function downloadPdf() {
+  if (pdfBusy) return {ok: false, error: 'a PDF is already being made'};
+  pdfBusy = true;
+  const btn = el('btn-pdf');
+  if (btn) btn.disabled = true;
+  state('making a PDF…');
+  let r;
+  try {
+    r = await exportPdf();
+  } finally {
+    pdfBusy = false;
+    if (btn) btn.disabled = !ready;
+  }
+  if (r.ok) {
+    saveBlob(r.bytes, r.name);
+    state(r.pages + (r.pages === 1 ? ' page' : ' pages') + ' → Downloads');
+    tell('pdf', {ok: true, name: r.name, pages: r.pages, bytes: r.bytes.length,
+                 ms: r.ms});
+  } else {
+    state('no PDF');
+    note('Could not make a PDF: ' + r.error, 'bad');
+    tell('pdf', {ok: false, error: r.error});
+  }
+  // The bytes are deliberately NOT handed back to the caller: they are megabytes, the
+  // download has already been started, and a second copy of them in the parent frame
+  // would only be a second thing that can leak.
+  return {ok: r.ok, error: r.error, pages: r.pages, name: r.name, ms: r.ms};
+}
+
+// ── the mock server ──────────────────────────────────────────────────────────
+// `api.js`'s own `handleAuth` answers the `auth` message and hands the editor the
+// Editor.bin URL; everything below is the single-user remainder. `saveChanges` is
+// ACKed and NOT rebroadcast — rebroadcasting to the only participant is how you
+// make an editor apply its own edits twice.
+function mockServer() {
+  return {
+    getParticipants: () => ({
+      index: 1,
+      // Two entries, one of them a fake, because that is what CryptPad ships and
+      // some sdkjs paths behave oddly for a genuinely lone participant.
+      list: [
+        {id: 'motdeck', idOriginal: 'motdeck', username: 'You', indexUser: 1,
+         connectionId: 'motdeck-1', isCloseCoAuthoring: false, view: false},
+        {id: 'history', idOriginal: 'history', username: 'History', indexUser: 1,
+         connectionId: 'motdeck-h', isCloseCoAuthoring: true, view: true}
+      ]
+    }),
+    getInitialChanges: () => [],
+    onMessage: (m) => {
+      const t = m && m.type;
+      if (t === 'auth') return;                      // api.js already answered it
+      if (!editor) return;                           // a swap tore the instance down
+      if (t === 'isSaveLock') {
+        editor.sendMessageToOO({type: 'saveLock', saveLock: false});
+      } else if (t === 'getLock') {
+        editor.sendMessageToOO({type: 'getLock', locks: [
+          {time: Date.now(), user: 'motdeck', block: m.block && m.block[0]}]});
+      } else if (t === 'getMessages') {
+        editor.sendMessageToOO({type: 'message'});
+      } else if (t === 'saveChanges') {
+        // The ACK the editor is waiting for. Withholding it would hang its save.
+        editor.sendMessageToOO({type: 'unSaveLock', index: 0, time: Date.now()});
+        /* ⚠️⚠️ AND THIS IS WHERE THE EDITOR'S OWN SAVE BECOMES A REAL SAVE — THE FIX FOR
+           THE WORST BEHAVIOUR ON THE WHOLE SURFACE (live finding L1, measured end to end).
+
+           WHAT USED TO HAPPEN. The vendored bundle's header carries its own floppy-disk
+           Save (and ⌘S inside the grid reaches the same handler). Pressing it ran sdkjs's
+           DocumentServer save, which arrives HERE as `saveChanges`; we ACKed it and did
+           nothing else, so sdkjs considered the document saved and fired
+           onDocumentStateChange(FALSE) → we forwarded {kind:'state', dirty:false} → the
+           parent cleared THE dirty flag that guards every discard path, the heartbeat and
+           the "as last saved" note. The strip flipped to "all changes saved", the dot went
+           out, and THE FILE ON DISK WAS NOT TOUCHED (mtime identical before and after).
+           Clicking another workbook then found dirty === false, so confirmDiscard()
+           returned true immediately — no warning, no two-step, no "Save & open" — and the
+           work was gone. Silent data loss, two clicks apart.
+
+           THE FIX HAS TWO HALVES AND BOTH ARE NEEDED, because either alone still lies:
+             1. HERE: the editor's save gesture is ROUTED INTO ours, so the only Save
+                control in this window that appears to write the file actually does —
+                asc_nativeGetFile → x2t → /api/office/writeback, with the mtime fence and
+                the daily .bak. This is the half that keeps the work.
+             2. IN onDocumentStateChange: a dirty:false that no write-back produced must
+                never clear the parent's flag. That is the half that keeps us honest if
+                this route is ever unreachable — a save that did not happen must not read
+                as one, whatever sdkjs believes.
+
+           Deferred by one tick so the ACK is on the wire before the serialiser runs, and
+           gated on `saving` so our OWN save (which does not come through here) can never
+           re-enter. */
+        if (!saving && ready) {
+          extSaves++;
+          setTimeout(() => { if (!saving) save(false); }, 0);
+        }
+      } else if (t === 'unLockDocument') {
+        if (m.releaseLocks) editor.sendMessageToOO({type: 'releaseLock', locks: []});
+        if (m.isSave) editor.sendMessageToOO({type: 'unSaveLock', time: -1, index: -1});
+      }
+      // Anything else is a message a single user does not need answered. Silence is
+      // the correct reply; guessing would be worse.
+    }
+  };
+}
+
+// The editor api instance inside the iframe. The word editor sets `window.editor`,
+// the spreadsheet sets `window.editorCell` (`if (window.editor == undefined)
+// window.editorCell = this`), so both are checked — CryptPad's own accessor.
+function innerEditor() {
+  try {
+    const w = window.frames && window.frames[0];
+    return w && (w.editor || w.editorCell) || null;
+  } catch (e) { return null; }
+}
+
+/* ══ THE FRESH-OPEN PHANTOM DIRTY — roadmap §9.2, ROOT-CAUSED ═════════════════════
+   sample'S REPORT: an untouched, just-opened .xlsx paints the unsaved marker. TRUE, and
+   reproduced on the first try in a real WKWebView: `ready` at 433 ms, then
+   `state {dirty:true}` at 735 ms with nothing but the page open.
+
+   ⚠️ IT WAS NOT A PHANTOM FLAG, WHICH IS WHY SUPPRESSING THE EVENT WOULD HAVE BEEN A
+   LIE. At the moment of that event the editor really was modified, by its own rules:
+     asc_isDocumentModified() false → TRUE, History.Points 0 → 1, Index -1 → 0,
+     asc_getCanUndo() false → TRUE
+   — a REAL, undoable history point, 160 ms after the document became ready. Its two
+   items name the culprit exactly:
+     [0] g_oUndoRedoCell     Type 0  (historyitem_Unknown, the point's own marker)
+     [1] g_oUndoRedoWorkbook Type 20 (historyitem_Workbook_SetCustomFunctions)
+   and the vendored bundle says who does that and why it counts as a change:
+
+     Api.prototype["pluginMethod_SetCustomFunctions"] = function (jsonString) {
+       if (AscCommon.History.Is_On()) {
+         AscCommon.History.Create_NewPoint();
+         AscCommon.History.Add(g_oUndoRedoWorkbook,
+                               AscCH.historyitem_Workbook_SetCustomFunctions, …);
+       }
+       … setLocalStorageItem(customFunctionsStorageId, obj) …
+
+   So: ONLYOFFICE'S OWN AI PLUGIN, autostarted by us, registers its custom functions at
+   startup; sdkjs records that registration in the DOCUMENT'S undo history even though the
+   functions are stored in localStorage and not one byte of the workbook changes.
+   PROVED by removal, not by reading: with `aiPluginsConfig()` forced to null for one
+   probe run, the same cold open reported dirty:false and painted no marker.
+
+   THE FIX, AND WHY IT IS THIS ONE. The document is genuinely unmodified, so the honest
+   repair is to tell sdkjs so with its OWN primitive for exactly that statement —
+   `History.Reset_SavedIndex()`, which is what its save path calls to mean "the state on
+   screen is the saved state" (SavedIndex := Index, and Have_Changes() is
+   `Index != SavedIndex || ForceSave`, so it goes false). Then `CheckChangedDocument()`
+   re-syncs the editor's own save indicator. Measured after the pair: modified TRUE →
+   FALSE, and a real edit afterwards fires dirty:true again exactly as before.
+
+   ⚠️ IT CANNOT WEAKEN THE L1 SAVE-TRUTH FIX, AND THAT IS STRUCTURAL, not a promise:
+     · L1 refuses a dirty:FALSE that no write-back produced. This is a dirty:TRUE arm.
+       The two guards cannot both fire on one event, and L1's is left byte-identical.
+     · This one only ever runs when `!dirtyNow` — it can never clear unsaved work that
+       the page already knows about — and never while `saving`.
+     · historyIsPluginOnly() is FAIL-CLOSED: it returns true only when EVERY item in
+       EVERY history point is positively identified as the registration or as a point
+       marker. One unrecognised item, a missing global, a redo tail — anything at all —
+       and the answer is false, i.e. STAY DIRTY. Unsaved work is never something to be
+       optimistic about.
+   HONEST LIMIT, stated because it is still reachable: pressing ⌘Z on a freshly opened
+   workbook, before typing anything, undoes the PLUGIN'S registration (upstream's history
+   point is left in place — trimming another product's undo stack is not ours to do) and
+   the document goes dirty. It takes a deliberate user action, and the marker is then
+   telling the truth about the editor's state. */
+let pluginDirtyClears = 0;
+function innerAsc() {
+  try {
+    const w = window.frames && window.frames[0];
+    if (!w || !w.AscCommon || !w.AscCH || !w.AscCommonExcel) return null;
+    return {H: w.AscCommon.History, CH: w.AscCH,
+            WB: w.AscCommonExcel.g_oUndoRedoWorkbook};
+  } catch (e) { return null; }
+}
+// PURE-ISH AND TOTAL: any doubt → false → the document stays dirty.
+function historyIsPluginOnly() {
+  const a = innerAsc();
+  if (!a || !a.H || !a.WB) return false;
+  const H = a.H, CH = a.CH;
+  const REG = CH.historyitem_Workbook_SetCustomFunctions;
+  const MARK = CH.historyitem_Unknown;
+  if (typeof REG !== 'number' || typeof MARK !== 'number') return false;
+  if (!Array.isArray(H.Points)) return false;
+  // A redo tail means points beyond Index exist — someone has undone something, which is
+  // not the state this arm is about.
+  if (H.Index < 0 || H.Points.length !== H.Index + 1) return false;
+  let found = 0;
+  for (let i = 0; i <= H.Index; i++) {
+    const items = (H.Points[i] && H.Points[i].Items) || null;
+    if (!items || !items.length) return false;
+    for (let j = 0; j < items.length; j++) {
+      const it = items[j] || {};
+      if (it.Class === a.WB && it.Type === REG) { found++; continue; }
+      if (it.Type === MARK) continue;              // the point's own bookkeeping item
+      return false;                                // a real change: stay dirty
+    }
+  }
+  return found > 0;
+}
+// Returns TRUE only if sdkjs itself now agrees the document is unmodified.
+function clearPluginDirty() {
+  const a = innerAsc();
+  const api = innerEditor();
+  if (!a || !a.H || typeof a.H.Reset_SavedIndex !== 'function') return false;
+  try {
+    a.H.Reset_SavedIndex();
+    if (typeof a.H.Have_Changes === 'function' && a.H.Have_Changes()) return false;
+    if (api && typeof api.asc_isDocumentModified === 'function'
+        && api.asc_isDocumentModified()) return false;
+    if (api && typeof api.CheckChangedDocument === 'function') api.CheckChangedDocument();
+  } catch (e) { return false; }
+  pluginDirtyClears++;
+  return true;
+}
+
+// ── save ─────────────────────────────────────────────────────────────────────
+// Returns a RESULT rather than only painting one, because the parent's strip Save
+// needs to know what happened — and the two must never disagree about it.
+async function save(force) {
+  if (saving) return {ok: false, error: 'a save is already running'};
+  if (!ready) return {ok: false, error: 'the editor is not ready to save yet'};
+  const api = innerEditor();
+  if (!api || typeof api.asc_nativeGetFile !== 'function') {
+    state('the editor is not ready to save yet');
+    return {ok: false, error: 'the editor is not ready to save yet'};
+  }
+  // ⚠️ A DEAD CONVERTER MUST NOT LOOK LIKE A WORKING SAVE. An x2t abort (see the PDF
+  // block) takes the module out for the whole page, and the serialiser runs THROUGH it.
+  // Refusing here with the reason is the honest answer; letting it throw further down
+  // would report "not saved" without saying that a reopen is the fix.
+  if (x2tDead) {
+    state('not saved');
+    return {ok: false, error: 'the converter stopped working earlier in this window, so '
+                              + 'this document cannot be written. Your typing is still '
+                              + 'on screen — copy anything you cannot retype, then '
+                              + 'reopen this workbook.'};
+  }
+  const name = DOC;
+  const generation = openSeq;
+  saving = true;
+  el('btn-save').disabled = true;
+  state('saving…');
+  let out;
+  let submitted = false;
+  try {
+    // asc_nativeGetFile() is synchronous and returns the live document as the
+    // `XLSY;v2;len;base64` text form of Editor.bin.
+    const bin = api.asc_nativeGetFile();
+    if (!bin || !bin.length) throw new Error('the editor returned an empty document');
+    const ext = (name.split('.').pop() || 'xlsx').toLowerCase();
+    const bytes = x2tConvert(bin, 'save.bin', ext);
+    const url = '/api/office/writeback/' + encodeURIComponent(name)
+      + (openedMtime !== null ? '?mtime=' + encodeURIComponent(openedMtime) : '')
+      + (force ? (openedMtime !== null ? '&' : '?') + 'force=1' : '');
+    submitted = true;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/octet-stream'},
+      body: bytes
+    });
+    const j = await r.json().catch(() => ({}));
+    if (generation !== openSeq || name !== DOC || api !== innerEditor()) {
+      return {ok: !!(r.ok && j && j.ok), stale: true, name: name,
+              error: 'the editor changed while this save was finishing'};
+    }
+    if (r.status === 409) {
+      // THE MTIME FENCE FIRED. Nothing was written. The choice is the user's and it
+      // is offered as two buttons, because a page that cannot ask is a page that
+      // guesses — and both guesses lose somebody's work.
+      state('not saved');
+      saving = false;
+      el('btn-save').disabled = false;
+      note((j.error || 'That workbook changed on disk since this editor opened it.'),
+           'bad',
+           [{label: 'Overwrite it', primary: true, run: () => save(true)},
+            {label: 'Leave it alone', run: () => state('not saved — the file on disk '
+                                                      + 'is newer')}]);
+      out = {ok: false, status: 409, error: j.error || 'the file changed on disk'};
+      tell('error', {text: out.error, fatal: false});
+      return out;
+    }
+    if (!r.ok || !j.ok) throw new Error(j.error || ('the bridge said ' + r.status));
+    openedMtime = j.mtime;
+    // State-change events need not fire for every edit while already dirty.
+    // Compare the actual serialized document sent to disk with what is live now.
+    // If the second read fails, retain the unsaved flag conservatively.
+    let unchanged = false;
+    try { unchanged = api.asc_nativeGetFile() === bin; } catch (e) { /* stay dirty */ }
+    dirtyNow = !unchanged;
+    noteClear();
+    state('saved · ' + Math.round(j.bytes / 1024) + ' KB'
+          + (j.backup ? ' · safety copy ' + j.backup : '')
+          + (dirtyNow ? ' · newer edits are still unsaved' : ''));
+    out = {ok: true, bytes: j.bytes, backup: j.backup || '', mtime: j.mtime,
+           name: j.name, dirty: dirtyNow};
+    tell('saved', out);
+    tell('state', {dirty: dirtyNow});
+  } catch (e) {
+    if (generation !== openSeq || name !== DOC || api !== innerEditor()) {
+      return {ok: false, stale: true, uncertain: submitted, error: String(e.message || e)};
+    }
+    state('not saved');
+    const why = (e && e.message) ? e.message : String(e);
+    note('Could not save: ' + why
+         + (submitted ? ' — the save outcome is unknown; check the file before retrying.'
+                      : ' — the workbook on disk was not changed.'), 'bad',
+         [{label: 'Try again', run: () => save(false)}]);
+    out = {ok: false, error: why, uncertain: submitted};
+    tell('error', {text: 'could not save: ' + why, fatal: false});
+  } finally {
+    saving = false;
+    el('btn-save').disabled = !ready;
+  }
+  return out;
+}
+el('btn-save').addEventListener('click', () => save(false));
+el('btn-pdf').addEventListener('click', () => { downloadPdf(); });
+// ⌘S. The editor's own Save lives inside the iframe and would be handled there, so
+// this only catches the shortcut while our chrome has focus. The Save BUTTON — ours
+// standalone, the PARENT'S strip embedded — is the documented path; this is a
+// convenience, not the contract.
+window.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault();
+    save(false);
+  }
+});
+
+// ══ THE BUILDER API — the AI panel's Apply, run inside the editor ═════════════
+// The wire format is deliberately NOT the tier-1 op shape: the PARENT translates its
+// validated plan into A1-addressed verbs (bridge/panel/office.html::ooEditorOps,
+// which is pure and unit-tested there) and this executes them. Two reasons, and the
+// second is the one that matters: A1 is the address the editor's own API speaks, and
+// keeping the translation in the parent means the PREVIEW the user read and the ops
+// that run are produced by the same pure function.
+//
+// ⚠️ THE POINT OF DOING IT THIS WAY AT ALL: every write below lands in the EDITOR'S
+// OWN UNDO STACK, so ⌘Z inside the editor takes an AI apply back. That is what let
+// the page-side undo stack retire with the grid.
+const OO_UNDERLINE = 'single';
+function ooRange(ws, at) {
+  const rg = ws.GetRange(at);
+  if (!rg) throw new Error('the editor did not accept the range ' + at);
+  return rg;
+}
+// One style dict (tier-1 keys, which bridge/office.py also speaks) → builder calls.
+// Every key here is present on ApiRange in the vendored sdkjs/cell bundle; the
+// parent refuses to route a plan through this path if it holds a key that is not.
+function ooStyle(api, rg, set) {
+  if (!set) return;
+  if (Object.hasOwn(set, 'bl')) rg.SetBold(!!set.bl);
+  if (Object.hasOwn(set, 'it')) rg.SetItalic(!!set.it);
+  if (Object.hasOwn(set, 'ul')) rg.SetUnderline(set.ul ? OO_UNDERLINE : 'none');
+  if (Object.hasOwn(set, 'st')) rg.SetStrikeout(!!set.st);
+  if (set.ff) rg.SetFontName(set.ff);
+  if (set.fs) rg.SetFontSize(set.fs);
+  if (set.cl && set.cl.rgb) rg.SetFontColor(ooColour(api, set.cl.rgb));
+  if (set.bg && set.bg.rgb) rg.SetFillColor(ooColour(api, set.bg.rgb));
+  if (set.ht) rg.SetAlignHorizontal(['', 'left', 'center', 'right'][set.ht]);
+  if (set.vt) rg.SetAlignVertical(['', 'top', 'center', 'bottom'][set.vt]);
+  if (set.tb === 3) rg.SetWrap(true);
+  if (set.n && set.n.pattern) rg.SetNumberFormat(set.n.pattern);
+}
+function ooColour(api, hex) {
+  const h = String(hex || '').replace('#', '');
+  const n = parseInt(h, 16);
+  return api.CreateColorFromRGB((n >> 16) & 255, (n >> 8) & 255, n & 255);
+}
+
+/* ══ THE WRITES ARE PAINTED — roadmap §9.3, and it is the SUPPORTED pair ══════════
+   THE FINDING (v1.5.19, generalised at v1.5.25): a builder-API write reached the model,
+   the PDF and the disk and DID NOT APPEAR ON SCREEN. Measured again here before the fix,
+   in a real WKWebView on the live bundle: `GetRange('B7').SetValue('PAINTPROOF')` →
+   `GetRange('B7').GetValue()` returned 'PAINTPROOF' while the grid still drew the old
+   `-300`, and every formula that depended on B7 still drew its old result. The builder
+   api writes the workbook MODEL; the canvas draws from a cell cache nothing invalidated.
+
+   ⚠️ AND THE ANSWER IS NOT THE NON-PUBLIC `Recalculate()` THE PDF BLOCK REFUSED TO CALL.
+   The presentation finding was in the WORD/SLIDE api, where the only thing that worked was
+   `WordControl.m_oLogicDocument.Recalculate()` — an internal member. The SPREADSHEET api
+   publishes its own, on the `asc_` surface, and it does exactly what is needed
+   (read off the vendored bundle, v9.2.0.119+5):
+
+     spreadsheet_api.prototype.asc_Recalculate = function () {
+       History.EndTransaction();
+       ... trigger("showWorksheet", activeWs.getId());
+       for (i in lastPoint.UpdateRigions) trigger("cleanCellCache", i, [...], null, true);
+       this._onUpdateAfterApplyChanges();
+     };
+
+   It is the END of a pair. `canRunBuilderScript()` is the START — `asc_canPaste()` on the
+   spreadsheet api is `History.Create_NewPoint(); History.StartTransaction(); return true`
+   — so the two together are sdkjs's OWN "a script is about to write; a script has
+   finished writing" bracket, the one its macro runner uses. Two things follow, and both
+   were verified live rather than assumed:
+     · THE PAINT. B7 and D3 appeared on screen, and C7/B13/C13 — the formulas that
+       depend on them — recalculated on screen too.
+     · ONE ⌘Z FOR ONE APPLY. The transaction collapses the whole op plan into ONE history
+       point, so a single ⌘Z takes the entire apply back (measured: two SetValues, one
+       undo, both cells restored, and the screen repainted). Before this, a 12-cell apply
+       cost the user 12 undos.
+
+   THE FENCE IS AT RUNTIME, BECAUSE THE BUNDLE IS NOT IN THE REPO (data/ is a build
+   artifact): both halves are probed for by name, `probe().paint` reports what was found,
+   and an editor bump that removes either half does NOT silently stop painting — the apply
+   still runs, and it comes back carrying a NOTE that says the screen may be stale and
+   ⌘R is the fix. Nothing here reaches inside an object we were not handed. */
+const OO_PAINT_TAG = 'v9.2.0.119+5';        // the bundle this pair was measured against
+let paintMissing = '';                      // set once, reported by probe()
+function ooPaintPair(api) {
+  const canRun = !!(api && typeof api.canRunBuilderScript === 'function');
+  const canEnd = !!(api && typeof api.asc_Recalculate === 'function');
+  if (!canRun || !canEnd) {
+    paintMissing = 'this editor build does not publish '
+      + (!canRun ? 'canRunBuilderScript()' : '')
+      + (!canRun && !canEnd ? ' or ' : '')
+      + (!canEnd ? 'asc_Recalculate()' : '')
+      + ' (measured against bundle ' + OO_PAINT_TAG + ')';
+    return {painted: false, note: paintMissing, end: function () {}};
+  }
+  let started = false;
+  try { started = api.canRunBuilderScript() !== false; } catch (e) { started = false; }
+  // asc_Recalculate ENDS a transaction, so it may only be called if one was started.
+  return {painted: started, note: started ? '' :
+            'the editor refused to start a write transaction, so the cells may not be '
+            + 'drawn until you scroll or press ⌘R',
+          end: function () {
+            if (!started) return;
+            try { api.asc_Recalculate(); } catch (e) { /* the ops still landed */ }
+          }};
+}
+
+// SYNCHRONOUS and ALL-OR-NOTHING as far as the report goes: the first op that throws
+// stops the run and says which one it was. A partial apply is possible (the editor
+// has already taken the earlier ops) — and that is exactly why the answer names the
+// op number and tells the caller to use the editor's ⌘Z, rather than claiming a
+// rollback it cannot perform.
+function applyOps(list, sheetName) {
+  if (!ready) return {ok: false, error: 'the editor is not ready'};
+  const api = innerEditor();
+  if (!api || typeof api.GetActiveSheet !== 'function') {
+    return {ok: false, error: 'this editor build does not expose the builder API'};
+  }
+  if (!Array.isArray(list) || !list.length) {
+    return {ok: false, error: 'there were no operations to run'};
+  }
+  let ws;
+  try {
+    ws = sheetName ? (typeof api.GetSheet === 'function' && api.GetSheet(sheetName))
+                   : api.GetActiveSheet();
+  } catch (e) { ws = null; }
+  if (!ws) return {ok: false, error: 'the editor has no sheet to write into'};
+  const done = {cells: 0, styled: 0, sheets: [], renamed: '', inserted: 0, deleted: 0,
+                notes: [], painted: false};
+  // ⚠️ THE BRACKET (see ooPaintPair): opened here, closed in the `finally` below, so
+  // every exit from the loop — the good one, a refusal, a throw — closes the editor's
+  // transaction and repaints. A `return` that skipped the end() would leave the editor
+  // inside an open transaction, which is worse than the bug being fixed.
+  const paint = ooPaintPair(api);
+  let attemptedWrite = false;
+  done.painted = paint.painted;
+  if (paint.note) {
+    done.notes.push('The cells went in, but this editor build could not be asked to '
+                    + 'redraw them (' + paint.note + '). Press ⌘R to reload the editor '
+                    + 'if the sheet on screen looks stale.');
+  }
+  try {
+  for (let i = 0; i < list.length; i++) {
+    const o = list[i] || {};
+    try {
+      if (['set', 'style', 'addSheet', 'renameSheet', 'insertRows', 'insertCols',
+           'deleteRows', 'deleteCols'].includes(o.k)) attemptedWrite = true;
+      if (o.k === 'set') {
+        /* ⚠️ THE RANGE THE PARENT SENDS IS THE WHOLE RECTANGLE, AND IT HAS TO BE — see the
+           block in office.html::ooEditorOps for the measurement. ApiRange.SetValue writes
+           an array ACROSS ITS OWN RANGE, so a 1×1 range handed a 3×2 grid stores exactly
+           one cell and drops the rest in silence. `done.cells` is what the card's "N
+           written" comes from, so it is counted from what was SENT — which is only honest
+           because the range now matches the array. */
+        ooRange(ws, o.at).SetValue(o.values);
+        (o.values || []).forEach((row) => { done.cells += (row || []).length; });
+      } else if (o.k === 'style') {
+        ooStyle(api, ooRange(ws, o.at), o.set);
+        done.styled++;
+      } else if (o.k === 'addSheet') {
+        api.AddSheet(o.name);
+        done.sheets.push(o.name);
+        // A new sheet becomes the active one in the editor, and the rest of the plan
+        // was written for the sheet the user was LOOKING at. Point ws back at it.
+        try { ws = api.GetSheet(o.at || ws.GetName()) || ws; } catch (e) { /* keep */ }
+      } else if (o.k === 'renameSheet') {
+        const t = o.at ? api.GetSheet(o.at) : ws;
+        if (!t) throw new Error('the named sheet no longer exists');
+        t.SetName(o.name);
+        done.renamed = o.name;
+      } else if (o.k === 'insertRows') {
+        ws.GetRows(o.at).Insert('down');
+        done.inserted += o.n || 1;
+      } else if (o.k === 'insertCols') {
+        ws.GetCols(o.at).Insert('right');
+        done.inserted += o.n || 1;
+      } else if (o.k === 'deleteRows') {
+        ws.GetRows(o.at).Delete('up');
+        done.deleted += o.n || 1;
+      } else if (o.k === 'deleteCols') {
+        ws.GetCols(o.at).Delete('left');
+        done.deleted += o.n || 1;
+      } else {
+        return {ok: false, done: done,
+                error: 'operation ' + (i + 1) + ': the editor path does not implement '
+                     + JSON.stringify(String(o.k))};
+      }
+    } catch (e) {
+      return {ok: false, done: done,
+              error: 'operation ' + (i + 1) + ' (' + String(o.k) + ' at '
+                   + String(o.at) + ') was refused by the editor: '
+                   + ((e && e.message) || e)};
+    }
+  }
+  } finally {
+    paint.end();
+    // A builder call can write before a later call throws. It may emit no dirty
+    // event, so every exit after an attempted mutation must preserve unsaved work.
+    if (attemptedWrite) {
+      dirtyNow = true;
+      state('unsaved changes');
+      tell('state', {dirty: true});
+    }
+  }
+  // The editor raises onDocumentStateChange for its own edits; a builder-API write
+  // does not always, so the dirty flag is set here and reported the same way.
+  return {ok: true, done: done};
+}
+
+/* ══ READ BACK WHAT THE EDITOR COMPUTED ═══════════════════════════════════════
+   ⚠️ THE ONLY PLACE IN THIS SYSTEM WITH A FORMULA ENGINE, and that is the whole point of
+   this function. The bridge writes `=SUM(B2:B12)` as TEXT into the .xlsx and openpyxl
+   reads it back as text; nothing on our side can say what it EVALUATES to. The editor
+   can, because it just recalculated the document it loaded — so after an apply that wrote
+   formulas, the panel asks here and puts the answer on the receipt: "computed: B13=2500 ✓"
+   rather than "13 cells written" and a hope.
+
+   Verified present in the vendored sdkjs/cell bundle (`ApiRange.prototype.GetValue`,
+   `.GetText`, `.GetFormula`, `.GetNumberFormat`), grepped, not assumed.
+   TOTAL: one unreadable cell costs that cell's row, never the call — a receipt that
+   throws would turn a successful apply into an error, which is the incident's shape
+   inside out. */
+// Read the selection through the shipped builder API. No document mutation and
+// no vendor patch: these methods are exported by the pinned SDK.
+function selection() {
+  if (!ready || DOC_TYPES[String(DOC).split('.').pop().toLowerCase()] !== 'cell') return null;
+  try {
+    const api = innerEditor();
+    const ws = api && typeof api.GetActiveSheet === 'function' && api.GetActiveSheet();
+    if (!ws || typeof ws.GetName !== 'function') return null;
+    const range = typeof ws.GetSelection === 'function' && ws.GetSelection();
+    return {doc: DOC, sheet: String(ws.GetName()),
+      at: range && typeof range.GetAddress === 'function' ? String(range.GetAddress(false, false, 'xlA1', false)) : ''};
+  } catch (e) { return null; }
+}
+
+function readCells(refs, sheetName) {
+  if (!ready) return {ok: false, error: 'the editor is not ready'};
+  const api = innerEditor();
+  if (!api || typeof api.GetActiveSheet !== 'function') {
+    return {ok: false, error: 'this editor build does not expose the builder API'};
+  }
+  if (!Array.isArray(refs) || !refs.length) {
+    return {ok: false, error: 'there were no cells to read'};
+  }
+  let ws;
+  try {
+    ws = sheetName ? (typeof api.GetSheet === 'function' && api.GetSheet(sheetName))
+                   : api.GetActiveSheet();
+  } catch (e) { ws = null; }
+  if (!ws) return {ok: false, error: 'the editor has no sheet to read from'};
+  const out = [];
+  refs.slice(0, 200).forEach((ref) => {
+    const row = {ref: String(ref), value: null, text: '', formula: '', error: ''};
+    try {
+      const rg = ws.GetRange(String(ref));
+      if (!rg) { row.error = 'the editor did not accept that range'; }
+      else {
+        if (typeof rg.GetValue === 'function') row.value = rg.GetValue();
+        if (typeof rg.GetText === 'function') row.text = String(rg.GetText());
+        if (typeof rg.GetFormula === 'function') row.formula = String(rg.GetFormula());
+      }
+    } catch (e) { row.error = String((e && e.message) || e).slice(0, 120); }
+    out.push(row);
+  });
+  return {ok: true, cells: out};
+}
+
+// ── boot / open / swap ───────────────────────────────────────────────────────
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('could not load ' + src));
+    document.body.appendChild(s);
+  });
+}
+
+function renderAttribution(a) {
+  if (!a) return;
+  el('attrib').textContent = 'Editing by ' + a.name + ' · ' + a.licence;
+  const links = (a.sources || []).slice(0, 2).map(
+    (s) => '<a href="' + s.url + '" target="_blank" rel="noreferrer">'
+           + s.url.replace('https://github.com/', '') + '</a>').join(' · ');
+  el('attrib-src').innerHTML = links ? 'source: ' + links : '';
+}
+
+// ══ THE IN-RIBBON AI TAB ══════════════════════════════════════════════════════
+// ONLYOFFICE's OWN AI plugin, vendored by scripts/install_oo_ai_plugin.sh, served
+// same-origin at /ooplug/*, and pointed at THIS machine's runner. Everything about
+// why it can work at all is in bridge/ooai.py's header; what belongs here is the two
+// things this page does with it.
+//
+//   1. THE CONFIG. `editorConfig.plugins.pluginsData` is a list of config.json URLs
+//      the editor fetches itself; `autostart` starts a background plugin without a
+//      click. Both are published DocsAPI keys — the vendored bundle is not touched.
+//      `customization.plugins` MUST also flip to true: the plugins controller checks
+//      it FIRST and skips loadPlugins() entirely when it is false (this page set it
+//      false for the whole life of the embed, which is why nothing loaded before).
+//
+//   2. THE SEED. The plugin stores providers, models and per-action model bindings in
+//      localStorage — the same two keys its own Settings dialog writes. Its iframe is
+//      OUR origin (we serve it), so those keys are ours to write, and writing them
+//      before the editor starts is what makes the tab arrive already configured
+//      instead of arriving as an empty settings form. The bridge computes the values
+//      (bridge/ooai.py `seed`) so the model id is the one the runner actually reports.
+//
+// ⚠️ AND THE GATE, WHICH IS THE POINT. If the plugin is not installed, or the runner
+// is down, or the runner has no model loaded, `enabled` is false and we pass NO
+// plugins config at all. The tab is ABSENT, not present-and-broken: every button on
+// it would post to a dead port and report an opaque failure inside a ribbon dropdown.
+// The reason is kept on `aiGate` — read back by probe(), told to the LOffice host, and
+// spelled out in LOffice's Help → About next to the other honest limits.
+let aiStatus = null;         // the /api/oo/ai/status body, or null if the route 404s
+let aiGate = '';             // '' when the tab is live; otherwise WHY it is not
+let aiSeeded = false;        // the seed has been written to localStorage this page
+
+async function aiPrepare() {
+  aiStatus = null;
+  aiGate = '';
+  try {
+    const r = await fetch('/api/oo/ai/status', {cache: 'no-store'});
+    // A snapshot older than this slice has no such route. That is not an error and
+    // must not look like one: it is simply an editor without the AI tab.
+    if (r.status === 404) { aiGate = 'this build has no in-ribbon AI tab'; return; }
+    aiStatus = await r.json();
+  } catch (e) {
+    aiGate = 'the bridge did not answer about the AI tab';
+    return;
+  }
+  if (!aiStatus || !aiStatus.enabled) {
+    aiGate = (aiStatus && aiStatus.gate) || 'the in-ribbon AI tab is not available';
+    return;
+  }
+  // The seed. Wrapped tight: a localStorage that throws (private mode, a quota, a
+  // policy) must cost us the AI tab and NOTHING else — the editor still has to open.
+  const seed = aiStatus.seed || {};
+  try {
+    if (seed.storage_key && seed.storage) {
+      window.localStorage.setItem(seed.storage_key, JSON.stringify(seed.storage));
+    }
+    if (seed.actions_key && seed.actions) {
+      window.localStorage.setItem(seed.actions_key, JSON.stringify(seed.actions));
+    }
+    aiSeeded = true;
+    // ⚖️ CONDITION #3 AGAIN, FOR A SECOND VENDORED AGPL ARTEFACT. The footer already
+    // names the editor; the moment we also serve ONLYOFFICE's AI plugin it has to name
+    // that too, from the bridge's own ATTRIBUTION rather than retyped here. LOffice's
+    // Help → About renders the same body, so the two cannot drift.
+    const at = (aiStatus.attribution || {});
+    if (at.name) {
+      el('attrib').textContent += ' · AI tab by ' + at.name.replace(
+        / \(sdkjs-plugins.*$/, '') + ' · ' + at.licence;
+    }
+  } catch (e) {
+    aiGate = 'this browser would not let us store the AI settings (' + e + ')';
+    aiStatus = null;
+  }
+}
+
+// The `plugins` object for editorConfig, or null when the tab is gated off. null is
+// not the same as `{pluginsData: []}`: an empty list still turns the plugins TAB on
+// in the ribbon, and an empty plugins tab is a dead end.
+function aiPluginsConfig() {
+  if (!aiStatus || !aiStatus.enabled || !aiSeeded) return null;
+  const url = location.origin + (aiStatus.config_url || '/ooplug/content/ai/config.json');
+  // ⚠️ TWO ENTRIES, AND THE SECOND ONE IS NOT OPTIONAL. The vendored editor's own
+  // toolbar code only creates its "Background plugins" button while walking a
+  // NON-background plugin, and it then calls .show() on that button whenever any
+  // background plugin exists — so a list holding only the (background) AI plugin
+  // throws mid-registration and the AI tab never appears. The shim is OUR generated,
+  // invisible companion entry that satisfies that walk. The whole measurement is in
+  // bridge/ooai.py under "THE COMPANION ENTRY".
+  const shim = location.origin + (aiStatus.shim_url || '/api/oo/ai/shim/config.json');
+  const cfg = {pluginsData: [url, shim]};
+  // `type: background` plugins need autostart or they never run — the AI plugin adds
+  // its ribbon tab from inside its own init, so no autostart means no tab.
+  if (aiStatus.guid) cfg.autostart = [aiStatus.guid];
+  return cfg;
+}
+
+// ── THE IN-RIBBON CHAT SURVIVES A DOCUMENT SWAP, AND IT IS PER FILE ──────────
+//
+// ⚠️ THE OBSERVED DEFECT (sample, 2026-08-28): open A, chat in the ribbon's Chatbot,
+// switch to B — the conversation is gone. Root-caused in the VENDORED plugin, and the
+// cause is not "in-memory state": it is a save that is never triggered.
+//
+//   ai/scripts/chat.js         let localStorageKey = "onlyoffice_ai_chat_state";
+//                              setState()      writes {messages, inputValue, attachedText}
+//                              restoreState()  reads it, from Asc.plugin.init
+//                              attachEvent("onUpdateState", …)  ← the ONLY caller of setState
+//   ai/scripts/engine/register.js   chatWindow.command("onUpdateState")  ← the ONLY
+//                              caller of that event, and it lives inside
+//                              onDockedChanged. Nothing else, anywhere, commands it.
+//
+// So the plugin DOES persist its chat, in OUR origin's localStorage, under ONE GLOBAL
+// key — but it only saves when the user happens to dock/undock the chat panel. Our
+// `destroyEditor()` tears the plugin frame down without that ever firing, so the
+// messages die in the frame. MEASURED, not read: see the live proof in the report.
+//
+// Two consequences, and we fix both:
+//   1. NOTHING IS SAVED on a swap  ⇒ we command the plugin's OWN onUpdateState before
+//      destroying the editor, exactly as its own onDockedChanged does, and wait for
+//      the write to land.
+//   2. THE KEY IS GLOBAL, NOT PER DOCUMENT ⇒ even once saving works, A's conversation
+//      would reappear inside B, attached to B's cells. So the flushed blob is MOVED to
+//      our own per-file key and the plugin's key is set to the INCOMING file's blob (or
+//      cleared when it has none) before the editor is constructed, so the plugin's own
+//      restoreState() picks up the right conversation with no knowledge of us.
+//
+// ⚠️ NOT ONE VENDORED BYTE IS TOUCHED. This uses the plugin's own published event and
+// its own storage key, in an iframe that is same-origin with us — the identical
+// mechanism, and the identical justification, as the provider seed above.
+//
+// ⚠️ VERSION FENCE. Both the key name and the {messages,inputValue,attachedText} shape
+// are read out of plugin 3.2.2. A bump can rename either silently, and a silently
+// renamed key degrades to exactly today's behaviour (a chat that does not survive) —
+// never to a WRONG chat on the wrong file, because we only ever move a blob we found
+// under the name we know. test_oo_ai_lane.py asserts these constants against the
+// vendored file whenever the plugin is installed.
+const AI_CHAT_KEY = 'onlyoffice_ai_chat_state';       // ai/scripts/chat.js
+const AI_CHAT_PLUGIN_VER = '3.2.2';                   // the pin this was read from
+const AI_CHAT_MINE = 'mot.ooai.chat.';                // + file name → our per-file blob
+const AI_CHAT_INDEX = 'mot.ooai.chat.index';          // LRU list of file names
+const AI_CHAT_MAX_FILES = 12;                         // keep the last dozen documents
+const AI_CHAT_MAX_BYTES = 512 * 1024;                 // one conversation's ceiling
+let aiChatSaves = 0, aiChatRestores = 0, aiChatDrops = 0;   // reported by probe()
+let aiChatLast = '';        // what the last handover actually did, for a probe to read
+
+// Every same-origin frame under this page, the editor iframe and the plugin iframes
+// inside it included. A cross-origin frame throws on property access — skipped, never
+// fatal: this whole feature is a convenience and must never cost anyone an editor.
+function aiFrames(win, out, depth) {
+  out = out || []; depth = depth || 0;
+  if (depth > 6) return out;
+  try {
+    out.push(win);
+    for (let i = 0; i < win.frames.length; i++) {
+      try { aiFrames(win.frames[i], out, depth + 1); } catch (e) { /* cross-origin */ }
+    }
+  } catch (e) { /* cross-origin */ }
+  return out;
+}
+
+// The plugin's background frame publishes `window.chatWindow` (register.js's last line
+// of chatWindowShow). Absent until the user has opened the Chatbot at least once —
+// which is exactly the case where there is nothing to save.
+function aiChatWindow() {
+  const fr = aiFrames(window);
+  for (let i = 0; i < fr.length; i++) {
+    try {
+      const cw = fr[i].chatWindow;
+      if (cw && typeof cw.command === 'function') return cw;
+    } catch (e) { /* cross-origin */ }
+  }
+  return null;
+}
+
+function aiChatRead() {
+  try { return window.localStorage.getItem(AI_CHAT_KEY); } catch (e) { return null; }
+}
+
+// FLUSH. Command the plugin's own save and wait for the value to actually change —
+// polling rather than attachEvent because attachEvent("onUpdateState") would REPLACE
+// the plugin's own dock-change handler and break a feature to fix a feature.
+//
+// ⚠️ BOUNDED BY WALL TIME, NOT BY TICK COUNT, AND THAT DISTINCTION IS A MEASURED BUG
+// (live WKWebView, 2026-08-28). The first draft polled "14 times, 50ms apart" and
+// called that 700ms. It is not 700ms: WebKit CLAMPS timers hard in a window that is
+// not on screen, so those fourteen ticks took over THIRTY SECONDS — and because the
+// swap awaits the flush, the whole document switch sat at "converted to the editor
+// format" and never started the new editor. A background tab, an occluded window and
+// a Mac on battery all reach that state, so this was a real hang and not a probe
+// artefact. Timers are a HINT about delay and a PROMISE about order; only the clock
+// says how long anything took.
+const AI_CHAT_FLUSH_MS = 800;
+async function aiChatFlush() {
+  const cw = aiChatWindow();
+  if (!cw) return aiChatRead();          // never opened, or already torn down
+  const before = aiChatRead();
+  try { cw.command('onUpdateState'); } catch (e) { return before; }
+  const t0 = Date.now();
+  while (Date.now() - t0 < AI_CHAT_FLUSH_MS) {
+    await new Promise((r) => setTimeout(r, 30));
+    const now = aiChatRead();
+    if (now !== null && now !== before) return now;
+  }
+  return aiChatRead();
+}
+
+function aiChatIndex() {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(AI_CHAT_INDEX) || '[]');
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+  } catch (e) { return []; }
+}
+
+// STORE the outgoing document's conversation under its own name. Bounded three ways —
+// a per-conversation ceiling, an LRU over documents, and a quota retry — because a
+// localStorage that fills up would break the PROVIDER SEED that shares it, i.e. it
+// would cost the AI tab itself. Losing an old chat is the right thing to lose.
+function aiChatStore(name, blob) {
+  if (!name) return;
+  // ⚠️ NOTHING IS EVER DELETED BECAUSE THE FLUSH CAME BACK EMPTY, and this cost a
+  // whole live run to find (2026-08-28, walking the swap in a real WKWebView). The
+  // first draft treated a null flush as "this file has no conversation" and removed
+  // the stored one — so a swap through a document whose plugin frame had not finished
+  // waking up SILENTLY ATE the previous file's chat. That is a LIE-TO-USER (typed
+  // work vanishing with no message), and it is exactly the shape the doctrine ranks
+  // above a crash. "I could not read the chat" and "there is no chat" are different
+  // facts, and only the second one may delete anything.
+  if (blob === null || blob === undefined || blob === 'null') { aiChatDrops++; return; }
+  let idx = aiChatIndex().filter((n) => n !== name);
+  if (blob.length > AI_CHAT_MAX_BYTES) { aiChatDrops++; return; }
+  const wrapped = JSON.stringify({v: AI_CHAT_PLUGIN_VER, blob: blob});
+  idx.unshift(name);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      while (idx.length > AI_CHAT_MAX_FILES) {
+        const gone = idx.pop();
+        try { window.localStorage.removeItem(AI_CHAT_MINE + gone); } catch (e) { }
+      }
+      window.localStorage.setItem(AI_CHAT_MINE + name, wrapped);
+      window.localStorage.setItem(AI_CHAT_INDEX, JSON.stringify(idx));
+      aiChatSaves++;
+      return;
+    } catch (e) {
+      // Quota. Drop the oldest and try again; give up quietly on the third failure —
+      // an unsaved chat is a disappointment, a broken editor is a defect.
+      if (idx.length > 1) { const gone = idx.pop();
+        try { window.localStorage.removeItem(AI_CHAT_MINE + gone); } catch (e2) { } }
+      else { aiChatDrops++; return; }
+    }
+  }
+  aiChatDrops++;
+}
+
+// RESTORE the incoming document's conversation into the plugin's own key — or CLEAR
+// it. The clear is the load-bearing half: without it the plugin would open B showing
+// A's conversation, which is a LIE-TO-USER (a chat about the wrong sheet) and strictly
+// worse than the empty chat we started from.
+function aiChatRestore(name) {
+  let blob = null;
+  try {
+    const raw = window.localStorage.getItem(AI_CHAT_MINE + name);
+    if (raw) {
+      const o = JSON.parse(raw);
+      // A blob written by a DIFFERENT plugin version is not replayed into it. The
+      // shape is that version's, not this one's, and a half-understood chat state is
+      // the kind of thing that renders as an empty panel with no explanation.
+      if (o && o.v === AI_CHAT_PLUGIN_VER && typeof o.blob === 'string') blob = o.blob;
+    }
+  } catch (e) { blob = null; }
+  try {
+    if (blob) { window.localStorage.setItem(AI_CHAT_KEY, blob); aiChatRestores++; }
+    else { window.localStorage.removeItem(AI_CHAT_KEY); }
+  } catch (e) { /* storage refused — the plugin simply opens with an empty chat */ }
+  return !!blob;
+}
+
+// The whole handover, in the order that makes it safe: save what the OLD document had
+// (which requires the old editor to still be alive), then plant what the NEW one had.
+// ⚠️ SERIALISED, NOT GUARDED, AND THE DIFFERENCE IS THE WHOLE FEATURE. The first draft
+// used a boolean "busy" flag and DROPPED any handover that arrived while another was
+// running — measured live: the 20s autosave holds the flag for its 700ms poll, a swap
+// landing inside that window skipped BOTH halves, and the incoming file's conversation
+// was therefore never planted. A dropped save is a lost chat; a dropped restore is an
+// empty panel. So every handover queues behind the one before it instead.
+let aiChatQueue = Promise.resolve();
+function aiChatHandover(fromName, toName) {
+  if (!aiSeeded) return Promise.resolve();   // no AI tab this session — nothing to move
+  aiChatQueue = aiChatQueue.then(async function () {
+    try {
+      if (fromName) {
+        const t0 = Date.now();
+        aiChatStore(fromName, await aiChatFlush());
+        aiChatLast = 'saved ' + fromName + ' in ' + (Date.now() - t0) + 'ms';
+      }
+      if (toName) aiChatLast = 'restore ' + toName + ': ' + aiChatRestore(toName);
+    } catch (e) {
+      aiChatLast = 'error ' + e;
+      console.log('[oo ai-chat] ' + e);
+    }
+  });
+  return aiChatQueue;
+}
+
+// ⚠️ TRAP FIVE, AND IT IS THE ONE THAT ACTUALLY DESTROYS THE CHAT (measured live,
+// 2026-08-28, after the save/restore pair above was already working):
+//
+//     ai/scripts/code.js
+//         function clearChatState() {
+//             let key = 'onlyoffice_ai_chat_state';
+//             if (window.localStorage.getItem(key)) window.localStorage.removeItem(key);
+//         }
+//         window.Asc.plugin.init = async function() { … clearChatState(); … }
+//
+// The plugin DELETES its own conversation on every start — deliberately, because
+// upstream's plugin lives in one long-running editor session and treats a reload as a
+// new conversation. In OUR one-editor world every document swap re-inits the plugin,
+// so that line is the disappearance sample reported. It also lands AFTER the seed the
+// glue page plants before construction, which is why planting once is not enough: we
+// plant, the editor comes up, the plugin's init wipes it, and the Chatbot then opens
+// on nothing. MEASURED exactly that: `restore MOTA-A.xlsx: true` in the probe, and the
+// key gone from localStorage 30 seconds later with no other writer in the frame.
+//
+// So the plant is HELD rather than done once. Until the user actually opens the
+// Chatbot (at which point chat.js's restoreState has read the key and the plugin owns
+// it again), a cheap watcher re-plants the document's conversation whenever the key
+// goes missing. It only ever WRITES when the key is absent, so it is one write per
+// wipe and a single localStorage read per second otherwise; it stops the moment a chat
+// window exists or the document changes under it.
+// Carry a stored conversation across a RENAME. Pure key move — the blob is already in
+// this plugin version's shape, so re-wrapping it would only invent a chance to differ.
+function aiChatRename(from, to) {
+  if (!aiSeeded || !from || !to || from === to) return;
+  try {
+    const raw = window.localStorage.getItem(AI_CHAT_MINE + from);
+    if (raw === null) return;
+    window.localStorage.setItem(AI_CHAT_MINE + to, raw);
+    window.localStorage.removeItem(AI_CHAT_MINE + from);
+    const idx = aiChatIndex().map((n) => (n === from ? to : n));
+    window.localStorage.setItem(AI_CHAT_INDEX, JSON.stringify(idx));
+  } catch (e) { /* the chat simply stays under the old name; nothing else breaks */ }
+}
+
+// ⚠️ MEASURED: the wipe is not a one-off. Walking a real swap, the key was cleared
+// roughly every two seconds for as long as the Chatbot stayed shut (54 re-plants in
+// 100s) — the plugin re-runs clearChatState from more than one lifecycle hook. So the
+// hold is a standing one, it is CAPPED so a pathological loop cannot run for ever, and
+// its re-plants are counted separately from real restores: a metric that silently
+// counts housekeeping as work is a metric that cannot answer "did the swap restore it".
+const AI_CHAT_HOLD_MAX = 600;
+let aiChatHold = null, aiChatHolds = 0;
+function aiChatArm(name) {
+  if (aiChatHold) { clearInterval(aiChatHold); aiChatHold = null; }
+  if (!aiSeeded || !name) return;
+  let planted = 0;
+  aiChatHold = setInterval(function () {
+    if (DOC !== name || aiChatWindow() || planted >= AI_CHAT_HOLD_MAX) {
+      clearInterval(aiChatHold); aiChatHold = null; return;   // the plugin has it now
+    }
+    if (aiChatRead() !== null) return;
+    const was = aiChatRestores;
+    if (aiChatRestore(name)) { planted++; aiChatHolds++; aiChatRestores = was; }
+  }, 1000);
+}
+
+// ⚠️ AND THE SWAP IS NOT THE ONLY WAY THE FRAME DIES. Quitting the app, ⌘R, or the
+// host replacing the embed all destroy the plugin without any swap — and the flush
+// above is ASYNC (it waits on a postMessage round trip), so it cannot be completed
+// from `pagehide`. So the conversation is also checkpointed on a slow timer whenever a
+// chat window is actually open. The cost is one postMessage and one small
+// localStorage write every 5s, and ONLY while the user has the Chatbot open; the
+// benefit is that "I typed a question, then quit" is no longer a silent loss.
+// The residual limit — up to 5s of chat can still be lost to a hard quit — is stated
+// in LOffice's Help → About rather than hidden.
+// aiChatHandover serialises every flush in aiChatQueue, so a slow postMessage reply
+// cannot overlap or reorder checkpoints. A tick that arrives while one is pending is
+// queued, not dropped; document swaps use the same queue.
+const AI_CHAT_AUTOSAVE_MS = 5000;
+setInterval(function () {
+  if (!aiSeeded || !DOC || !aiChatWindow()) return;
+  aiChatHandover(DOC, '').catch(() => { /* never fatal */ });
+}, AI_CHAT_AUTOSAVE_MS);
+
+// ══ TRAP SIX: THE RIBBON'S BLOCKING MODAL, AND THE PLUGIN'S OWN CURE FOR IT ══
+//
+// ⚠️ THE OBSERVED DEFECT (sample, 2026-08-28): press AI → Summarization or AI →
+// Translation and the whole editor goes behind a centred "AI (model)" spinner for the
+// ENTIRE generation — a minute and more on a 27B — with no sign of life and no way
+// out. MEASURED live (WKWebView, real sheet, real runner): the `asc-loadmask` appears
+// 1.5s after the click and is still up 120s later, unchanged.
+//
+// It is NOT a plugin loader and there is no setting. It is the EDITOR's own
+// BlockInteraction long action, which the plugin asks for itself, and the plugin
+// already contains the cure — it just does not use it from the ribbon:
+//
+//   ai/scripts/engine/engine.js:512   chatRequest(content, block, streamFunc)
+//                                     → _wrapRequest(..., block !== false, streamFunc)
+//                             :577    let isStreaming = (undefined !== streamFunc)
+//                             :718    return allChunks   ← the WHOLE answer, streamed
+//   ai/scripts/engine/register.js:186-212   the CHATBOT's pattern: own StartAction,
+//                                     chatRequestAgent(data, /*block*/ false, chunk =>
+//                                     { first chunk → EndAction }) — the modal lasts
+//                                     TTFT and the answer then streams into the panel.
+//   register.js 455/483/501/519/544/563/583/603/635/901 and code.js:1448 — the ribbon
+//                                     and context-menu actions: `chatRequest(prompt)`.
+//                                     No block flag, no streamFunc ⇒ block defaults
+//                                     TRUE and NOTHING releases it until the last token.
+//
+// So this shim gives those call sites the Chatbot's pattern from OUTSIDE the plugin:
+// wrap `AI.Request.prototype.chatRequest` in the plugin's own (same-origin) frame,
+// and for a call that is BLOCKING AND NON-STREAMING — i.e. exactly a ribbon/context
+// action — call through with `block=false` plus a streamFunc of ours, bracketed by
+// our own StartAction/EndAction.
+//
+// ⚠️ NOT ONE VENDORED BYTE IS TOUCHED, and the plugin is pinned at 3.2.2 / commit
+// 799b287, which is upstream master HEAD (docs/research/2026-08-28-onlyoffice-forks-
+// loader.md: no fork and no upstream commit fixes this; we are the only ones who can).
+// This is the same mechanism and the same justification as the chat-state fix above:
+// their runtime, our origin, their published request path.
+//
+// ── AND THE HALF THAT IS NOT IN THE RECON, BECAUSE IT ONLY SHOWS UP IF YOU LOOK AT
+//    WHERE THE ANSWER LANDS ────────────────────────────────────────────────────────
+// "Release the editor at the first token" is the right fix for the CHATBOT because
+// the answer lands in a PANEL. Most ribbon actions do not do that: they write the
+// result into the LIVE DOCUMENT AT THE CURRENT SELECTION the instant it arrives —
+//     register.js:901  result = await requestEngine.chatRequest(prompt);
+//                      result = Asc.Library.getTranslateResult(result, content);
+//                      await Asc.Library.PasteText(result);
+// The Block is what stops the user moving that selection while the model thinks. Take
+// it away for 70 seconds and the user does the obvious thing — clicks another cell —
+// and the translation of the FIRST selection is pasted over the SECOND one, silently
+// destroying it. That is the LIES-TO-USER class the doctrine ranks above a crash, and
+// it would be caused BY the fix. So the release is conditional, and the condition is
+// a fact about the UI rather than a hard-coded list of action names:
+//
+//   RELEASE EARLY only while the editor is showing a PLUGIN MODAL (`.asc-window.modal`
+//   in the editor document AND a plugin window frame with a `windowID`). Then the
+//   document is already unreachable behind the plugin's own dialog, the editor's Block
+//   is pure redundancy, and the result cannot land anywhere the user has moved —
+//   Summarization's result goes into the dialog and is inserted later, by an explicit
+//   click. That is the ribbon's long action, and it is now released at the first chunk.
+//
+//   OTHERWISE the Block is KEPT — but the wait stops being a lie by omission. We are
+//   streaming now, so we know the difference between "nothing has come back" and "the
+//   model is thinking" and "the model is writing, 312 characters so far", and we say
+//   so in a chip of our own over the editor, with a Stop.
+//
+// ⚠️ THE VERSION FENCE, TWICE. Every constant here was read out of plugin 3.2.2 and
+// editor v9.2.0.119+5. If either is not what is installed, this shim does NOTHING and
+// the ribbon behaves exactly as it does today (blocking) — never a half-wrapped
+// request, never a released Block on an editor whose modal we cannot recognise.
+const AI_STREAM_PLUGIN_VER = '3.2.2';                 // the pin the seam was read from
+const AI_STREAM_EDITOR_TAG = 'v9.2.0.119+5';          // …and the pin `.asc-window.modal`
+const AI_STREAM_MODAL_SEL = '.asc-window.modal';      // editor's own modal dialog
+let aiStreamWrapped = false;      // the prototype in the live plugin frame is wrapped
+let aiStreamCalls = 0;            // blocking, non-streaming requests we took over
+let aiStreamReleases = 0;         // …of which released the Block at the first chunk
+let aiStreamStops = 0;            // …of which the user stopped (nothing was written)
+let aiStreamTTFT = 0;             // ms to the first chunk of the last one
+let aiStreamLast = '';            // what the last one did, for a probe to read
+
+// ⚠️ THE TRIM IS NOT COSMETIC — IT IS THE TAIL-INTEGRITY GUARANTEE. Upstream's
+// `processResult` (engine.js:617) passes `isTrim = isStreaming ? false : true`, so the
+// blocking path strips a leading `<think>…</think>` and leading/trailing newlines and
+// the STREAMING path does neither. Left alone, "the same action, streamed" would put a
+// different string into the document than "the same action, blocked" — a silent
+// content difference caused by our own change, which is the worst thing this slice
+// could ship. This reproduces upstream's own two steps (provider.js:263-274,
+// engine.js:617-624) over the accumulated answer, so streamed output === blocked
+// output. Pinned against the vendored bytes in test_oo_ai_lane.py.
+function aiStreamNormalize(text) {
+  if (typeof text !== 'string' || text === '') return text;
+  let s = text;
+  if (0 === s.indexOf('<think>')) {
+    const end = s.indexOf('</think>');
+    if (end !== -1) s = s.substring(end + 8);
+  }
+  let iStart = 0, iEnd = s.length - 1;
+  while (iStart < iEnd && s.charCodeAt(iStart) === 10) iStart++;
+  while (iEnd > iStart && s.charCodeAt(iEnd) === 10) iEnd--;
+  if (iEnd > iStart && (iStart !== 0 || iEnd !== (s.length - 1))) s = s.substring(iStart, iEnd + 1);
+  return s;
+}
+
+// Is the editor showing a plugin MODAL right now? Two independent signals, both
+// same-origin DOM/location reads, because releasing the Block on a wrong answer here
+// is the one way this shim could cost a user their data:
+//   1. the EDITOR's own modal dialog element (this is what makes the document
+//      unreachable — the class pair is read out of the pinned editor build), and
+//   2. a plugin window FRAME, which is what a `PluginWindow` opens (`windowID=` in its
+//      URL; the plugin's background frame and the DOCKED Chatbot are not that).
+// A docked Chatbot alone must NOT count: it leaves the ribbon usable, so a Translation
+// started with the chat open would otherwise look "safe" and would not be.
+function aiStreamModal() {
+  if (editorTag !== AI_STREAM_EDITOR_TAG) return false;   // unknown build ⇒ never release
+  let modal = false;
+  try {
+    const d = window.frames[0] && window.frames[0].document;
+    const n = d && d.querySelectorAll(AI_STREAM_MODAL_SEL);
+    for (let i = 0; n && i < n.length; i++) {
+      const r = n[i].getBoundingClientRect();
+      if (r.width > 2 && r.height > 2) { modal = true; break; }
+    }
+  } catch (e) { return false; }
+  if (!modal) return false;
+  const fr = aiFrames(window);
+  for (let i = 0; i < fr.length; i++) {
+    try {
+      const h = String(fr[i].location.href);
+      if (h.indexOf('/ooplug/') !== -1 && h.indexOf('windowID=') !== -1) return true;
+    } catch (e) { /* cross-origin */ }
+  }
+  return false;
+}
+
+// ── THE CHIP: the only new pixels in this slice ──────────────────────────────
+// It lives in OUR page, over the editor iframe, because the thing it has to be
+// visible ON TOP OF is the editor's own full-frame block overlay. It is styled for a
+// LIGHT surface with explicit colours for the same reason `body.embed` is: the editor
+// is pinned to `default-light` and the sheet is a white page under every motdeck
+// design, so a chip that followed the panel's dark tokens would be the one dark object
+// on a white sheet. Verified under Editorial and Studio, light and dark.
+let aiStreamTick = null;
+function aiStreamChipHide() {
+  if (aiStreamTick) { clearInterval(aiStreamTick); aiStreamTick = null; }
+  const c = el('aichip');
+  if (c) c.classList.remove('on');
+}
+function aiStreamChipShow(job) {
+  const c = el('aichip');
+  if (!c) return;
+  c.classList.add('on');
+  const paint = function () {
+    const secs = Math.round((Date.now() - job.t0) / 1000);
+    let what;
+    if (job.stopped) what = 'stopping…';
+    else if (!job.chunks) what = 'AI is working — nothing has come back yet';
+    else if (!job.chars) what = 'AI is thinking';
+    else what = 'AI is writing — ' + job.chars + ' characters so far';
+    el('aichip-t').textContent = what + ' · ' + secs + 's';
+    // Honest about the editor, because the two cases look different on screen and a
+    // user who is told "you can keep working" while the editor is blocked is lied to.
+    el('aichip-n').textContent = job.released
+      ? 'the editor is free again'
+      : 'the editor is held until this lands in the document';
+  };
+  paint();
+  if (aiStreamTick) clearInterval(aiStreamTick);
+  aiStreamTick = setInterval(paint, 1000);
+  el('aichip-stop').onclick = function () {
+    job.stopped = true;                     // read by the streamFunc on the next chunk
+    paint();
+  };
+}
+
+// THE WRAP ITSELF. Assigned onto the prototype INSIDE the plugin's frame; `this` is
+// the plugin's own AI.Request, `orig` its own method, and every argument is passed
+// through untouched on every path we do not own.
+function aiStreamWrap(win) {
+  if (aiStreamWrapped) return true;
+  if (!aiStatus || aiStatus.version !== AI_STREAM_PLUGIN_VER) return false;
+  let AIns, proto, Asc;
+  try {
+    AIns = win.AI; Asc = win.Asc;
+    proto = AIns && AIns.Request && AIns.Request.prototype;
+  } catch (e) { return false; }
+  // The structural fence: the exact seam this was written against, or nothing.
+  if (!proto || typeof proto.chatRequest !== 'function'
+      || proto.chatRequest.length !== 3               // (content, block, streamFunc)
+      || typeof proto._wrapRequest !== 'function'
+      || !Asc || !Asc.Editor || typeof Asc.Editor.callMethod !== 'function') return false;
+  const orig = proto.chatRequest;
+  proto.chatRequest = async function (content, block, streamFunc) {
+    // EVERY call that is already streaming, or already non-blocking, is somebody
+    // else's design (the agent loop, the helpers, the annotators) and is passed
+    // through byte for byte. We only take over the shape nothing releases: blocking,
+    // no streamFunc — which is exactly the ribbon and context-menu call sites.
+    if (block === false || streamFunc !== undefined) {
+      return await orig.call(this, content, block, streamFunc);
+    }
+    const label = 'AI (' + ((this.modelUI && this.modelUI.name) || '') + ')';
+    const job = {t0: Date.now(), chunks: 0, chars: 0, released: false, stopped: false};
+    let started = false, ended = false;
+    const end = async function () {
+      if (!started || ended) return;
+      ended = true;
+      try { await Asc.Editor.callMethod('EndAction', ['Block', label]); } catch (e) { }
+    };
+    try { await Asc.Editor.callMethod('StartAction', ['Block', label]); started = true; }
+    catch (e) { /* no block went up; we simply never take one down */ }
+    aiStreamCalls++;
+    aiStreamTTFT = 0;
+    aiStreamLast = 'running';
+    // The release decision is taken ONCE, at the start, from the UI as it is when the
+    // user pressed the button — not re-read later, when a dialog may have closed.
+    const mayRelease = aiStreamModal();
+    aiStreamChipShow(job);
+    try {
+      const out = await orig.call(this, content, false, async function (chunk) {
+        job.chunks++;
+        if (typeof chunk === 'string') job.chars += chunk.length;
+        if (!aiStreamTTFT) {
+          aiStreamTTFT = Date.now() - job.t0;
+          if (mayRelease) { job.released = true; aiStreamReleases++; await end(); }
+        }
+        // The user pressed Stop. Returning true is the plugin's OWN documented way to
+        // abort the read (engine.js:718: `if (isBreak === true) await
+        // readerAsync.abort()`), and we then return '' rather than the partial text —
+        // every ribbon call site does `if (!result) return;`, so nothing is written.
+        // A HALF-TRANSLATION PASTED INTO THE SHEET WOULD BE THE LIE THIS WHOLE SLICE
+        // EXISTS TO AVOID.
+        return job.stopped === true;
+      });
+      if (job.stopped) {
+        aiStreamStops++;
+        aiStreamLast = 'stopped after ' + job.chars + ' chars';
+        return '';
+      }
+      aiStreamLast = (mayRelease ? 'released' : 'held') + ' · ttft '
+                     + aiStreamTTFT + 'ms · ' + job.chars + ' chars in '
+                     + (Date.now() - job.t0) + 'ms';
+      // ⚠️ AND THE ANSWER IS PUT BACK INTO THE SHAPE THE BLOCKING PATH WOULD HAVE
+      // PRODUCED. See aiStreamNormalize: streaming skips upstream's own trim.
+      return aiStreamNormalize(out);
+    } finally {
+      // The Block ALWAYS comes down, on every path — success, upstream's swallowed
+      // provider error, a thrown TypeError, a stop. An editor left blocked for ever
+      // would be strictly worse than the modal this slice is here to shorten.
+      await end();
+      aiStreamChipHide();
+    }
+  };
+  aiStreamWrapped = true;
+  return true;
+}
+
+// ARMING. The plugin frame is created by the editor some time after construction, and
+// it is destroyed and rebuilt on every document swap — so this is the same shape as
+// aiChatArm: a cheap, capped poll that stops the moment it succeeds.
+const AI_STREAM_ARM_MAX = 90;             // ~90s, then give up quietly
+let aiStreamArmIv = null;
+function aiStreamDisarm() {
+  if (aiStreamArmIv) { clearInterval(aiStreamArmIv); aiStreamArmIv = null; }
+  aiStreamWrapped = false;                // the wrapped prototype died with the frame
+  aiStreamChipHide();
+}
+function aiStreamArm() {
+  aiStreamDisarm();
+  if (!aiSeeded) return;                  // no AI tab this session — nothing to wrap
+  let tries = 0;
+  aiStreamArmIv = setInterval(function () {
+    tries++;
+    const fr = aiFrames(window);
+    for (let i = 0; i < fr.length; i++) {
+      try { if (aiStreamWrap(fr[i])) break; } catch (e) { /* cross-origin */ }
+    }
+    if (aiStreamWrapped || tries >= AI_STREAM_ARM_MAX) {
+      clearInterval(aiStreamArmIv); aiStreamArmIv = null;
+    }
+  }, 1000);
+}
+
+// Everything that has to happen ONCE per page: the status check, the attribution, the
+// 57 MB converter and api.js. Split out from openDoc precisely so a swap does not
+// repeat it — that split IS the "keep one editor instance alive" requirement.
+let onceDone = false;
+let oncePending = null;
+function once() {
+  if (oncePending) return oncePending;
+  oncePending = prepareOnce().finally(() => { oncePending = null; });
+  return oncePending;
+}
+async function prepareOnce() {
+  if (onceDone) return true;
+  step('checking the editor bundle…', 4);
+  let status;
+  try {
+    status = await (await fetch('/api/oo/status')).json();
+  } catch (e) {
+    fail('The bridge did not answer', 'Could not reach <code>/api/oo/status</code>.');
+    return false;
+  }
+  renderAttribution(status.attribution);
+  if (!status.installed) {
+    fail('The editor is not installed',
+         (status.reason || 'The ONLYOFFICE bundle is missing.')
+         + '<br><br>Install it once with<br><code>./'
+         + (status.installer || 'scripts/install_onlyoffice.sh') + '</code>');
+    return false;
+  }
+  editorTag = status.editor_tag || '';
+  step('bundle ' + (editorTag || '?') + ' · x2t ' + (status.x2t_tag || '?'), 8);
+
+  step('loading the converter (57 MB wasm, first time only)…', 20);
+  try {
+    await loadX2T();
+  } catch (e) {
+    fail('The converter did not load', String(e.message || e));
+    return false;
+  }
+  step('converter ready', 40);
+
+  step('loading the editor…', 48);
+  if (!apiLoaded) {
+    try {
+      await loadScript(API_JS);
+    } catch (e) {
+      fail('The editor did not load', String(e.message || e));
+      return false;
+    }
+    apiLoaded = true;
+  }
+  if (typeof DocsAPI === 'undefined' || !DocsAPI.DocEditor) {
+    fail('The editor did not register', 'api.js loaded but <code>DocsAPI</code> is '
+         + 'not there. The vendored bundle may be incomplete — re-run <code>'
+         + (status.installer || 'scripts/install_onlyoffice.sh') + '</code>.');
+    return false;
+  }
+  // sdkjs reads `window.APP` (connectMockServer installs getImageURL onto it), so it
+  // must exist first. Ours is deliberately bare — we serve no editor-side images.
+  window.APP = window.APP || {};
+
+  // The AI tab, decided ONCE per page like everything else here — the runner probe is
+  // a network round trip and a document swap must not pay for it again. Deliberately
+  // AFTER the editor is known to be loadable and deliberately never fatal: a gated AI
+  // tab is a missing convenience, not a broken editor.
+  step('checking the in-ribbon AI tab…', 50);
+  try {
+    await aiPrepare();
+  } catch (e) {
+    aiGate = 'the AI tab check failed (' + e + ')';
+  }
+  step(aiGate ? 'AI tab off — ' + aiGate
+              : 'AI tab on — ' + ((aiStatus.runner || {}).model || 'local runner'), 52);
+  tell('ai', {enabled: !aiGate, gate: aiGate,
+              model: (aiStatus && aiStatus.runner && aiStatus.runner.model) || ''});
+
+  onceDone = true;
+  return true;
+}
+
+// THE ONE OPEN PATH, and the one SWAP path — they are the same function, because a
+// swap that took a different route from a cold open is a second implementation of the
+// hardest part of this page. `editor.destroyEditor()` (api.js's own published method:
+// it replaces the inner iframe with a fresh placeholder div of the same id) is the
+// only difference, and it is two lines.
+function openDoc(name) {
+  const want = String(name || '').trim();
+  if (!want) {
+    return Promise.resolve({ok: false, error: 'no workbook was named'});
+  }
+  const gen = ++openSeq;
+  if (cancelOpening) { cancelOpening(); cancelOpening = null; }
+  const t0 = (window.performance && performance.now()) || Date.now();
+  const swap = !!editor;
+  return (async function () {
+    if (!(await once())) return {ok: false, error: 'the editor could not start'};
+    if (gen !== openSeq) return {ok: false, error: 'superseded'};
+
+    el('boot').classList.remove('gone', 'bad');
+    el('bar').style.display = '';
+    el('boot-title').textContent = swap ? 'Opening ' + want + '…'
+                                        : 'Opening the editor…';
+    el('btn-save').disabled = true;
+    el('btn-pdf').disabled = true;
+    ready = false;
+    noteClear();
+
+    // The mtime fence. Taken BEFORE the bytes, so a change between the two makes the
+    // fence pessimistic (a refused save) rather than optimistic (a lost edit).
+    let nextMtime = null;
+    try {
+      const files = await (await fetch('/api/office/files', {cache: 'no-store'})).json();
+      const row = (files.files || []).find((f) => f.name === want);
+      if (row) nextMtime = row.modified;
+    } catch (e) { /* the fence is a safety net, not a precondition */ }
+    if (gen !== openSeq) return {ok: false, error: 'superseded'};
+
+    step('reading ' + want + '…', 56);
+    let raw;
+    try {
+      const r = await fetch('/api/office/download/' + encodeURIComponent(want));
+      if (!r.ok) throw new Error('the bridge said ' + r.status);
+      raw = new Uint8Array(await r.arrayBuffer());
+    } catch (e) {
+      if (gen !== openSeq) return {ok: false, error: 'superseded'};
+      fail('Could not read that workbook', String(e.message || e));
+      return {ok: false, error: String(e.message || e)};
+    }
+    if (gen !== openSeq) return {ok: false, error: 'superseded'};
+    step('read ' + Math.round(raw.length / 1024) + ' KB', 62);
+
+    let bin;
+    try {
+      bin = x2tConvert(raw, want.replace(/[^A-Za-z0-9._-]/g, '_'), 'bin');
+    } catch (e) {
+      fail('Could not convert that workbook',
+           String(e.message || e) + '<br><br>The file on disk was not touched.');
+      return {ok: false, error: String(e.message || e)};
+    }
+    step('converted to the editor format (' + Math.round(bin.length / 1024) + ' KB)', 70);
+
+    // ⚠️ THE OLD INSTANCE GOES DOWN HERE AND NOT EARLIER. Everything above can fail,
+    // and a failure that had already destroyed a working editor would turn "could not
+    // open the OTHER file" into "you no longer have an editor".
+    // ⚠️ THE IN-RIBBON CHAT IS SAVED WHILE THE OLD EDITOR IS STILL ALIVE. The plugin
+    // frame is a child of the editor iframe: one line later there is nothing left to
+    // ask. See aiChatHandover — this is the whole "the chat vanished on a file switch"
+    // fix, and it is two calls around the destroy that was already here.
+    const wasDoc = DOC;
+    if (editor) {
+      await aiChatHandover(wasDoc, '');
+      if (gen !== openSeq) return {ok: false, error: 'superseded'};
+      try { editor.destroyEditor(); } catch (e) { console.log('[oo] destroy: ' + e); }
+      editor = null;
+    }
+    // …and the incoming document's own conversation is planted BEFORE the editor is
+    // constructed, and then HELD there — the plugin's own init deletes the key (trap
+    // five above), so a single plant is erased by the very editor it was planted for.
+    await aiChatHandover('', want);
+    if (gen !== openSeq) return {ok: false, error: 'superseded'};
+    DOC = want;
+    openedMtime = nextMtime;
+    dirtyNow = false;
+    aiChatArm(want);
+    // The ribbon-streaming shim dies with the plugin frame the destroy above took
+    // out, so it is re-armed on every open — not once per page. A swap that quietly
+    // went back to the whole-generation modal would be the worst kind of regression:
+    // invisible, and only on the SECOND file.
+    aiStreamArm();
+    el('docname').textContent = want;
+    document.title = want + ' — LOffice editor';
+
+    const ext = (want.split('.').pop() || 'xlsx').toLowerCase();
+    const blobUrl = URL.createObjectURL(new Blob([bin]));
+    step('starting the editor…', 78);
+
+    return await new Promise((resolve) => {
+      let settled = false;
+      const finish = (r) => {
+        if (settled) return;
+        settled = true;
+        if (cancelOpening === cancel) cancelOpening = null;
+        try { URL.revokeObjectURL(blobUrl); } catch (e) { /* already released */ }
+        resolve(r);
+      };
+      const cancel = () => finish({ok: false, error: 'superseded'});
+      cancelOpening = cancel;
+      editor = new DocsAPI.DocEditor('editor', {
+        document: {
+          fileType: ext,
+          key: 'motdeck-' + Date.now(),
+          title: want,
+          // ⚠️ THE Editor.bin URL, AND IT IS WHAT MAKES THE WHOLE PAGE WORK. api.js's
+          // handleAuth hands this straight to the editor as the document to open; a
+          // config without it produces a page that renders the full ribbon and then
+          // sits on "Loading spreadsheet" for ever with ZERO console errors — the same
+          // silent-hang signature as missing cross-origin isolation, and it cost this
+          // rewrite two 3-minute probe runs to tell the two apart. It is a blob: of
+          // OUR OWN bytes, never a third-party URL (a COEP page refuses those).
+          url: blobUrl,
+          // ⚠️ print: false — the serverless bundle's Print expects a DocumentServer
+          // and throws. Turned off through the PUBLISHED permissions key, never by
+          // patching the vendored bundle; LOffice's Help → About names the limit.
+          permissions: {download: false, print: false, edit: true}
+        },
+        documentType: DOC_TYPES[ext] || 'cell',
+        width: '100%',
+        height: '100%',
+        editorConfig: Object.assign({
+          lang: 'en',
+          mode: 'edit',
+          user: {id: 'motdeck', name: 'You'},
+          customization: {
+            about: false, feedback: false, chat: false, comments: false,
+            // ⚠️ `plugins` IS THE MASTER SWITCH, and it is computed rather than
+            // constant. The plugins controller reads it FIRST and, when it is false,
+            // never registers a single plugin callback and never calls loadPlugins()
+            // — so a pluginsData list beside a `plugins: false` is silently ignored.
+            // It stays false whenever aiPluginsConfig() gated the tab off, which
+            // keeps the ribbon exactly as it was before this slice.
+            help: false, plugins: !!aiPluginsConfig(), compactHeader: false,
+            autosave: false, forcesave: false,
+            // ⚠️ THE RIGHT PANEL STARTS CLOSED, AND THAT IS A LAYOUT DECISION MADE BY
+            // LOOKING AT THE SCREENSHOT. Embedded, this editor is one column of three:
+            // our file rail is on the left and our AI panel is on the right, so the
+            // editor's own right-hand cell-settings panel was taking ~300px out of an
+            // already-shared middle and pushing the grid to about half the window. It
+            // is HIDDEN ON FIRST LOAD, not removed — the ribbon's own toggles still
+            // open it, which is the honest version of "we chose a default for you".
+            hideRightMenu: true,
+            // ⚠️ THE EDITOR IS PINNED TO ITS LIGHT THEME, AND THIS IS NOT A TASTE CALL —
+            // it is the ruling already written into bridge/panel/office.html's own
+            // stylesheet: "THE SEAM IS DELIBERATE. Both tiers render a LIGHT surface — a
+            // spreadsheet is a white page, and every colour inside the file (fills, font
+            // colours) was chosen by somebody looking at a white page; darkening the
+            // sheet would make a pale-yellow fill unreadable and would quietly
+            // misrepresent the document." Left to itself the bundle follows the OS, so on
+            // a dark Mac it came up `theme-night` — a dark grid under our dark chrome,
+            // which reads well and lies about the document. MEASURED SECOND REASON: in
+            // that theme the ribbon rendered with NO ICONS at all in a real WKWebView
+            // (the bundle's dark icon set does not paint; every glyph an empty box),
+            // while the light theme's ribbon is complete. `default-light` is the value
+            // api-orig.js documents, and it is passed as a config parameter — nothing in
+            // the vendored bundle is touched.
+            uiTheme: 'default-light',
+            features: {
+              // The bundle's own "New: Cell text direction" onboarding balloon,
+              // which on a fresh profile opens over the ribbon and sits there. It is
+              // ONLYOFFICE telling a first-time user about ONLYOFFICE; inside LOffice
+              // it is a popover nobody can act on and it landed square across the
+              // formula bar in the first embedded screenshot.
+              featuresTips: false
+            }
+          }
+        }, aiPluginsConfig() ? {plugins: aiPluginsConfig()} : {}),
+        events: {
+          onAppReady: () => { if (gen === openSeq) step('editor frame ready', 88); },
+          onDocumentReady: () => {
+            if (gen !== openSeq) return;       // a later open superseded this one
+            ready = true;
+            el('boot').classList.add('gone');
+            el('btn-save').disabled = false;
+            el('btn-pdf').disabled = false;
+            state('ready');
+            // The editor keeps the document; the blob has been read.
+            try { URL.revokeObjectURL(blobUrl); } catch (e) { /* fine */ }
+            const ms = Math.round(((window.performance && performance.now())
+                                   || Date.now()) - t0);
+            tell('ready', {doc: want, mtime: openedMtime, ms: ms, swap: swap,
+                           editorTag: editorTag});
+            finish({ok: true, ms: ms, swap: swap});
+          },
+          onError: (e) => {
+            if (gen !== openSeq) return;
+            const d = e && e.data;
+            fail('The editor reported an error',
+                 '<code>' + JSON.stringify(d) + '</code>');
+            finish({ok: false, error: 'the editor reported ' + JSON.stringify(d)});
+          },
+          onWarning: (e) => { console.log('[oo warning]', e && e.data); },
+          onDocumentStateChange: (e) => {
+            // ⚠️ THIS IS THE PAGE'S DIRTY FLAG, AND NOW THE PARENT'S TOO. The LOffice
+            // strip's dot, its "unsaved changes" line and the heartbeat the bridge
+            // uses to refuse an agent write all hang off this one event.
+            if (!ready || gen !== openSeq) return;
+            const d = !!(e && e.data);
+            /* ⚠️ THE FRESH-OPEN PHANTOM (roadmap §9.2). The block above innerEditor()
+               carries the whole measurement: this is ONLYOFFICE's own AI plugin
+               registering its custom functions into the document's undo history at
+               autostart. FAIL-CLOSED — if the history is not provably nothing but that
+               registration, or if sdkjs will not agree afterwards that the document is
+               unmodified, this arm does nothing and the dirty:true is reported as before. */
+            if (d && !dirtyNow && !saving && historyIsPluginOnly() && clearPluginDirty()) {
+              state('ready');
+              return;
+            }
+            /* ⚠️⚠️ SECOND HALF OF THE L1 FIX, AND IT IS THE FLOOR UNDER THE FIRST. sdkjs
+               fires dirty:FALSE whenever IT believes the document is saved — which, with
+               a mock co-authoring server that ACKs `saveChanges`, means "the ACK arrived",
+               not "bytes reached the disk". Forwarding that cleared the parent's dirty
+               flag with nothing on disk, and the next file switch binned the work with no
+               warning at all.
+               A CLEAR IS ONLY BELIEVED WHEN A WRITE-BACK PRODUCED IT. A pending save
+               is not yet proof; save() verifies both the receipt and the current
+               serialized document. When dirtyNow is false this event is a no-op. Anything else
+               is sdkjs's opinion about a save that did not happen, and the honest answer
+               is to STAY DIRTY and say so. Never the other way round: a dirty:TRUE is
+               always believed, because unsaved work is never something to be optimistic
+               about. */
+            if (!d && dirtyNow) {
+              heldClears++;
+              state('unsaved changes — the editor thinks it saved, but nothing was '
+                    + 'written to the file yet');
+              tell('state', {dirty: true});
+              return;
+            }
+            dirtyNow = d;
+            state(d ? 'unsaved changes' : 'ready');
+            tell('state', {dirty: d});
+          }
+        }
+      });
+      editor.connectMockServer(mockServer());
+      step('waiting for the document…', 92);
+    });
+  })();
+}
+
+// Re-read the CURRENT workbook from disk. The external-change banner in the parent
+// calls this instead of reloading the whole LOffice page — which was the old answer
+// and threw away the warm editor to do it.
+function reloadDoc() { return openDoc(DOC); }
+
+/* ══ THE DOCUMENT'S NAME MOVED, AND THE EDITOR HAS TO BE TOLD ══════════════════
+   THE FIX FOR live finding B1, and the finding is worth restating because it is the most
+   expensive kind of bug this page can have: unsaved work that can NEVER be written.
+
+   Measured: open QA-A.xlsx → type something (dot on) → rename it from the rail to
+   "QA-A renamed". The rename succeeded, the title updated, and the dot stayed on
+   deliberately ("a rename is not a save"). But NOTHING TOLD THE EDITOR: `DOC` was still
+   the old name, so the next Save posted to /api/office/writeback/QA-A.xlsx, got a 404, and
+   answered "Not saved: no such workbook". There was no way out that kept the work —
+   saving always 404'd, reopening discarded the edit, and the message named no file and
+   offered no next step.
+
+   THE EMBED CONTRACT FOLLOWS THE RENAME. It is a NAME change and nothing else: the bytes
+   did not move (os.rename preserves both content and mtime), so the document in memory,
+   the dirty flag and `openedMtime` are all still correct and are deliberately left alone.
+   Re-opening the file here would have been the "simpler" answer and it would have thrown
+   away the very edits the finding is about. */
+function renameTo(to) {
+  const want = String(to || '').trim();
+  if (!want) return {ok: false, error: 'no new name was given'};
+  const from = DOC;
+  DOC = want;
+  // ⚠️ THE CONVERSATION IS KEYED ON THE FILE NAME, SO A RENAME HAS TO CARRY IT. Without
+  // this the chat about this very sheet would be orphaned under the OLD name and the
+  // renamed file would open with an empty panel — the "another feature touched the same
+  // data" journey, and a silent loss of the user's own words. It is a key move, not a
+  // re-save: whatever was stored is exactly what the new name should hold.
+  // Retargeting the save destination must survive a storage/UI failure.
+  try { aiChatRename(from, want); aiChatArm(want); }
+  catch (e) { console.log('[oo rename chat] ' + e); }
+  el('docname').textContent = want;
+  document.title = want + ' — LOffice editor';
+  // The note strip, if it is showing a stale "no such workbook", is now wrong.
+  noteClear();
+  if (dirtyNow) state('unsaved changes');
+  return {ok: true, doc: DOC, was: from};
+}
+
+// ── the API the parent gets, i.e. the contract ────────────────────────────────
+window.LOfficeEmbed = {
+  // ⚠️ BUMPED 3 → 4 AT loffice-2026-08-29a: `downloadPdf` is a new member (Download as
+  // PDF, which replaces the Print this bundle cannot do). Bumped 2 → 3 at
+  // loffice-2026-08-28d for `renameTo` (live finding B1).
+  // The parent probes for the FUNCTION rather than the number (a version check that gates
+  // a capability the object plainly has is a way to break a working page), so an older
+  // frame degrades to an honest sentence rather than to a silent 404 on the next save.
+  contract: 4,
+  open: openDoc,
+  save: save,
+  // Export + the blob download, in one call, INSIDE this frame — one implementation for
+  // LOffice's menu and for this page's own PDF button. Resolves to
+  // {ok, pages, name, ms} or {ok:false, error}; the bytes stay here.
+  downloadPdf: downloadPdf,
+  reload: reloadDoc,
+  renameTo: renameTo,
+  applyOps: applyOps,
+  readCells: readCells,
+  selection: selection,
+  probe: () => ({ready: ready, doc: DOC, dirty: dirtyNow, saving: saving,
+                 editorTag: editorTag, extSaves: extSaves,
+                 heldClears: heldClears,
+                 // THE TWO RENDER-TRUTH COUNTERS (roadmap §9.2 / §9.3), reported for the
+                 // same reason heldClears is: a probe can PROVE each fix ran instead of
+                 // inferring it from a screenshot. `pluginDirtyClears` counts the phantom
+                 // fresh-open dirties reconciled; `paint` says whether the supported
+                 // repaint pair is present in this editor build at all.
+                 pluginDirtyClears: pluginDirtyClears,
+                 paint: {tag: OO_PAINT_TAG, missing: paintMissing,
+                         canRun: !!(innerEditor()
+                                    && typeof innerEditor().canRunBuilderScript === 'function'),
+                         canEnd: !!(innerEditor()
+                                    && typeof innerEditor().asc_Recalculate === 'function')},
+                 // The AI tab, reported the same way the save counters are: a probe can
+                 // prove it is on (and with which model) or read the exact reason it is
+                 // off, instead of inferring either from a screenshot.
+                 ai: {enabled: !aiGate && !!aiSeeded, gate: aiGate,
+                      model: (aiStatus && aiStatus.runner
+                              && aiStatus.runner.model) || '',
+                      version: (aiStatus && aiStatus.version) || '',
+                      // The chat-persistence counters, reported for the same reason the
+                      // save counters are: a probe can PROVE the handover ran on this
+                      // swap instead of inferring it from a screenshot.
+                      chat: {key: AI_CHAT_KEY, pinned: AI_CHAT_PLUGIN_VER,
+                             saves: aiChatSaves, restores: aiChatRestores,
+                             drops: aiChatDrops, holds: aiChatHolds,
+                             files: aiChatIndex().length,
+                             last: aiChatLast, live: !!aiChatWindow()},
+                      // The ribbon-streaming shim, reported the same way: a probe can
+                      // PROVE it wrapped the live prototype, that a run released the
+                      // Block (or deliberately held it), and what the first chunk cost
+                      // — instead of any of that being inferred from a screenshot.
+                      stream: {pinned: AI_STREAM_PLUGIN_VER, wrapped: aiStreamWrapped,
+                               calls: aiStreamCalls, releases: aiStreamReleases,
+                               stops: aiStreamStops, ttft: aiStreamTTFT,
+                               modal: aiStreamModal(), last: aiStreamLast}}}),
+  destroy: async () => {
+    const gen = ++openSeq;
+    if (cancelOpening) { cancelOpening(); cancelOpening = null; }
+    // Same rule as the swap: the conversation is saved while the frame that holds it
+    // is still there. A host that tears the embed down does not lose the chat either.
+    if (editor) { await aiChatHandover(DOC, ''); }
+    if (gen !== openSeq) return;
+    if (editor) { try { editor.destroyEditor(); } catch (e) { /* gone */ } }
+    aiStreamDisarm();   // the chip must not outlive the editor it was reporting on
+    if (aiChatHold) { clearInterval(aiChatHold); aiChatHold = null; }
+    editor = null; ready = false; dirtyNow = false;
+  }
+};
+
+// A page-level guard: any throw here would otherwise leave the boot overlay saying
+// "Opening…" forever, which is the exact failure mode this whole lane keeps hitting.
+window.addEventListener('error', (e) => {
+  if (!ready) fail('Something broke while opening',
+                   '<code>' + String(e.message || 'unknown') + '</code>');
+});
+
+// THE HANDSHAKE. The parent exists before this frame does (it created the iframe), so
+// there is nothing to wait for and no retry loop: register, then open.
+if (HOST && typeof HOST.register === 'function') {
+  try { HOST.register(window.LOfficeEmbed); }
+  catch (e) { console.log('[oo host register] ' + e); }
+}
+
+if (DOC0) {
+  openDoc(DOC0).catch((e) => fail('Something broke while opening',
+                                  '<code>' + String((e && e.message) || e) + '</code>'));
+} else if (!EMBED) {
+  fail('No workbook named', 'Open this page from LOffice — it needs '
+       + '<code>?doc=&lt;file name&gt;</code>.');
+} else {
+  // Embedded with no doc yet: the parent will call open() when it has one. Say so
+  // rather than showing a spinner that will never finish.
+  el('boot-title').textContent = 'No workbook open';
+  el('boot-msg').textContent = 'Pick a spreadsheet in the file list.';
+  el('bar').style.display = 'none';
+}
+</script>
+</body>
+</html>

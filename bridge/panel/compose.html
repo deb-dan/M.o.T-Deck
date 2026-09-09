@@ -1,0 +1,2678 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Music · MOT Deck</title>
+<meta name="motdeck-build" content="compose-2026-08-29b">
+<!--
+  ══ COMPOSE — THE ALTERNATIVE MUSIC SURFACE, SPECTRUM LAYOUT ═══════════════════
+  docs/FABLE-MUSIC-COMPOSE-SPEC.md §"SPEC v2" (BINDING) · design source:
+  docs/mockups/2026-08-29/compose-i.html ("Spectrum") + docs/research/
+  2026-08-29-visual-craft.md §3c (the colour finding).
+
+  ⚠️ THE MUSIC VIEW IS NOT TOUCHED BY THIS PAGE. index.html #view-music stays exactly
+  as it shipped: sample compares the two surfaces live and rules later. Both drive the
+  SAME backend (bridge/routers/music.py).
+
+  WHAT CHANGED IN v2 — the VISUAL LAYER ONLY. Every mechanic, verdict object, sheet,
+  gate and lie-guard from v1.5.43 is carried across unchanged; what moved is the
+  shape of the page:
+    · a WORKBENCH of compact draggable BLOCKS, three per row, whose arrangement is
+      remembered (localStorage, key `compose-layout-v1` — a per-machine view
+      preference, exactly like the panel's own appearance keys, so it needs no
+      bridge route and cannot fail a render);
+    · a SETTINGS PANE that docks to either edge and shrinks to half height, freeing
+      a real drop slot that accepts blocks (also remembered);
+    · prompt and lyrics side by side on ONE line, growing DOWNWARD only, with
+      Compose riding that line;
+    · the run ledger reduced to ONE compact block;
+    · a quiet dock strip holding one ghost slot open for UNFORGET P6 (stem
+      separation first). NOTHING is built for those tools here, and no fake tool is
+      drawn.
+
+  ⚠️ THE WAVEFORM IS THE PAGE'S ONE SATURATED OBJECT, AND ITS COLOUR IS MEASURED.
+  The research finding is that loud is a LIGHTNESS problem, not a hue problem: many
+  hues stay calm inside one lightness band on a ground that stays the darkest thing
+  on screen. So the chrome here is achromatic and the entire colour budget is spent
+  on the strip that IS the work — and the hue carries INFORMATION.
+
+  THE HONESTY CONSTRAINT, and it decided the whole feature: WE DO NOT KNOW A SONG'S
+  MUSICAL STRUCTURE. Neither engine reports sections; a sidecar holds a prompt, a
+  seed and a wall time. Painting "verse / chorus" over the strip would be the
+  worst class of bug this project ranks. So the page asks the bridge for
+  /api/music/analysis/<name>, which MEASURES the audio's energy envelope
+  (bridge/music.py: track_analysis) and returns either
+      mode "sections" — runs of measured loudness, labelled quiet / steady / loud,
+                        never a musical role, and always marked as DERIVED; or
+      mode "ramp"     — the bars are real but the audio did not honestly segment,
+                        so the strip is drawn in ONE hue with amplitude on lightness.
+  A track that cannot be decoded gets NO waveform and says so in a chip. There is no
+  path on this page that paints a section we did not measure. The STRUCTURE block
+  prints the same numbers as a readable list, which is what stops the colour from
+  being decoration.
+
+  ⚠️ THE PLAYER IS A PERSISTENT ELEMENT, NEVER RE-RENDERED, and it now lives in its
+  OWN host outside every innerHTML'd region (#player-host). Everything else on this
+  page is redrawn on every poll; an <audio> rebuilt that way would stop playing
+  mid-song every time the timer fired.
+
+  ⚠️ NOTHING EXTERNAL IN <head> — no stylesheet link, no script src, no font fetch
+  (the office.html lesson: a render-blocking resource that never resolves paints a
+  blank rectangle and no further script in the document runs).
+-->
+<script>
+(function () {
+  // ══ SKIN COHERENCE — read the panel's three axes, never write them ══════════
+  // U150: the no-external-resource contract is load-bearing here too. Migrate only
+  // MOT Deck-owned preference keys inline before the skin reads them. New keys win;
+  // unrelated storage remains untouched; storage denial cannot break Music.
+  try {
+    Object.keys(localStorage).forEach(function (oldKey) {
+      var newKey = oldKey.indexOf('harness.') === 0
+        ? 'motdeck.' + oldKey.slice(8)
+        : (oldKey.indexOf('harness-') === 0
+            ? 'motdeck-' + oldKey.slice(8) : '');
+      if (!newKey) return;
+      if (localStorage.getItem(newKey) === null) {
+        localStorage.setItem(newKey, localStorage.getItem(oldKey));
+      }
+      localStorage.removeItem(oldKey);
+    });
+  } catch (_) {
+    /* Storage denial must not prevent Music from booting. */
+  }
+
+  // Same contract as comfy.html/office.html: this page is served from the SAME ORIGIN
+  // as the panel, so the choices the panel persists are simply readable here. There is
+  // no theme button on this page on purpose — a tab that could disagree with the app it
+  // lives in is the original complaint.
+  //
+  //   motdeck-theme  ∈ dark(default) | light | gold | cyber   → data-theme
+  //   motdeck-chrome === 'studio'                             → data-chrome="studio"
+  //   motdeck-design ∈ studio | studio-light                  → data-design/-dvariant
+  //
+  // It runs in the HEAD, before the stylesheet is parsed: applying it later paints the
+  // page dark and then flips it, on every load. The whitelists are duplicated here
+  // rather than shared so a corrupt or future value falls through to Editorial instead
+  // of stamping an attribute no rule in this file answers.
+  function skin(){
+    var d = document.documentElement, t = null, c = null, g = null;
+    try {
+      t = localStorage.getItem('motdeck-theme');
+      c = localStorage.getItem('motdeck-chrome');
+      g = localStorage.getItem('motdeck-design');
+    } catch (e) { return; }                    // private mode: defaults stand, silently
+    if (t === 'light' || t === 'gold' || t === 'cyber') d.setAttribute('data-theme', t);
+    else d.removeAttribute('data-theme');
+    if (c === 'studio') d.setAttribute('data-chrome', 'studio');
+    else d.removeAttribute('data-chrome');
+    if (g === 'studio' || g === 'studio-light') {
+      d.setAttribute('data-design', 'studio');
+      if (g === 'studio-light') d.setAttribute('data-dvariant', 'light');
+      else d.removeAttribute('data-dvariant');
+    } else { d.removeAttribute('data-design'); d.removeAttribute('data-dvariant'); }
+    // The waveform's hues are TOKENS, so a look that changes them must repaint it.
+    try { if (window.__repaintWave) window.__repaintWave(); } catch (e) {}
+  }
+  skin();
+  window.__skin = skin;
+  // TOTAL and IDEMPOTENT: it states absolute state rather than toggling, so calling it
+  // on every focus/storage/visibility event is free and can never drift.
+  addEventListener('storage', skin);
+  addEventListener('focus', skin);
+  addEventListener('visibilitychange', skin);
+})();
+</script>
+<style>
+  /* ══ EDITORIAL — the default, byte-compatible with the panel's :root ═══════════
+     Every colour on this page resolves through a token, which is what makes the four
+     packs + the light theme + the studio design token-swaps rather than rule forks.
+     The ALL-DESIGNS rule in one sentence: if you write a literal colour below the
+     token blocks, one of the six looks will be wrong and nobody will notice. */
+  :root {
+    --bg:#0b0a10; --bg2:#0e0c15; --card:#14121d; --card2:#181527;
+    --line:#241f33; --line2:#2e2745;
+    --cream:#efe7d7; --fg:#c9c4d4; --dim:#9e9aab; --faint:#847e98;
+    --gold:#d9b36c; --ok:#46c99a; --warn:#e0a458; --bad:#e06565; --accent:#8b93f8;
+    --on-wash:rgba(217,179,108,.22);
+    --on-accent:#171420;
+    --scrim:rgba(6,5,10,.62);
+    /* the ONE floating grammar — tooltips and both sheets sit on it, so every floating
+       surface is correct in all six looks without a rule per look */
+    --float-bg:rgba(20,18,29,.94); --float-edge:var(--line2);
+    --float-blur:blur(20px) saturate(140%);
+    --float-shadow:0 24px 60px rgba(0,0,0,.5);
+    --mono:"SF Mono", ui-monospace, Menlo, monospace;
+    --serif:"New York", "Iowan Old Style", Georgia, serif;
+    --sans:-apple-system, "SF Pro Text", system-ui, sans-serif;
+    --r:6px; --r-lg:10px; --ctl-h:28px;
+
+    /* ── THE WHEEL (visual-craft §3c). openDAW holds seven hues at lightness 65–78 %
+       on a ground that stays the darkest thing on screen; Soundverse does the same
+       and keeps a ramp INSIDE one hue for its one continuous element. Both are read
+       here as tokens so a theme can re-band them — which the light looks below do,
+       because a 70 %-lightness hue on paper-white is invisible, not calm. */
+    --h1:hsl(189 74% 67%);   /* cyan   — the quiet level */
+    --h2:hsl(158 55% 66%);   /* mint   */
+    --h3:hsl( 46 74% 71%);   /* straw  — the single-hue ramp when there are no sections */
+    --h4:hsl( 26 78% 70%);   /* amber  — the loud level */
+    --h5:hsl(352 70% 72%);   /* rose   */
+    --h6:hsl(310 60% 74%);   /* orchid — the middle level */
+    --h7:hsl(248 72% 78%);   /* iris   — the dock-edge hint */
+    --wave-idle:.30;         /* the unplayed region: the same hue, low alpha */
+
+    /* ── the achromatic chrome. Spectrum draws NO border on a block: one white ring
+       is the whole elevation system on dark (jakub), and spacing does the grouping
+       (Geist). Every one of these is a token because two of the six looks are LIGHT,
+       where a white ring is nothing at all. */
+    --ring:rgba(255,255,255,.055); --ring-hover:rgba(255,255,255,.10);
+    --zborder:rgba(255,255,255,.08); --zborder-strong:rgba(255,255,255,.13);
+    --zhover:rgba(255,255,255,.04); --sel-bg:rgba(255,255,255,.07);
+    --drag-shadow:0 18px 44px rgba(0,0,0,.55);
+
+    /* VoiceStudio's shipped chrome metrics + Emil's easings, taken exactly */
+    --zbar:26px; --zpad:10px; --zlabel:10px; --ztrack:.07em;
+    --pill-h:20px; --pill-r:3px; --row:22px;
+    --gut:12px; --grp:24px; --sw:248px; --bh:184px;
+    --t-fast:.12s ease; --t-smooth:.2s cubic-bezier(.4,0,.2,1);
+    --eo:cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  html[data-theme="light"] {
+    --bg:#faf7f0; --bg2:#f2eee3; --card:#ffffff; --card2:#faf6ec;
+    --line:#e6dfcf; --line2:#d6ccb4;
+    --cream:#221d14; --fg:#3d372b; --dim:#5a5447; --faint:#716a5a;
+    --gold:#886522; --ok:#177e5d; --warn:#a06f22; --bad:#b13d3d; --accent:#5560c8;
+    --on-accent:#faf7f0;
+    --scrim:rgba(60,50,30,.34);
+    --float-bg:rgba(255,253,247,.96); --float-shadow:0 24px 60px rgba(60,50,30,.22);
+    /* THE LIGHTNESS DISCIPLINE, INVERTED. The band moves to 38–46 % so the wheel
+       still reads as one family against paper — the ground must stay the LIGHTEST
+       thing here, which is the same rule read from the other side. */
+    --h1:hsl(189 62% 38%); --h2:hsl(158 52% 34%); --h3:hsl( 40 72% 38%);
+    --h4:hsl( 22 74% 44%); --h5:hsl(352 62% 46%); --h6:hsl(310 48% 44%);
+    --h7:hsl(248 58% 50%);
+    --wave-idle:.26;
+    --ring:rgba(60,50,30,.13); --ring-hover:rgba(60,50,30,.24);
+    --zborder:rgba(60,50,30,.16); --zborder-strong:rgba(60,50,30,.28);
+    --zhover:rgba(60,50,30,.05); --sel-bg:rgba(60,50,30,.08);
+    --drag-shadow:0 18px 44px rgba(60,50,30,.24);
+  }
+  html[data-theme="gold"] {
+    --bg:#070608; --bg2:#0c0a09; --card:#131110; --card2:#1a1613;
+    --line:#2b2318; --line2:#3c301f;
+    --cream:#f4ecdc; --fg:#cfc7b6; --dim:#a39b88; --faint:#8d7f69;
+    --gold:#e8bf76; --ok:#4fc79b; --warn:#e8a95e; --bad:#e77070; --accent:#a89bf5;
+    --on-wash:rgba(232,191,118,.22); --on-accent:#171420;
+    --scrim:rgba(4,3,2,.66);
+    --float-bg:rgba(19,17,16,.95);
+    --h1:hsl(189 62% 66%); --h2:hsl(158 48% 64%); --h3:hsl( 44 78% 70%);
+    --h4:hsl( 28 78% 68%); --h5:hsl(352 62% 70%); --h6:hsl(310 52% 72%);
+    --h7:hsl(248 66% 76%);
+  }
+  html[data-theme="cyber"] {
+    --bg:#080c16; --bg2:#0b101d; --card:#111828; --card2:#162032;
+    --line:#1f2b45; --line2:#2c3c5e;
+    --cream:#e6edf7; --fg:#b9c6dd; --dim:#99a4b8; --faint:#7b88a6;
+    --gold:#7dd3fc; --ok:#4ade80; --warn:#fbbf24; --bad:#fb7185; --accent:#a78bfa;
+    --on-wash:rgba(125,211,252,.20); --on-accent:#171420;
+    --scrim:rgba(4,7,14,.64);
+    --float-bg:rgba(17,24,40,.95);
+    --h1:hsl(193 84% 68%); --h2:hsl(160 66% 64%); --h3:hsl( 48 84% 70%);
+    --h4:hsl( 26 84% 68%); --h5:hsl(348 78% 70%); --h6:hsl(300 66% 74%);
+    --h7:hsl(252 78% 78%);
+  }
+  /* ══ THE STUDIO DESIGN (✦) — palette + four shape properties ═══════════════════
+     Its palette values are copied from bridge/panel/assets/studio-design.css so the
+     surfaces are the same design, and NOT imported from it so this page cannot be
+     half-painted by a missing asset. If that file's palette moves, move these. */
+  html[data-design="studio"] {
+    --bg:#0d1112; --bg2:#111617; --card:#161c1e; --card2:#1b2325;
+    --line:#232c2e; --line2:#313c3e;
+    --cream:#e9efef; --fg:#c3cccc; --dim:#aeb9b9; --faint:#909d9d;
+    --gold:#41c2ac; --ok:#4ac98d; --warn:#e2aa5e; --bad:#ea7370; --accent:#41c2ac;
+    --on-wash:rgba(65,194,172,.18); --on-accent:#03211d;
+    --scrim:rgba(5,9,10,.62);
+    --float-bg:rgba(22,28,30,.95);
+    --sans:"Avenir Next", -apple-system, "SF Pro Text", system-ui, sans-serif;
+    /* ⚠️ STUDIO IS A SANS DESIGN, AND THIS IS THE TOKEN SWAP, NOT A SELECTOR RULE —
+       `:where(html[data-design="studio"]) h1` and `h1` are BOTH specificity (0,0,1),
+       so the later rule wins and the base typography block sits later in this file.
+       Restating --serif wins by construction instead of by ordering (comfy.html's
+       measured lesson, carried over rather than re-learned). */
+    --serif:var(--sans);
+    --r:8px; --r-lg:10px; --ctl-h:30px;
+    --h1:hsl(189 62% 64%); --h2:hsl(158 52% 62%); --h3:hsl( 46 66% 68%);
+    --h4:hsl( 26 70% 66%); --h5:hsl(352 60% 68%); --h6:hsl(310 48% 70%);
+    --h7:hsl(248 60% 74%);
+  }
+  html[data-design="studio"][data-dvariant="light"] {
+    --bg:#fbfcfd; --bg2:#f3f6f7; --card:#fdfeff; --card2:#f6fafa;
+    --line:#e3eaeb; --line2:#c9d4d5;
+    --cream:#101a1b; --fg:#33403f; --dim:#4b5a5a; --faint:#5a6a6a;
+    --gold:#097268; --ok:#0d7d5c; --warn:#8a600d; --bad:#b23636; --accent:#097268;
+    --on-wash:rgba(9,114,104,.14); --on-accent:#e4fbf5;
+    --scrim:rgba(30,50,50,.30);
+    --float-bg:rgba(253,254,255,.96); --float-shadow:0 24px 60px rgba(20,50,50,.18);
+    --h1:hsl(189 60% 34%); --h2:hsl(158 52% 30%); --h3:hsl( 40 68% 36%);
+    --h4:hsl( 22 70% 42%); --h5:hsl(352 58% 44%); --h6:hsl(310 44% 42%);
+    --h7:hsl(248 54% 48%);
+    --wave-idle:.26;
+    --ring:rgba(20,50,50,.12); --ring-hover:rgba(20,50,50,.22);
+    --zborder:rgba(20,50,50,.15); --zborder-strong:rgba(20,50,50,.26);
+    --zhover:rgba(20,50,50,.05); --sel-bg:rgba(20,50,50,.07);
+    --drag-shadow:0 18px 44px rgba(20,50,50,.2);
+  }
+  /* ══ STUDIO CHROME (▣) — control shapes only, never the palette ════════════════ */
+  html[data-chrome="studio"] { --r:4px; --ctl-h:26px; --pill-r:2px; }
+  :where(html[data-chrome="studio"]) button,
+  :where(html[data-chrome="studio"]) input,
+  :where(html[data-chrome="studio"]) select,
+  :where(html[data-chrome="studio"]) textarea { font-size:11.5px; }
+
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    margin:0; background:var(--bg); color:var(--fg);
+    font:12px/1.5 var(--sans); -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+  /* the surfaces we did not draw still carry the design (impeccable's cheapest win) */
+  ::selection { background:var(--on-wash); color:var(--cream); }
+  * { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  ::-webkit-scrollbar { width:7px; height:7px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:999px;
+    border:2px solid transparent; background-clip:content-box; }
+  ::-webkit-scrollbar-thumb:hover { background:var(--faint); background-clip:content-box; }
+  textarea, input { caret-color:var(--gold); }
+  .num, .lrow .t, .kv b { font-variant-numeric:tabular-nums; }
+
+  a { color:var(--gold); }
+  h1 { font:600 13px/1.2 var(--serif); color:var(--cream); margin:0; letter-spacing:.2px; }
+  h2 { font:600 13px/1.2 var(--serif); color:var(--cream); margin:0; letter-spacing:.3px; }
+  .caps { font:600 var(--zlabel)/1.25 var(--mono); letter-spacing:var(--ztrack);
+          text-transform:uppercase; color:var(--faint); }
+  .mono { font-family:var(--mono); font-size:10.5px; color:var(--faint); overflow-wrap:anywhere; }
+  .dim { color:var(--dim); } .faint { color:var(--faint); }
+  .hide { display:none !important; }
+  .grow { flex:1 1 auto; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+  /* ── THE PROSE CLASS ────────────────────────────────────────────────────────
+     `.say` is the ONLY element allowed to carry a sentence, in exactly the three
+     sanctioned places: the first-run invitation, a live state that demands a decision
+     (the RAM advisory, an engine that vanished, a failed render), and a section
+     failure. `.utext` is the user's OWN words (a prompt, a lyric sheet) shown back to
+     them in the track sheet — never our copy, and never at rest. */
+  .say { font-size:11.5px; line-height:1.55; color:var(--dim); margin:0; max-width:62ch;
+         text-wrap:pretty; }
+  .say b { color:var(--cream); font-weight:600; }
+  .say.bad { color:var(--bad); }
+  .utext { font:11.5px/1.6 var(--mono); color:var(--dim); white-space:pre-wrap;
+           max-height:210px; overflow:auto; background:var(--bg2);
+           border:1px solid var(--line); border-radius:var(--r); padding:8px 10px; }
+
+  /* ── CHIPS — the v1.5.34 grammar ────────────────────────────────────────────
+     A chip is ≤ ~5 words. The sentence, the arithmetic and the hedge live in the
+     tooltip, off the SAME verdict object. */
+  .chip {
+    display:inline-flex; align-items:center; gap:5px; height:var(--pill-h);
+    padding:0 7px; border:1px solid var(--zborder); border-radius:var(--pill-r);
+    background:transparent; font:10.5px var(--sans); color:var(--dim);
+    white-space:nowrap; max-width:100%;
+  }
+  .chip b { color:var(--cream); font-weight:600; }
+  .chip.c-ok   { color:var(--ok);   border-color:var(--ok); }
+  .chip.c-warn { color:var(--warn); border-color:var(--warn); }
+  .chip.c-bad  { color:var(--bad);  border-color:var(--bad); }
+  .chip.c-gold { color:var(--gold); border-color:var(--gold); }
+  .chip.c-dim  { color:var(--faint); border-color:var(--zborder); }
+  .chip.act { cursor:pointer; }
+  .chip.act:hover { border-color:var(--zborder-strong); color:var(--cream);
+                    background:var(--zhover); }
+  .chip.tipped { cursor:help; }
+  .chip.tipped:focus-visible { outline:1px solid var(--gold); outline-offset:1px; }
+  .dot { width:6px; height:6px; border-radius:50%; background:var(--faint); flex:none; }
+  .dot.on { background:var(--ok); } .dot.off { background:var(--bad); }
+
+  /* ── press: respond on pointer-DOWN, 120 ms, scale(.97) (Emil) ───────────── */
+  .press { transition:transform 120ms var(--eo), background-color var(--t-fast),
+                      border-color var(--t-fast), color var(--t-fast); }
+  .press:active { transform:scale(.97); }
+
+  /* ── THE ONE FLOATING GRAMMAR — tooltip + the two sheets ─────────────────────── */
+  .float-surface { background:var(--float-bg); border:1px solid var(--float-edge);
+                   border-radius:14px; box-shadow:var(--float-shadow);
+                   -webkit-backdrop-filter:var(--float-blur);
+                   backdrop-filter:var(--float-blur); }
+  #tip { position:fixed; z-index:9800; max-width:360px; padding:11px 13px;
+         font:11px var(--mono); color:var(--dim); line-height:1.65; }
+  #tip[hidden] { display:none; }
+  #tip .t-line  { color:var(--fg); display:block; margin-top:7px; }
+  #tip .t-line:first-child { margin-top:0; }
+  #tip .t-math  { color:var(--cream); display:block; margin-top:6px; }
+  #tip .t-hedge { color:var(--faint); display:block; margin-top:6px; }
+  #tip .t-link  { display:block; margin-top:8px; }
+  #tip.inert { pointer-events:none; }
+
+  /* ── the workbench ──────────────────────────────────────────────────────────── */
+  #app { display:grid; grid-template-rows:auto minmax(0,1fr); height:calc(100% - 22px); }
+  #top { display:flex; align-items:center; gap:8px; padding:3px 10px; row-gap:4px;
+         min-height:var(--zbar); flex-wrap:wrap;
+         background:var(--bg2); border-bottom:1px solid var(--zborder); }
+  /* the ONE-door switcher: the page's own tokens, so it is not browser chrome. */
+  /* width:auto is LOAD-BEARING: the base `input,select{width:100%}` rule at the form
+     block otherwise stretches this select across the whole header row (sample's live
+     feedback 2026-08-29: "so long, should be as the width or smaller than the engines
+     chip, same line next to it"). max-content keeps it exactly as wide as its label. */
+  #look { height:var(--pill-h); padding:0 4px; border:1px solid var(--zborder);
+          border-radius:var(--pill-r); background:var(--bg); color:var(--cream);
+          font:11px var(--sans); cursor:pointer; width:auto; max-width:max-content;
+          flex:0 0 auto; }
+  #look:focus-visible { outline:1px solid var(--gold); outline-offset:1px; }
+  #bench { display:grid; grid-template-columns:var(--sw) minmax(0,1fr);
+           gap:var(--grp); padding:var(--grp) var(--grp) 0; min-height:0;
+           overflow:auto; }
+  body.dock-right #bench { grid-template-columns:minmax(0,1fr) var(--sw); }
+  /* ⚠️ BOTH COLUMNS ARE PINNED TO ROW 1, and that is not decoration. The pane comes
+     FIRST in source order; when it docks right it takes column 2, and grid's sparse
+     auto-placement then refuses to put the later item back in column 1 of the same
+     row — the work column dropped to a second row, leaving half the page blank.
+     Walked live at 1440×1000 on 2026-08-29. */
+  #scol { grid-column:1; grid-row:1; min-height:0; display:grid;
+          grid-template-rows:minmax(0,1fr);
+          gap:var(--gut); transition:grid-template-rows 140ms var(--eo); }
+  body.dock-right #scol { grid-column:2; }
+  #work { grid-column:2; grid-row:1; min-height:0; display:grid;
+          grid-template-rows:auto auto minmax(96px,1fr); gap:var(--grp); }
+  body.dock-right #work { grid-column:1; }
+  /* Blender ships split/join/dock at 0.10–0.15 s: layout manipulation is not a zoom
+     and must not be paced like one. 140 ms, and nothing else moves. */
+  body.shrunk #scol { grid-template-rows:minmax(0,1fr) minmax(0,1fr); }
+
+  /* ── panel: the shared block chrome. NO block draws a border (Geist's "earn
+     borders"); one white ring is the entire elevation system (jakub). ─────────── */
+  .panel { background:var(--card); border-radius:var(--r-lg); min-height:0;
+    display:grid; grid-template-rows:var(--zbar) minmax(0,1fr); overflow:hidden;
+    box-shadow:0 0 0 1px var(--ring);
+    transition:box-shadow var(--t-fast), opacity 200ms var(--eo); }
+  @media (hover:hover) and (pointer:fine) {
+    .panel:hover { box-shadow:0 0 0 1px var(--ring-hover); } }
+  .pbar { display:flex; align-items:center; gap:6px; padding:0 var(--zpad); padding-top:2px; }
+  .pbar .t { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+             text-transform:uppercase; color:var(--dim); white-space:nowrap; }
+  .pbody { overflow:auto; min-height:0; padding:0 var(--zpad) 8px; }
+  .zx { width:17px; height:17px; border:0; border-radius:2px; background:transparent;
+    color:var(--faint); cursor:pointer; display:grid; place-items:center; font-size:10px;
+    line-height:1; flex:none; padding:0; }
+  .zx:hover { background:var(--zhover); color:var(--cream); }
+  .grab { cursor:grab; }
+  body.dragging .grab { cursor:grabbing; }
+  .grip { width:9px; height:9px; flex:none; opacity:.5; color:var(--faint);
+          background:radial-gradient(circle at 1.5px 1.5px, currentColor 1.1px,
+                     transparent 1.2px) 0 0/4px 4px; }
+
+  /* ── the settings pane ──────────────────────────────────────────────────────── */
+  .sgroup { padding:9px 0 3px; }
+  .sgroup > .caps { display:block; margin-bottom:6px; }
+  /* The header hint runs a notch smaller than panel labels (sample 2026-08-29): it is
+     ambience, not a control label, and it shares the row with the look switcher. */
+  #tophint { font-size:9.5px; letter-spacing:.04em; }
+  .sgroup .row { gap:5px; }
+  /* Blender's UI_ITEM_PROP_SEP_DIVIDE 0.4 — one global constant, every row */
+  .srow { display:grid; grid-template-columns:.4fr .6fr; align-items:center;
+          gap:8px; min-height:var(--row); }
+  .srow > label, .srow > .lb { font-size:10.5px; color:var(--dim); }
+  .seg { display:inline-flex; border:1px solid var(--zborder); border-radius:var(--pill-r);
+         overflow:hidden; width:100%; }
+  .seg button { flex:1; height:var(--row); border:0; border-radius:0; background:transparent;
+    color:var(--dim); font:10.5px var(--sans); cursor:pointer; padding:0 4px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .seg button[aria-pressed="true"] { background:var(--sel-bg); color:var(--cream); }
+  #spill { display:none; border-radius:var(--r-lg); min-height:0;
+           border:1px dashed var(--zborder-strong); padding:var(--gut);
+           align-content:start; gap:var(--gut); grid-template-columns:minmax(0,1fr);
+           overflow:auto; }
+  body.shrunk #spill { display:grid; }
+  #spill:empty::after { content:"space freed — drag a block here";
+    font:var(--zlabel)/1.4 var(--mono); letter-spacing:var(--ztrack);
+    text-transform:uppercase; color:var(--faint); opacity:.65; }
+  #spill .block { height:auto; min-height:150px; }
+
+  /* ── ONE LINE: prompt | lyrics | Compose. Fields grow DOWN, never wide. ─────── */
+  #line { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) auto;
+          gap:var(--gut); align-items:start; }
+  .fbox { background:var(--card); border-radius:var(--r-lg); overflow:hidden;
+          box-shadow:0 0 0 1px var(--ring); border-top:2px solid var(--fbox-top, transparent); }
+  .fhead { display:flex; align-items:center; gap:6px; height:20px; padding:0 var(--zpad); }
+  .fbox textarea { display:block; width:100%; resize:none; border:0; outline:0;
+    background:transparent; color:var(--cream); padding:0 var(--zpad) 9px;
+    font:11.5px/1.5 var(--sans); min-height:34px;
+    transition:height 200ms var(--eo); }
+  .fbox textarea::placeholder { color:var(--faint); }
+  #go { align-self:start; height:52px; min-width:104px; padding:0 16px;
+    border-radius:var(--r-lg); border:0; background:var(--gold); color:var(--on-accent);
+    cursor:pointer; display:grid; place-items:center; gap:2px;
+    font:600 12px var(--sans); letter-spacing:.01em; }
+  #go small { font:600 var(--zlabel)/1 var(--mono); letter-spacing:var(--ztrack);
+              text-transform:uppercase; opacity:.72; }
+  #go:disabled { opacity:.5; cursor:default; }
+  #advisory:not(:empty) { grid-column:1 / -1; }
+
+  /* ── THE GRID OF COMPACT BLOCKS — 3 per row, all draggable ─────────────────── */
+  #blocks { display:grid; grid-template-columns:repeat(3, minmax(0,1fr));
+            gap:var(--gut); align-content:start; }
+  .block { height:var(--bh); }
+  .block.w2 { grid-column:span 2; }
+  .block.drag { opacity:.92; box-shadow:var(--drag-shadow), 0 0 0 1px var(--zborder-strong); }
+  body.dragging .block:not(.drag) { transition:transform 240ms var(--eo); }
+  .slot { border:1px dashed var(--zborder-strong); border-radius:var(--r-lg); }
+  @media (max-width:1180px) { #blocks { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+  /* ── the waveform block: the colour hero ───────────────────────────────────── */
+  #wave { }
+  #wave .pbody { padding:0 0 6px; display:grid; grid-template-rows:auto minmax(0,1fr);
+                 gap:0; overflow:hidden; }
+  #stage-body { min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr) auto auto;
+                gap:0; }
+  #stage-body.centred { grid-template-rows:minmax(0,1fr); place-items:center;
+                        text-align:center; padding:0 var(--zpad) 6px; }
+  #stage-body.centred > * { justify-self:center; }
+  .track { display:flex; align-items:baseline; gap:8px; padding:2px var(--zpad) 6px; }
+  .track .nm { font:600 13px/1.2 var(--serif); color:var(--cream);
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .track .mt { font:10px var(--mono); color:var(--faint); letter-spacing:.04em; flex:none; }
+  canvas.wf { display:block; width:100%; height:100%; min-height:54px; cursor:pointer; }
+  .wfbox { position:relative; min-height:54px; }
+  .transport { display:flex; align-items:center; gap:8px; padding:6px var(--zpad) 0; }
+  .tbtn { width:24px; height:24px; border-radius:999px; border:1px solid var(--zborder-strong);
+    background:transparent; color:var(--cream); cursor:pointer; display:grid;
+    place-items:center; font-size:9px; flex:none; padding:0; }
+  .clock { font:10.5px var(--mono); color:var(--dim); font-variant-numeric:tabular-nums; }
+  /* the legend is what makes the colour READ as information rather than decoration */
+  .legend { display:flex; gap:0; height:3px; margin:5px var(--zpad) 0;
+            border-radius:2px; overflow:hidden; }
+  .legend i { display:block; height:100%; }
+  .legnames { display:flex; gap:0; padding:3px var(--zpad) 0; opacity:.85; }
+  .legnames span { font:9px var(--mono); letter-spacing:.05em; text-transform:uppercase;
+                   color:var(--faint); overflow:hidden; white-space:nowrap; }
+  #caps { display:flex; gap:5px; align-items:center; flex-wrap:wrap;
+          padding:6px var(--zpad) 0; }
+  #player-host { height:0; overflow:hidden; }
+  #player-host audio { display:block; width:100%; }
+  .prog { display:grid; gap:10px; justify-items:center; width:min(420px,92%); }
+  .bar { height:5px; border-radius:3px; background:var(--zborder); overflow:hidden; width:100%; }
+  .bar > i { display:block; height:100%; background:var(--gold); transition:width .25s linear; }
+
+  /* ── rows: the ledger, structure, engines, recent prompts ──────────────────── */
+  .lrow { display:grid; grid-template-columns:6px minmax(0,1fr) auto; gap:7px;
+          align-items:center; min-height:19px; cursor:pointer; border-radius:2px;
+          padding:0 3px; margin:0 -3px; border:0; background:transparent; width:100%;
+          text-align:left; font:inherit; color:inherit; }
+  .lrow:hover { background:var(--zhover); }
+  .lrow .n { font-size:10.5px; color:var(--fg); overflow:hidden; text-overflow:ellipsis;
+             white-space:nowrap; }
+  .lrow .t { font:9.5px var(--mono); color:var(--faint); }
+  .lrow.on .n { color:var(--cream); font-weight:600; }
+  .sw { width:6px; height:6px; border-radius:2px; background:var(--faint); }
+  .erow { display:grid; grid-template-columns:6px minmax(0,1fr) auto; gap:7px;
+          align-items:center; min-height:var(--row); }
+  .erow .n { font-size:10.5px; color:var(--fg); overflow:hidden; text-overflow:ellipsis;
+             white-space:nowrap; }
+  .erow .n small { display:block; font:9.5px var(--mono); color:var(--faint);
+                   font-variant-numeric:tabular-nums; }
+  .meter { height:3px; border-radius:2px; background:var(--zborder); overflow:hidden; }
+  .meter i { display:block; height:100%; border-radius:2px; background:var(--gold); }
+  .kv { display:flex; justify-content:space-between; align-items:center; gap:8px;
+        min-height:var(--row); font-size:10.5px; color:var(--dim); }
+  .kv b { color:var(--cream); font-weight:600; overflow:hidden; text-overflow:ellipsis;
+          white-space:nowrap; }
+  .chips { display:flex; flex-wrap:wrap; gap:5px; padding-top:4px; }
+
+  /* ── THE DOCK STRIP: deliberate quiet space, one ghost slot, no fake tools ─── */
+  #dock { border-top:1px solid var(--zborder); margin:0 calc(-1 * var(--grp));
+          padding:10px var(--grp) var(--grp);
+          display:grid; grid-template-rows:auto minmax(0,1fr); gap:8px; min-height:0; }
+  #dockbar { display:flex; align-items:center; gap:8px; }
+  #dockslots { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--gut);
+               min-height:74px; }
+  .ghost { border:1px dashed var(--zborder-strong); border-radius:var(--r-lg);
+    display:grid; place-items:center; align-content:center; gap:5px; text-align:center;
+    color:var(--faint); padding:8px; }
+  .ghost.mute { border-color:var(--zborder); opacity:.55; }
+
+  /* ── dock-edge hints while the settings pane is being moved ────────────────── */
+  #hints { position:fixed; inset:0; pointer-events:none; z-index:50; opacity:0;
+           transition:opacity 200ms var(--eo); }
+  body.moving #hints { opacity:1; }
+  #hints i { position:absolute; top:var(--zbar); bottom:22px; width:var(--sw);
+    border:1px dashed var(--h7);
+    background:color-mix(in oklab, var(--h7) 10%, transparent); }
+  #hints i.l { left:0; } #hints i.r { right:0; }
+  body.moving #hints i.on { background:color-mix(in oklab, var(--h7) 22%, transparent); }
+  #floater { position:fixed; z-index:55; pointer-events:none; opacity:0;
+             background:var(--card2); border:1px solid var(--zborder-strong);
+             border-radius:var(--r-lg); padding:6px 10px; box-shadow:var(--drag-shadow); }
+  body.moving #floater { opacity:1; }
+
+  /* ── controls ──────────────────────────────────────────────────────────────── */
+  input, select, textarea {
+    background:var(--bg2); color:var(--cream); border:1px solid var(--zborder);
+    border-radius:var(--pill-r); padding:0 6px; height:var(--row);
+    font:10.5px/1 var(--sans); width:100%; font-variant-numeric:tabular-nums;
+  }
+  input[type="range"] { padding:0; background:transparent; border:0; accent-color:var(--gold); }
+  button { font:500 11.5px var(--sans); cursor:pointer; }
+  .btn { height:var(--row); padding:0 8px; border-radius:var(--pill-r);
+         border:1px solid var(--zborder); background:transparent; color:var(--dim); }
+  .btn:hover { border-color:var(--zborder-strong); color:var(--cream); background:var(--zhover); }
+  .btn.primary { background:var(--gold); border-color:var(--gold); color:var(--on-accent);
+                 font-weight:600; }
+  .btn.arm { border-color:var(--bad); color:var(--bad); }
+  .btn:disabled { opacity:.55; cursor:default; }
+  /* S24: the dirty dot reads currentColor from the BUTTON because WebKit leaves a
+     pseudo-element's var(--gold) paint stale after a live palette flip. The label is
+     wrapped solely so its original dim/cream colors remain byte-for-byte visible. */
+  .btn.dotted { position:relative; color:var(--gold); }
+  .btn.dotted > .btn-label { color:var(--dim); }
+  .btn.dotted:hover > .btn-label { color:var(--cream); }
+  .btn.dotted::after { content:""; position:absolute; top:3px; right:3px; width:5px;
+                       height:5px; border-radius:50%; background:currentColor; }
+  :focus-visible { outline:2px solid var(--h7); outline-offset:-2px; border-radius:2px; }
+
+  /* ── the sheets (engines · track · presets) ─────────────────────────────────── */
+  #scrim { position:fixed; inset:0; z-index:40; background:var(--scrim); display:grid;
+           place-items:start center; padding:44px 16px 16px; overflow:auto; }
+  #scrim[hidden] { display:none; }
+  #sheet { width:min(860px,100%); padding:16px 18px 14px; display:grid; gap:11px;
+           font-size:12px; }
+  #sheet input, #sheet select { height:var(--ctl-h); font-size:12px; }
+  #sheet .btn { height:var(--ctl-h); padding:0 10px; font-size:12px; }
+  .esheet { display:grid; gap:10px; align-items:center; padding:9px 2px;
+            grid-template-columns:minmax(160px,1.2fr) 1fr auto auto;
+            border-top:1px solid var(--line); }
+  .esheet:first-of-type { border-top:0; }
+  .ename { font:600 13px/1.25 var(--serif); color:var(--cream); }
+  .prow { display:grid; gap:8px; align-items:center; padding:8px 2px;
+          grid-template-columns:minmax(150px,1fr) auto auto; border-top:1px solid var(--line); }
+
+  /* Keep routine feedback in a page-owned, non-modal toast. The shell supports native
+     alert/confirm/prompt from S12 onward, but status should not interrupt the workflow. */
+  #toast { position:fixed; left:50%; bottom:30px; transform:translateX(-50%);
+    max-width:min(560px, 92vw); z-index:9900;
+    border:1px solid var(--gold); border-radius:var(--r-lg);
+    background:var(--card2); color:var(--fg); padding:10px 14px; font-size:12px; }
+  #toast.bad { border-color:var(--bad); color:var(--bad); }
+
+  #foot { position:fixed; left:0; right:0; bottom:0; height:22px; display:flex;
+    align-items:center; gap:8px; padding:0 10px; background:var(--bg2);
+    border-top:1px solid var(--zborder);
+    font:9.5px/1 var(--mono); letter-spacing:.04em; color:var(--faint);
+    white-space:nowrap; overflow:hidden; }
+
+  /* ── narrow (walked at 380×780) ────────────────────────────────────────────── */
+  @media (max-width:820px) {
+    :root { --grp:14px; --gut:10px; --sw:auto; }
+    body { overflow:auto; }
+    #app { height:auto; grid-template-rows:auto auto; }
+    #bench, body.dock-right #bench { grid-template-columns:minmax(0,1fr);
+                                     padding-bottom:var(--grp); overflow:visible; }
+    #scol, #work, body.dock-right #scol, body.dock-right #work { grid-column:1;
+      grid-row:auto; }
+    #scol, body.shrunk #scol { grid-template-rows:auto auto; }
+    #line { grid-template-columns:minmax(0,1fr); }
+    #go { width:100%; height:40px; }
+    #blocks, #dockslots { grid-template-columns:minmax(0,1fr); }
+    /* At 380 a panel must be content-height, not a 1fr cell with an internal scroller:
+       a scroller inside a page that already scrolls is two scrollbars and a clipped
+       panel (walked at 380×780 on the mockup — the settings pane cut its last group). */
+    .panel { grid-template-rows:var(--zbar) auto; }
+    .pbody { overflow:visible; }
+    .block, .block.w2 { grid-column:span 1; height:auto; min-height:0; }
+    #wave .pbody { min-height:190px; }
+    #dockslots { min-height:0; }
+    .ghost.mute { min-height:54px; }
+    /* the footer joins the flow rather than covering the last block */
+    #foot { position:static; white-space:normal; height:auto; padding:6px 10px;
+            line-height:1.5; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* fewer and gentler, not zero: keep the state changes, drop the travel.
+       0.01 ms rather than 0 so transitionend still fires. */
+    * { transition-duration:0.01ms !important; animation-duration:0.01ms !important; }
+    .press:active { transform:none; }
+  }
+</style>
+</head>
+<body class="dock-left">
+
+<div id="app">
+
+  <div id="top">
+    <h1>Music</h1>
+    <!-- ══ THE ONE MUSIC DOOR (sample's ruling 2026-08-29) ═══════════════════════════
+         Two surfaces, one entry: this page (Studio) is what "Music" opens, and the
+         original view (Classic) is one control away instead of a second nav row and a
+         second tab. It is a real <select> rather than a chip menu on purpose — this is
+         a two-state CHOICE with a current value, which is what a select is for, it is
+         keyboard- and VoiceOver-correct without a line of JS, and the page's own tokens
+         paint it (the four declarations in #look) so it is not the unthemed browser
+         surface the design review complained about.
+         ⚠️ It never navigates on its own: `value` is re-asserted after the switch,
+         because in the app this document STAYS LOADED in its tab while the shell moves
+         to another one — a select left reading "Music Classic" on a page that is the
+         Studio would be a small lie sitting in the header forever. -->
+    <span class="chip" id="c-engines"><i class="dot"></i><span>checking…</span></span>
+    <span class="chip c-gold hide" id="c-work"></span>
+    <span class="grow"></span>
+    <!-- Right side, per sample's placement feedback (2026-08-29): the shortened drag
+         hint sits beside the look switcher at the far right — the switcher AFTER the
+         status chips, never before them. One sentence: the settings-to-edge detail
+         lives on the hint's hover instead of standing in the bar. -->
+    <span class="caps" id="tophint"
+          title="drag a panel's label bar to rearrange · drag SETTINGS to either edge">drag panels to rearrange</span>
+    <button type="button" class="btn press" id="reset-layout"
+            title="Restore the original panel order, return Settings to the left, and empty its spill slot">Reset layout</button>
+    <select id="look" aria-label="Which Music surface"
+            title="Music Studio is this page · Music Classic is the original Music view">
+      <option value="studio" selected>Music Studio</option>
+      <option value="classic">Music Classic</option>
+    </select>
+  </div>
+
+  <div id="bench">
+
+    <!-- ══ SETTINGS: a movable pane, shrinkable to half height ═══════════════ -->
+    <div id="scol">
+      <section class="panel" id="settings">
+        <div class="pbar grab" id="sgrab">
+          <span class="grip"></span>
+          <span class="t">Settings</span>
+          <span class="grow"></span>
+          <button class="zx press" id="shrink" title="Shrink to half height" aria-label="Shrink the settings pane">▭</button>
+          <button class="zx press" id="side" title="Move to the other edge" aria-label="Move the settings pane to the other edge">⇄</button>
+        </div>
+        <div class="pbody" id="sbody"></div>
+      </section>
+      <div id="spill"></div>
+    </div>
+
+    <!-- ══ WORK ══════════════════════════════════════════════════════════════ -->
+    <div id="work">
+
+      <!-- ONE LINE: prompt | lyrics | Compose. Both fields grow DOWNWARD only. -->
+      <div id="line">
+        <div class="fbox" style="--fbox-top:var(--h3)">
+          <div class="fhead"><span class="caps">Prompt</span><span class="grow"></span>
+            <span class="caps num" id="pcount"></span></div>
+          <textarea id="f-prompt" rows="1"
+            placeholder="High-energy rock and roll, gritty male vocal, crunchy guitars, live drums, 148 BPM"></textarea>
+        </div>
+        <div class="fbox" style="--fbox-top:var(--h6)">
+          <div class="fhead"><span class="caps" id="lyrlabel">Lyrics</span><span class="grow"></span>
+            <span class="caps">optional</span></div>
+          <textarea id="f-lyrics" rows="1" placeholder="Leave empty for an instrumental"></textarea>
+        </div>
+        <button id="go" class="press" data-act="go">Compose<small>⌘ ⏎</small></button>
+        <div id="advisory"></div>
+      </div>
+
+      <!-- THE BLOCKS — every one draggable, the arrangement remembered -->
+      <div id="blocks">
+
+        <section class="panel block w2" id="wave" data-block="wave">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Now playing</span>
+            <span class="grow"></span>
+            <span id="wavemode"></span></div>
+          <div class="pbody">
+            <div id="stage-body"></div>
+            <div id="caps"></div>
+          </div>
+        </section>
+
+        <section class="panel block" id="engines" data-block="engines">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Engines</span>
+            <span class="grow"></span><span class="caps" id="engcount"></span></div>
+          <div class="pbody" id="engbody"></div>
+        </section>
+
+        <section class="panel block" id="ledger" data-block="ledger">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Run ledger</span>
+            <span class="grow"></span><span class="caps num" id="ledcount"></span>
+            <button class="zx press" data-act="all" title="All tracks">▸</button></div>
+          <div class="pbody"><div id="strip"></div><div id="alltracks" class="hide"></div></div>
+        </section>
+
+        <section class="panel block" id="queue" data-block="queue">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Queue</span>
+            <span class="grow"></span><span class="caps" id="qstate"></span></div>
+          <div class="pbody" id="queuebody"></div>
+        </section>
+
+        <section class="panel block" id="structure" data-block="structure">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Structure</span>
+            <span class="grow"></span><span class="caps num" id="seccount"></span></div>
+          <div class="pbody" id="secbody"></div>
+        </section>
+
+        <section class="panel block" id="reuse" data-block="reuse">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Recent prompts</span>
+            <span class="grow"></span></div>
+          <div class="pbody" id="reusebody"></div>
+        </section>
+
+        <section class="panel block" id="library" data-block="library">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Library</span>
+            <span class="grow"></span><span class="caps num" id="libcount"></span></div>
+          <div class="pbody" id="libbody"></div>
+        </section>
+
+        <section class="panel block" id="disk" data-block="disk">
+          <div class="pbar grab"><span class="grip"></span><span class="t">Folder</span>
+            <span class="grow"></span></div>
+          <div class="pbody" id="diskbody"></div>
+        </section>
+
+      </div>
+
+      <!-- THE DOCK: reserved, quiet, one ghost slot. Nothing fake is drawn. -->
+      <div id="dock">
+        <div id="dockbar">
+          <span class="caps">Tool dock</span>
+          <span class="grow"></span>
+          <span id="dockchip"></span>
+        </div>
+        <div id="dockslots">
+          <div class="ghost"><span class="caps">Empty tool slot</span>
+            <span id="dockslotchip"></span></div>
+          <div class="ghost mute"><span class="caps">Reserved</span></div>
+          <div class="ghost mute"><span class="caps">Reserved</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- The player lives OUTSIDE every redrawn region, so a poll can never restart it. -->
+<div id="player-host"></div>
+<!-- Where a header failure lands. Empty and invisible until something throws. -->
+<div id="pageerr"></div>
+
+<div id="hints"><i class="l"></i><i class="r"></i></div>
+<div id="floater"><span class="caps">Settings</span></div>
+
+<div id="foot"><span id="stamp">—</span></div>
+
+<!-- ONE TAP: the engines sheet, the track detail, the presets. A visit, not a residence. -->
+<div id="scrim" hidden><div id="sheet" class="float-surface"></div></div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════════
+   THE PAGE'S BRAIN. One state object, one render(), and a poll whose cadence is a
+   function of whether anything is actually happening: 1s while a render or an install
+   is live, 20s otherwise (the Music view can start a render in its own tab, and a
+   page that only learned about it on reload would be lying by omission).
+   ══════════════════════════════════════════════════════════════════════════════ */
+/* MOT_ACTION_LIFECYCLE_V1_START
+   Kept byte-identical across both long-running surfaces by an executable gate. It is
+   duplicated rather than fetched because both deliberately remain single-file:
+   an unavailable helper must never turn an otherwise useful local page blank. */
+const MOTActionLifecycle = (() => {
+  function errorText(e) { return String((e && e.message) || e || 'request failed'); }
+  function run(start, timeoutMs) {
+    const controller = new AbortController();
+    let timer = null;
+    const deadline = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        resolve({ kind:'unknown' });
+        controller.abort();
+      }, Math.max(1, Number(timeoutMs) || 1));
+    });
+    const work = Promise.resolve().then(() => start(controller.signal)).then(
+      value => ({ kind:'settled', value }),
+      error => ({ kind:'failed', error:errorText(error) })
+    );
+    return Promise.race([work, deadline]).finally(() => { if (timer) clearTimeout(timer); });
+  }
+  return { run };
+})();
+/* MOT_ACTION_LIFECYCLE_V1_END */
+const S = {
+  st:null, lib:[], err:null,
+  form:{ engine:null, prompt:'', lyrics:'', seconds:null, steps:'', seed:'', format:'' },
+  busy:false, submitUnknown:false, warn:'', jobErr:'',
+  sheet:null,            /* null | 'engines' | 'track' | 'presets' */
+  removePlan:null,       /* preview token + exact paths for one engine removal */
+  dirEdit:false, dirValue:null,   /* the tracks-folder editor, held in STATE */
+  more:false, all:false, lyricsOpen:false,
+  sel:null,              /* the track filename the stage is showing (null = newest) */
+  detail:null,           /* the track filename the detail sheet is about */
+  wroteBack:null,
+  wave:{},               /* filename -> {analysis} | {error} | {pending:true} */
+  playing:false, pos:0,  /* the transport, read off the ONE <audio> element */
+};
+const $ = (id) => document.getElementById(id);
+
+/* ══ THE ONE MUSIC DOOR — the switcher's other half (sample 2026-08-29, REVISED on her
+   live feedback the same day): IN-PLACE NAVIGATION, never a tab switch. The first
+   build asked the shell for a separate `music` tab — which meant one dropdown visit
+   to Classic parked "Music Classic" in a strip window slot for the rest of the
+   session: TWO Music tabs on a strip whose whole ruling is one door. Both surfaces
+   now swap INSIDE the one Music tab: this page navigates to the Classic URL, and
+   Classic's own "♫ Music Studio →" chip navigates back (openMusicStudio in
+   index.html detects the solo document and mirrors this). The tab title stays
+   "Music" in the shell — correct, because the tab IS Music, whichever look it wears.
+   The old `switchTab` path is deliberately gone; do not resurrect it — it is the
+   MRU-pollution class, pinned in test_compose_page.js. */
+function musicClassic() {
+  location.href = '/?solo=music';
+  return true;
+}
+addEventListener('DOMContentLoaded', () => {
+  const sel = $('look');
+  if (!sel) return;
+  sel.addEventListener('change', () => {
+    if (sel.value === 'classic') musicClassic();
+    // Navigation is under way; re-asserting costs nothing and keeps the select
+    // truthful if the navigation is somehow prevented (never a standing lie).
+    sel.value = 'studio';
+  });
+});
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/* The stub DOM the suite runs this script in has neither of these, and a bare
+   reference to a missing global throws — so both are asked about by `typeof`. */
+const raf = (fn) => (typeof requestAnimationFrame === 'function'
+  ? requestAnimationFrame(fn) : setTimeout(fn, 16));
+const cssv = (n) => {
+  try {
+    if (typeof getComputedStyle !== 'function') return '';
+    return getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  } catch (e) { return ''; }
+};
+
+/* ── PURE helpers (all executed by bridge/tests/test_compose_page.js) ────────── */
+function bytes(n) {
+  if (n == null) return '?';
+  n = Number(n);
+  if (n === 0) return 'nothing';
+  if (n < 1e6) return (n / 1e3).toFixed(0) + ' kB';
+  if (n < 1e9) return (n / 1e6).toFixed(0) + ' MB';
+  return (n / 1e9).toFixed(2) + ' GB';
+}
+/* The one time format the lane uses, spelled as a person would say it. */
+function clock(s) {
+  if (s == null) return '—';
+  s = Math.max(0, Math.round(Number(s) || 0));
+  if (s < 60) return s + 's';
+  return Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
+}
+/* The transport's own clock: m:ss, because a player says 1:04 and not 64s. */
+function mmss(s) {
+  s = Math.max(0, Math.floor(Number(s) || 0));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+function ago(ts) {
+  const d = Math.max(0, (Date.now() / 1000) - (Number(ts) || 0));
+  if (d < 90) return 'just now';
+  if (d < 5400) return Math.round(d / 60) + ' min ago';
+  if (d < 172800) return Math.round(d / 3600) + 'h ago';
+  return Math.round(d / 86400) + ' days ago';
+}
+
+/* THE NAME OF A TRACK — the audit's charge, answered. A raw filename is a timestamp,
+   not an identity, so: the title the user gave it, else the head of the prompt that
+   made it, else (only then) the filename. PURE and total: a track with no sidecar at
+   all still gets a name it can be found by. */
+function titleOf(t) {
+  if (!t) return '';
+  if (t.title) return t.title;
+  const p = String(t.prompt || '').split('\n').map(s => s.trim()).find(Boolean) || '';
+  const head = p.replace(/^[^\p{L}\p{N}(«"']+/u, '').split(/\s+/).filter(Boolean).slice(0, 6);
+  if (head.length) return head.join(' ') + (p.split(/\s+/).length > 6 ? '…' : '');
+  return t.name || '';
+}
+
+/* ══ THE VERDICT OBJECTS ═══════════════════════════════════════════════════════
+   ONE object per chip: `chip` is the label (≤ ~5 words), `cls` the colour class, and
+   line/math/hedge/link are the tooltip. A chip and its hover are physically the same
+   object, so they cannot contradict. All PURE, all executed by the suite. */
+function engines()   { return ((S.st || {}).engines) || []; }
+function installed() { return engines().filter(e => e.installed); }
+function engineOf(id){ return engines().find(e => e.engine === id) || null; }
+function job()       { return (S.st || {}).job || null; }
+function running()   { const j = job(); return !!(j && (j.state === 'running' || j.state === 'queued')); }
+function installing(){ return engines().some(e => e.installing); }
+function current()   {
+  const inst = installed();
+  return inst.find(e => e.engine === S.form.engine) || inst[0] || null;
+}
+
+/* ① the header's ONE verdict object: what can render right now. */
+function enginesVerdict() {
+  const all = engines(), inst = installed();
+  if (!S.st) {
+    return { chip:'checking…', cls:'c-dim', up:false,
+             line:'Reading which engines are on disk.' };
+  }
+  if (!all.length) {
+    return { chip:'music lane off', cls:'c-bad', up:false,
+             line:'The bridge did not answer with any engine.',
+             hedge:'Nothing here can render until it does. The Logs view carries the '
+                 + 'bridge’s own words.' };
+  }
+  if (!inst.length) {
+    return { chip:'no engine yet', cls:'c-warn', up:false,
+             line:'Neither engine is on disk yet.',
+             math:all.map(e => e.label + ' · ' + (e.size_gb || '?') + ' GB').join('  ·  '),
+             hedge:'They are downloads, not services: nothing runs in the background '
+                 + 'and nothing downloads until you press.' };
+  }
+  return { chip:inst.length + ' of ' + all.length + ' engines ready', cls:'c-ok', up:true,
+           line:inst.map(e => e.label).join(' · '),
+           math:'a render is a one-shot process — no server, no port, nothing held in '
+              + 'memory afterwards',
+           hedge:'One render at a time, on purpose: two would fight for the GPU. You '
+               + 'can leave this tab while it works.' };
+}
+/* Per-engine row objects for the sheet. `state` is the ACTION chip. */
+function engineStateVerdict(e) {
+  if (e.installing)
+    return { chip:'Installing…', cls:'c-gold', act:null, busy:true,
+             line:'Downloading and building this engine now.',
+             hedge:'Several GB. It survives leaving this tab; the chip goes green when '
+                 + 'the files are on disk.' };
+  if (e.install_error)
+    return { chip:'Retry install', cls:'c-bad', act:'install', pick:e.engine,
+             line:'The last install did not finish.',
+             math:String(e.install_error).slice(-400),
+             hedge:'Nothing was half-installed into the library — an engine counts as '
+                 + 'present only when its files are actually on disk.' };
+  if (e.installed)
+    return { chip:'On disk ✓', cls:'c-ok', act:null, done:true,
+             line:'Every file this engine needs is on disk.',
+             math:(e.size_gb || '?') + ' GB' + (e.size_estimated ? ' (estimated)' : ' measured here'),
+             hedge:'Read from disk on every poll, never a stored flag: delete the files '
+                 + 'and this says so immediately.' };
+  return { chip:'Get ' + (e.size_gb || '?') + ' GB', cls:'c-gold', act:'install', pick:e.engine,
+           line:e.reason || 'Not on disk yet.',
+           math:(e.size_gb || '?') + ' GB to download',
+           hedge:'Nothing downloads until you press. acestep is also BUILT here, which '
+               + 'needs cmake; the bridge says so before it spends a byte.' };
+}
+function licenseVerdict(e) {
+  const l = e.license || {};
+  return { chip:l.license || 'licence unknown',
+           cls:l.badge === 'ok' ? 'c-ok' : l.badge === 'bad' ? 'c-bad' : 'c-warn',
+           line:l.reason || 'The licence recorded for these weights.',
+           hedge:'Read from the same table the model search rows use, so one surface '
+               + 'cannot be honest while another is wrong.',
+           link:l.source_url, linkLabel:'read the licence text ↗' };
+}
+/* The RAM figure, provenance-worded — it is a PLANNING number, not a measured peak,
+   and (sample's advisory-gates ruling) it never blocks a render. */
+function ramVerdict(e) {
+  return { chip:'~' + (e.ram_gb || '?') + ' GB while rendering', cls:'c-dim',
+           line:'This engine wants about ' + (e.ram_gb || '?') + ' GB of the model-RAM '
+              + 'budget while it renders.',
+           math:'planning figure: the weights plus working set, not a measured peak',
+           hedge:'Advisory only. If it does not fit, the page says so with the numbers '
+               + 'and you can render anyway — being wrong costs swap, not your song.' };
+}
+function speedVerdict(e) {
+  /* The engine note is two clauses ("~2 min per minute of song · highest quality").
+     A chip is ≤ ~5 words, so it carries the FIRST and the hover carries the whole
+     line — never a truncation that changes the meaning. */
+  const head = String(e.note || '').split('·')[0].trim();
+  return { chip:head || 'speed unknown', cls:'c-dim',
+           line:e.note || 'The engine’s own trade-off.',
+           hedge:'MiniMax is slower than linear in song length, which is why any time '
+               + 'shown here comes from renders that actually happened.' };
+}
+/* MEASURED, from this machine's own library — never a published rate. */
+function measuredVerdict(engineId, lib) {
+  const rows = (lib || []).filter(t => t.engine === engineId && t.wall != null && t.seconds);
+  if (!rows.length)
+    return { chip:'first run = measurement', cls:'c-dim', unmeasured:true,
+             line:'This engine has not finished a render on this Mac yet.',
+             hedge:'No time is shown until one has been measured here — a made-up '
+                 + 'number would be worse than no number.' };
+  const last = rows[0];
+  return { chip:'last ' + clock(last.wall) + ' for ' + last.seconds + 's', cls:'c-dim',
+           line:'Last render here: ' + clock(last.wall) + ' of wall time for a '
+              + last.seconds + '-second song.',
+           math:rows.length + ' finished render' + (rows.length === 1 ? '' : 's') + ' recorded',
+           hedge:'Measured on this Mac from the track’s own record, not a published rate.' };
+}
+/* The composer's engine chip: identity + readiness, and the RAM mark when the choice
+   matters. ONE object, echoed from the same engine row the sheet draws. */
+function engineChipVerdict(e) {
+  if (!e) return { chip:'no engine yet', cls:'c-warn', none:true,
+                   line:'Nothing on disk can render a song.',
+                   hedge:'Both engines are one download each; the sizes are on the buttons.' };
+  const meas = measuredVerdict(e.engine, S.lib);
+  return { chip:e.label, cls:'',
+           line:e.note || '',
+           math:meas.unmeasured ? '' : meas.line,
+           hedge:'Click to compare the engines — size, licence, memory and what each one '
+               + 'has actually cost here live in that sheet.' };
+}
+function lengthVerdict(secs) {
+  const mn = (S.st || {}).seconds_min || 10, mx = (S.st || {}).seconds_max || 300;
+  return { chip:clock(secs), cls:'c-dim',
+           line:'How long the song will be: ' + mn + ' to ' + mx + ' seconds.',
+           hedge:'Render time grows faster than length on MiniMax, so a 5-minute song is '
+               + 'a great deal more than five times a one-minute one.' };
+}
+function seedVerdict(seed) {
+  return { chip:'seed ' + seed, cls:'c-dim',
+           line:(S.st || {}).seed_help || 'The same seed with the same settings gives the '
+              + 'same song again.',
+           hedge:'Click to put this seed back in the field. It is left empty after every '
+               + 'render on purpose, so the next song is a new one.' };
+}
+function totalVerdict(lib) {
+  const b = lib.reduce((a, t) => a + (Number(t.size_bytes) || 0), 0);
+  return { chip:lib.length + ' track' + (lib.length === 1 ? '' : 's') + ' · ' + bytes(b),
+           cls:'c-dim',
+           line:'Everything is kept — nothing here is ever deleted automatically.',
+           math:(S.st || {}).dir || '',
+           hedge:'Pruning is deliberate: open a track and delete it there, or Reveal it '
+               + 'and use Finder.' };
+}
+/* A running render's ONE object. `remaining_s` is the bridge's blended figure and is
+   DELIBERATELY absent when it cannot be said honestly. */
+function jobVerdict(j) {
+  const pv = (j && j.progress_view) || {};
+  const el = Math.max(0, Math.round(Date.now() / 1000 - (j && j.started || 0)));
+  const left = pv.remaining_s != null ? '~' + clock(pv.remaining_s) + ' left'
+                                      : 'longer than estimated';
+  return { chip:clock(el) + ' · ' + left, cls:'c-gold',
+           pct:pv.progress == null ? null : Math.round(pv.progress * 100),
+           line:(j.engine || '') + ' · ' + (j.seconds || '?') + 's song · '
+              + (j.steps || '?') + ' steps · seed ' + (j.seed || '?'),
+           math:pv.phase || (pv.phase_kind === 'setup' ? 'loading the model' : ''),
+           hedge:'The remaining time comes from renders measured on this Mac; it is '
+               + 'left out entirely rather than invented. The bar stops at 95% because both '
+               + 'engines finish with a write their counters never mention.' };
+}
+/* A finished track's caption chips, one object each. */
+function trackChips(t) {
+  const out = [];
+  if (t.seconds != null) out.push({ chip:clock(t.seconds), cls:'c-dim',
+    line:'The length of the song.', hedge:'What was asked for and what was written.' });
+  if (t.engine) out.push({ chip:t.engine, cls:'c-dim', line:'The engine that rendered it.',
+    math:(engineOf(t.engine) || {}).label || '',
+    hedge:'Recorded with the track, so re-using its settings picks the same engine.' });
+  if (t.wall != null) out.push({ chip:'took ' + clock(t.wall), cls:'c-dim',
+    line:'Wall time of this render.', hedge:'Measured on this Mac, never estimated.' });
+  if (t.steps != null) out.push({ chip:t.steps + ' steps', cls:'c-dim',
+    line:'Steps this render actually used.',
+    hedge:'More steps is more compute. Each engine has its own default and its own ceiling.' });
+  out.push({ chip:bytes(t.size_bytes), cls:'c-dim', line:'Size on disk.',
+    math:t.name, hedge:'The file keeps its own name — a title is yours and lives beside it.' });
+  if (t.ext) out.push({ chip:String(t.ext).toUpperCase(), cls:'c-dim',
+    line:'The container this track is written in.',
+    hedge:'Any track can also be converted afterwards; open it to do that.' });
+  return out;
+}
+
+/* ══ THE WAVEFORM'S ONE VERDICT OBJECT ═════════════════════════════════════════
+   THE HONESTY GATE OF THIS WHOLE PAGE, and the reason it is a verdict object like
+   every other: the chip that says where the colour came from and the hover that
+   explains it are the same object, so the strip can never claim more than the
+   analysis measured.
+
+      mode 'sections' → hue carries runs of MEASURED loudness (derived, said so)
+      mode 'ramp'     → one hue, amplitude on lightness: the audio did not segment
+      no analysis     → no waveform at all, and the chip says why
+   There is no fourth branch, which is what makes "never paint fake sections" a
+   property of the code rather than a promise in a comment. */
+function waveVerdict(w) {
+  if (!w || w.pending)
+    return { chip:'reading the audio', cls:'c-dim', state:'pending',
+             line:'Measuring this track’s energy envelope.',
+             hedge:'It is computed once per file and then kept in the track’s own '
+                 + 'sidecar, so it is instant afterwards.' };
+  if (w.error || !w.analysis)
+    return { chip:'no waveform', cls:'c-warn', state:'none',
+             line:w.error || 'This track could not be decoded for analysis.',
+             hedge:'The song still plays. Nothing is drawn rather than drawing a shape '
+                 + 'we did not measure.' };
+  const a = w.analysis;
+  if (a.mode === 'sections')
+    return { chip:(a.sections || []).length + ' sections · derived', cls:'c-dim',
+             state:'sections',
+             line:'Colour is this track’s own loudness, measured here — quiet, steady '
+                + 'and loud runs, not verses and choruses.',
+             math:a.method || '',
+             hedge:'Neither engine reports musical structure, so nothing on this page '
+                 + 'claims to know it. What is drawn is what was measured from the audio, '
+                 + 'and the bar heights are scaled to this track\u2019s own loudest moment.' };
+  return { chip:'one hue · no sections', cls:'c-dim', state:'ramp',
+           line:'This track did not segment into runs of different loudness, so the '
+              + 'strip stays one hue and height is the amplitude.',
+           math:a.method || '',
+           hedge:'A flat or very short song has no shape to show; drawing sections '
+               + 'anyway would be inventing them. The bar heights are still real, scaled '
+               + 'to this track\u2019s own loudest moment.' };
+}
+
+/* ══ the wire ═════════════════════════════════════════════════════════════════ */
+async function api(path, opts) {
+  const r = await fetch(path, Object.assign({ headers:{'Content-Type':'application/json'} }, opts || {}));
+  let j = null;
+  try { j = await r.json(); } catch (e) { j = { ok:false, error:'the bridge returned no JSON (HTTP ' + r.status + ')' }; }
+  if (!j || typeof j !== 'object' || Array.isArray(j))
+    j = { ok:false, error:'the bridge returned an invalid response (HTTP ' + r.status + ')' };
+  if (!r.ok) j.ok = false;
+  return j;
+}
+let _loadPromise = null, _loadAgain = false;
+function load() {
+  if (_loadPromise) { _loadAgain = true; return _loadPromise; }
+  _loadPromise = (async () => {
+    do {
+      _loadAgain = false;
+      try {
+        const st = await api('/api/music/status');
+        if (!st.ok) throw new Error(st.error || 'the music lane did not answer');
+        const lb = await api('/api/music/library');
+        if (!lb.ok) throw new Error(lb.error || 'the library could not be read');
+        if (S.st && S.st.dir !== st.dir) {
+          S.wave = {}; S.sel = null; S.detail = null;
+          if (_audio) {
+            _audio.pause(); _audio.removeAttribute('src'); _audio.load();
+            S.pos = 0; S.playing = false;
+          }
+        }
+        S.st = st; S.lib = lb.tracks || [];
+        S.err = null; S.submitUnknown = false;
+      } catch (e) {
+        // Keep the last complete library snapshot and make the failed read visible.
+        S.err = 'could not refresh: ' + String(e.message || e);
+      }
+      render();
+    } while (_loadAgain);
+  })().finally(() => { _loadPromise = null; });
+  return _loadPromise;
+}
+/* THE ANALYSIS FETCH — once per track, then it lives in S.wave. A failure is a
+   REMEMBERED failure: retrying a broken decode on every 20-second poll would spend a
+   subprocess forever and still show nothing. */
+async function wantWave(t) {
+  if (!t || !t.name) return;
+  if (S.wave[t.name]) return;
+  const cache = S.wave;
+  S.wave[t.name] = { pending:true };
+  let r = null;
+  try { r = await api('/api/music/analysis/' + encodeURIComponent(t.name)); }
+  catch (e) { r = { ok:false, error:'the bridge did not answer' }; }
+  if (S.wave !== cache) return; // the library changed while this file was decoded
+  S.wave[t.name] = (r && r.ok && r.analysis)
+    ? { analysis:r.analysis }
+    : { error:(r && r.error) || 'this track could not be analysed' };
+  section('stage', 'stage-body', renderStage);
+  section('structure', 'secbody', renderStructure);
+}
+
+/* ══ TOOLTIPS — the v1.5.34 tipBind grammar ════════════════════════════════════
+   The chip is a control: hover, tap and keyboard all open it; Escape, scroll, resize
+   and leaving all close it. `title` is set underneath as the last-resort fallback —
+   one payload, no second wording. A tooltip carrying a LINK (the licence text) must be
+   reachable with the pointer, so it drops pointer-events:none and gets a grace period. */
+let _tipFor = null, _tipHideT = null;
+function tipNode() {
+  let t = $('tip');
+  if (!t) { t = document.createElement('div'); t.id = 'tip';
+            t.className = 'float-surface inert'; t.hidden = true;
+            t.setAttribute('role', 'tooltip'); document.body.appendChild(t);
+            t.addEventListener('mouseenter', () => clearTimeout(_tipHideT));
+            t.addEventListener('mouseleave', () => tipHide()); }
+  return t;
+}
+function tipHide() { const t = tipNode(); t.hidden = true; _tipFor = null; }
+function tipShow(el, html) {
+  const t = tipNode();
+  clearTimeout(_tipHideT);
+  t.innerHTML = html;
+  t.classList.toggle('inert', !/t-link/.test(html));
+  t.hidden = false;
+  _tipFor = el;
+  const r = el.getBoundingClientRect();
+  const w = t.offsetWidth, h = t.offsetHeight;
+  let left = Math.min(r.left, window.innerWidth - w - 10);
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - 10) top = Math.max(10, r.top - h - 8);
+  t.style.left = Math.max(10, left) + 'px';
+  t.style.top = top + 'px';
+}
+function tipBind(el, html, plain) {
+  if (!el) return;
+  el.classList.add('tipped');
+  if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+  el.title = plain || '';
+  el._tipHtml = html;
+  if (_tipFor === el) tipShow(el, html);
+  if (el._tipWired) return;
+  el._tipWired = true;
+  el.addEventListener('mouseenter', () => tipShow(el, el._tipHtml));
+  el.addEventListener('mouseleave', () => {
+    if (_tipFor !== el) return;
+    clearTimeout(_tipHideT);
+    _tipHideT = setTimeout(() => { if (_tipFor === el) tipHide(); }, 220);
+  });
+  el.addEventListener('focus', () => tipShow(el, el._tipHtml));
+  el.addEventListener('blur', () => { if (_tipFor === el) tipHide(); });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault(); e.stopPropagation();
+      if (el.dataset && el.dataset.act) { el.click(); return; }
+      if (_tipFor === el) tipHide(); else tipShow(el, el._tipHtml);
+    }
+  });
+}
+function tipHtml(v) {
+  if (!v) return '';
+  let h = '';
+  if (v.line)  h += '<span class="t-line">' + esc(v.line) + '</span>';
+  if (v.math)  h += '<span class="t-math">' + esc(v.math) + '</span>';
+  if (v.hedge) h += '<span class="t-hedge">' + esc(v.hedge) + '</span>';
+  if (v.link)  h += '<span class="t-link"><a href="' + esc(v.link) + '" target="_blank" ' +
+                    'rel="noopener">' + esc(v.linkLabel || 'read more ↗') + '</a></span>';
+  return h;
+}
+function tipPlain(v) {
+  if (!v) return '';
+  return [v.line, v.math, v.hedge, v.link].filter(Boolean).join('  ');
+}
+/* Verdict objects reach the markup by KEY, never serialised into an attribute: the
+   payload stays out of the DOM text, which is what keeps the at-rest prose count
+   honest rather than merely small. */
+let TIPS = {}, _tipSeq = 0;
+function tipRef(v) {
+  if (!v || (!v.line && !v.math && !v.hedge)) return '';
+  const k = 't' + (++_tipSeq);
+  TIPS[k] = v;
+  return ' data-tip="' + k + '"';
+}
+function wireTips(root) {
+  const r = root || document;
+  if (!r || !r.querySelectorAll) return;
+  r.querySelectorAll('[data-tip]').forEach(el => {
+    const v = TIPS[el.dataset.tip];
+    if (v) tipBind(el, tipHtml(v), tipPlain(v));
+  });
+}
+function chipHtml(v, extra) {
+  if (!v) return '';
+  return '<span class="chip ' + esc(v.cls || '') + ' ' + (extra || '') + '"' +
+         tipRef(v) + '>' + esc(v.chip) + '</span>';
+}
+
+/* ── ① header ───────────────────────────────────────────────────────────────── */
+function renderHeader() {
+  const ev = enginesVerdict();
+  const e = $('c-engines');
+  e.className = 'chip ' + ev.cls;
+  e.innerHTML = '<i class="dot ' + (ev.up ? 'on' : 'off') + '"></i><span>' + esc(ev.chip) + '</span>';
+  tipBind(e, tipHtml(ev), tipPlain(ev));
+
+  /* THE SECOND CHIP EXISTS ONLY WHILE SOMETHING IS HAPPENING — an install in flight.
+     When nothing is, the header says nothing about it at all. */
+  const inst = engines().filter(x => x.installing);
+  const w = $('c-work');
+  w.classList.toggle('hide', !inst.length);
+  if (inst.length) {
+    const v = { chip:'installing ' + inst.map(x => x.engine).join(', '), cls:'c-gold',
+                line:'Downloading and building an engine now.',
+                hedge:'Several GB, and it keeps going if you leave this tab.' };
+    w.textContent = v.chip;
+    tipBind(w, tipHtml(v), tipPlain(v));
+  }
+  $('stamp').textContent = 'compose-2026-08-29b · ' + new Date().toLocaleTimeString();
+}
+
+/* ── ② THE WAVEFORM BLOCK (the old hero stage, now the workbench's one hero) ──
+   The one place on this page that owns a persistent DOM element: the <audio>, which
+   lives in #player-host and is never inside anything this function redraws. */
+function tracks() { return S.lib || []; }
+function heroTrack() {
+  const list = tracks();
+  return list.find(t => t.name === S.sel) || list[0] || null;
+}
+let _audio = null;
+function heroAudio(src) {
+  if (!_audio) {
+    _audio = document.createElement('audio');
+    _audio.controls = false;
+    _audio.preload = 'metadata';
+    _audio.addEventListener('timeupdate', onTime);
+    _audio.addEventListener('ended', () => { S.playing = false; paintHero(); syncPlay(); });
+    _audio.addEventListener('play', () => { S.playing = true; syncPlay(); });
+    _audio.addEventListener('pause', () => { S.playing = false; syncPlay(); });
+    const host = $('player-host');
+    if (host && host.appendChild) host.appendChild(_audio);
+  }
+  /* ⚠️ ONLY WHEN IT CHANGES. Re-setting .src to the same URL restarts playback, and
+     this function is called from a render that runs every poll. */
+  if (_audio.getAttribute('src') !== src) {
+    _audio.setAttribute('src', src);
+    _audio.src = src;
+    S.pos = 0; S.playing = false;
+  }
+  return _audio;
+}
+function fileSrc(t) { return '/api/music/file/' + encodeURIComponent(t.name); }
+
+function renderStage() {
+  const body = $('stage-body');
+  const caps = $('caps');
+  const mode = $('wavemode');
+  const j = job();
+  body.className = '';
+  if (mode) mode.innerHTML = '';
+
+  /* FIRST RUN — nothing on disk. The invitation lives in the stage, Fooocus-grade:
+     one heading, the sized Get buttons, one line. The standing Engines section the
+     Music view opens with does not exist here; it is the sheet. */
+  if (!tracks().length && !installed().length && !installing()) {
+    body.className = 'centred';
+    body.innerHTML =
+      '<div id="stage-invite">' +
+        '<h2 class="say">Describe a song and hear it here — rendered on this Mac, offline.</h2>' +
+        '<div class="row" style="justify-content:center;margin-top:10px">' +
+        engines().map(e => '<button class="btn primary" data-act="install" data-pick="' +
+          esc(e.engine) + '"' + tipRef(licenseVerdict(e)) + '>Get ' + esc(e.label) +
+          ' · ' + esc(String(e.size_gb || '?')) + ' GB</button>').join('') +
+        '</div>' +
+        '<p class="say">Nothing downloads until you press, and the sizes are exact.</p>' +
+      '</div>';
+    caps.innerHTML = '';
+    wireTips(body);
+    return;
+  }
+
+  /* INSTALLING WITH NOTHING ELSE ON DISK — the stage says so, or the empty-library
+     line below would read as "nothing is happening" while several GB are landing. */
+  if (!tracks().length && !installed().length) {
+    const busy = engines().filter(x => x.installing).map(x => x.engine).join(', ');
+    body.className = 'centred';
+    body.innerHTML = '<p class="say"><b>Installing ' + esc(busy) + '.</b> Several GB — '
+      + 'it keeps going if you leave this tab, and the chip above turns green when the '
+      + 'files are on disk.</p>';
+    caps.innerHTML = '';
+    return;
+  }
+
+  /* RENDERING — the stage is the progress surface. */
+  if (j && running()) {
+    const v = jobVerdict(j);
+    body.className = 'centred';
+    body.innerHTML =
+      '<div class="prog">' +
+        '<div class="bar"><i style="width:' + (v.pct == null ? 4 : v.pct) + '%"></i></div>' +
+        '<div class="row" style="justify-content:center">' + chipHtml(v) + '</div>' +
+      '</div>';
+    caps.innerHTML = '';
+    wireTips(body);
+    return;
+  }
+
+  const t = heroTrack();
+  if (!t) {
+    /* Engines are ready and the library is empty: one quiet line, not a paragraph. */
+    body.className = 'centred';
+    body.innerHTML = '<p class="say">The song you make lands here, and stays.</p>';
+    caps.innerHTML = '';
+    return;
+  }
+
+  /* THE SONG. The title, the audio and the waveform all come off the SAME track
+     object — a stage that could name one file, play another and draw a third is the
+     lie this construction prevents. */
+  const w = S.wave[t.name];
+  const wv = waveVerdict(w);
+  wantWave(t);
+  body.innerHTML =
+    '<div class="track"><span class="nm">' + esc(titleOf(t)) + '</span>' +
+      '<span class="grow"></span>' +
+      '<span class="mt num">' + esc(clock(t.seconds)) + '</span></div>' +
+    '<div class="wfbox"><canvas class="wf" id="bigwave" aria-label="waveform"></canvas></div>' +
+    '<div class="legend" id="legend"></div><div class="legnames" id="legnames"></div>' +
+    '<div class="transport">' +
+      '<button class="tbtn press" id="play" aria-label="Play">' +
+        (S.playing ? '❚❚' : '▶') + '</button>' +
+      '<span class="clock num" id="clk">' + esc(mmss(S.pos)) + '</span>' +
+      '<span class="grow"></span>' +
+      '<button class="btn" data-act="reuse" data-name="' + esc(t.name) + '">Use settings</button>' +
+      '<button class="btn" data-act="open-track" data-name="' + esc(t.name) + '">Open ▸</button>' +
+    '</div>';
+  heroAudio(fileSrc(t));
+  if (mode) { mode.innerHTML = chipHtml(wv); wireTips(mode); }
+
+  const chips = trackChips(t).map(v => chipHtml(v)).join('') +
+    (t.seed != null ? '<span class="chip c-dim act" data-act="reuse-seed" data-seed="' +
+       esc(t.seed) + '"' + tipRef(seedVerdict(t.seed)) + '>seed ' + esc(t.seed) + '</span>' : '') +
+    chipHtml({ chip:ago(t.created), cls:'c-dim', line:'When it was rendered.',
+               math:new Date((t.created || 0) * 1000).toLocaleString() });
+  caps.innerHTML = chips;
+  wireTips(caps);
+  wireTips(body);
+  paintHero();
+  drawLegend(w);
+}
+
+/* ══ THE PAINTER ═══════════════════════════════════════════════════════════════
+   Bars from the MEASURED peaks; hue from the MEASURED loudness runs; amplitude on
+   lightness inside the hue; the unplayed region is the same hue at low alpha, so
+   progress never rides on colour alone. Every colour is read from a token, so all six
+   looks get their own band (the light ones re-band to 34–46 %). */
+const LEVEL_TOKEN = ['--h1', '--h6', '--h4'];   /* quiet · steady · loud */
+const RAMP_TOKEN = '--h3';
+function hueOf(token) {
+  const m = String(cssv(token) || '').match(/hsl\(\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/);
+  return m ? { h:+m[1], s:+m[2], l:+m[3] } : { h:44, s:70, l:70 };
+}
+function paintWave(cv, an, prog) {
+  if (!cv || !cv.getContext) return false;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return false;
+  const dpr = Math.min((typeof devicePixelRatio === 'number' ? devicePixelRatio : 1) || 1, 2);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  const c = cv.getContext('2d');
+  if (!c) return false;
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, w, h);
+  const peaks = (an && an.peaks) || [];
+  if (!peaks.length) return false;
+  const bw = 3, gap = 1;
+  const n = Math.max(8, Math.floor(w / (bw + gap)));
+  const idle = Number(cssv('--wave-idle')) || 0.3;
+  const secs = (an.mode === 'sections' && an.sections) ? an.sections : null;
+  const dur = an.duration || 1;
+  const mid = h / 2, cap = h / 2 - 1;
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;
+    /* one bar = the loudest peak it covers, so a downsample never flattens a hit */
+    const a = Math.floor(i * peaks.length / n), b = Math.max(a + 1, Math.floor((i + 1) * peaks.length / n));
+    let amp = 0;
+    for (let k = a; k < b && k < peaks.length; k++) amp = Math.max(amp, peaks[k]);
+    let H = hueOf(RAMP_TOKEN);
+    if (secs) {
+      const tt = t * dur;
+      let s = secs[secs.length - 1];
+      for (let k = 0; k < secs.length; k++) {
+        if (tt >= secs[k].start && tt < secs[k].end) { s = secs[k]; break; }
+      }
+      H = hueOf(LEVEL_TOKEN[Math.min(s.level, LEVEL_TOKEN.length - 1)] || RAMP_TOKEN);
+    }
+    const alpha = t <= prog ? 1 : idle;
+    c.fillStyle = 'hsl(' + H.h + ' ' + H.s + '% ' + (H.l - 6 + 14 * amp) + '% / ' + alpha + ')';
+    const bh = Math.max(1.5, amp * cap);
+    const x = i * (bw + gap);
+    c.beginPath();
+    if (c.roundRect) c.roundRect(x, mid - bh, bw, bh * 2, Math.min(bw / 2, 1.5));
+    else c.rect(x, mid - bh, bw, bh * 2);
+    c.fill();
+  }
+  if (prog > 0) {
+    const px = Math.round(prog * w) + 0.5;
+    c.fillStyle = cssv('--cream') || '#fff';
+    c.globalAlpha = 0.85; c.fillRect(px, 0, 1, h); c.globalAlpha = 1;
+  }
+  return true;
+}
+function heroDuration() {
+  const t = heroTrack();
+  const w = t && S.wave[t.name];
+  const an = w && w.analysis;
+  if (an && an.duration) return an.duration;
+  if (_audio && isFinite(_audio.duration) && _audio.duration > 0) return _audio.duration;
+  return (t && Number(t.seconds)) || 0;
+}
+function paintHero() {
+  const cv = $('bigwave');
+  const t = heroTrack();
+  if (!cv || !t) return;
+  const w = S.wave[t.name];
+  const dur = heroDuration();
+  paintWave(cv, (w && w.analysis) || null, dur ? Math.min(1, S.pos / dur) : 0);
+}
+window.__repaintWave = () => { try { paintHero(); } catch (e) {} };
+function drawLegend(w) {
+  const L = $('legend'), N = $('legnames');
+  if (!L || !N) return;
+  const an = w && w.analysis;
+  const secs = (an && an.mode === 'sections' && an.sections) || [];
+  if (!secs.length) { L.innerHTML = ''; N.innerHTML = ''; return; }
+  const dur = an.duration || 1;
+  L.innerHTML = secs.map(s => '<i style="flex:' + ((s.end - s.start) / dur) +
+    ';background:var(' + LEVEL_TOKEN[Math.min(s.level, 2)] + ')"></i>').join('');
+  N.innerHTML = secs.map(s => '<span style="flex:' + ((s.end - s.start) / dur) + '">' +
+    esc(s.label) + '</span>').join('');
+}
+function onTime() {
+  if (!_audio) return;
+  S.pos = _audio.currentTime || 0;
+  const c = $('clk');
+  if (c) c.textContent = mmss(S.pos);
+  raf(paintHero);
+}
+function syncPlay() {
+  const b = $('play');
+  if (b) { b.innerHTML = S.playing ? '❚❚' : '▶'; b.setAttribute('aria-label', S.playing ? 'Pause' : 'Play'); }
+}
+
+/* ── ③ THE RUN LEDGER (one compact block) + All tracks, expanding in place ──── */
+function renderStrip() {
+  const list = tracks();
+  const sel = heroTrack();
+  const row = (t, i) => '<button class="lrow' + (sel && sel.name === t.name ? ' on' : '') +
+    '" data-act="select" data-name="' + esc(t.name) + '" title="' + esc(titleOf(t)) + '">' +
+    '<span class="sw" style="background:var(' +
+      (t.engine === 'minimax' ? '--h1' : t.engine === 'acestep' ? '--h6' : '--h3') + ')"></span>' +
+    '<span class="n">' + esc(titleOf(t)) + '</span>' +
+    '<span class="t">' + esc(clock(t.seconds)) + '</span></button>';
+  $('strip').innerHTML = list.length
+    ? list.slice(0, S.all ? 0 : 7).map(row).join('') +
+      (list.length ? '<div class="chips">' + chipHtml(totalVerdict(list)) + '</div>' : '')
+    : '';
+  $('alltracks').classList.toggle('hide', !S.all);
+  $('alltracks').innerHTML = S.all ? list.map(row).join('') : '';
+  $('ledcount').textContent = list.length
+    ? (list.length + ' run' + (list.length === 1 ? '' : 's')) : '';
+  wireTips($('strip'));
+}
+
+/* ── ④ THE OTHER BLOCKS. Every value here is LIVE or ABSENT — the mockup's
+      depiction numbers ship nowhere (sample's real-data rule at GO). ───────────── */
+function renderEnginesBlock() {
+  const list = engines();
+  $('engcount').textContent = list.length ? (installed().length + ' on disk') : '';
+  $('engbody').innerHTML = list.map(e => {
+    const sv = engineStateVerdict(e);
+    const meas = measuredVerdict(e.engine, S.lib);
+    return '<div class="erow">' +
+      '<span class="sw" style="background:var(' + (e.engine === 'minimax' ? '--h1' : '--h6') + ')"></span>' +
+      '<span class="n">' + esc(e.label) + '<small>' +
+        esc((e.size_gb || '?') + ' GB' +
+            (meas.unmeasured ? '' : ' · last ' +
+              clock((tracks().find(t => t.engine === e.engine && t.wall != null) || {}).wall))) +
+      '</small></span>' +
+      '<span class="chip ' + esc(sv.cls) + '"' + tipRef(sv) + '>' + esc(sv.chip) + '</span>' +
+    '</div>';
+  }).join('') +
+  '<div class="chips"><span class="chip act" data-act="engines">Compare ▸</span></div>';
+  wireTips($('engbody'));
+}
+function renderQueueBlock() {
+  const j = job(), live = running();
+  const v = live ? jobVerdict(j) : null;
+  $('qstate').textContent = live ? 'rendering' : installing() ? 'installing' : 'idle';
+  const queue = $('queuebody');
+  if (live && queue.querySelector && queue.querySelector('.arm')) return;
+  $('queuebody').innerHTML =
+    '<div class="kv"><span>State</span><b>' +
+      esc(live ? 'rendering' : 'idle') + '</b></div>' +
+    '<div class="kv"><span>At a time</span><b>1</b></div>' +
+    (live
+      ? '<div class="meter" style="margin-top:6px"><i style="width:' +
+          (v.pct == null ? 4 : v.pct) + '%"></i></div>' +
+        '<div class="chips">' + chipHtml(v) +
+          '<button class="btn" data-act="stop">Stop</button></div>'
+      : (j && j.state === 'done'
+          ? '<div class="kv"><span>Last run</span><b class="num">' + esc(clock(j.wall)) + '</b></div>'
+          : '')) ;
+  wireTips($('queuebody'));
+}
+/* THE STRUCTURE BLOCK — the same numbers the colour is made of, as a readable list.
+   This is what stops the hue being decoration: if the strip claims a shape, the
+   figures behind it are one glance away, and when there is no honest shape this
+   block says exactly that instead of listing invented parts. */
+function renderStructure() {
+  const t = heroTrack();
+  const b = $('secbody'), n = $('seccount');
+  if (!t) { b.innerHTML = ''; n.textContent = ''; return; }
+  const w = S.wave[t.name];
+  const wv = waveVerdict(w);
+  const an = w && w.analysis;
+  const secs = (an && an.mode === 'sections' && an.sections) || [];
+  n.textContent = secs.length ? (secs.length + ' runs') : '';
+  b.innerHTML = secs.map(s =>
+    '<div class="erow"><span class="sw" style="background:var(' +
+      LEVEL_TOKEN[Math.min(s.level, 2)] + ')"></span>' +
+    '<span class="n">' + esc(s.label) + '<small>' + esc(mmss(s.start) + ' – ' + mmss(s.end)) +
+    '</small></span><span class="t">' + Math.round((s.energy || 0) * 100) + '%</span></div>'
+  ).join('') + '<div class="chips">' + chipHtml(wv) + '</div>';
+  wireTips(b);
+}
+/* A prompt is the USER's own prose, and prose does not stand on this page: the row
+   carries a LABEL-length head (the same ladder titleOf uses) and the whole prompt
+   lives on the row's own hover, where sentences are allowed. */
+function promptHead(p) {
+  const w = String(p || '').trim().split(/\s+/).filter(Boolean);
+  return w.slice(0, 6).join(' ') + (w.length > 6 ? '…' : '');
+}
+function renderReuseBlock() {
+  /* REAL prompts, from this library's own tracks, newest first and de-duplicated. */
+  const seen = {}, out = [];
+  tracks().forEach(t => {
+    const p = String(t.prompt || '').trim();
+    if (!p || seen[p]) return;
+    seen[p] = 1; out.push({ p, t });
+  });
+  $('reusebody').innerHTML = out.slice(0, 8).map(r =>
+    '<button class="lrow" data-act="use-prompt" data-name="' + esc(r.t.name) + '" title="' +
+    esc(r.p) + '"><span class="sw" style="background:var(' +
+      (r.t.engine === 'minimax' ? '--h1' : '--h6') + ')"></span>' +
+    '<span class="n">' + esc(promptHead(r.p)) + '</span><span class="t">use</span></button>').join('');
+}
+function renderLibraryBlock() {
+  const list = tracks();
+  $('libcount').textContent = list.length ? String(list.length) : '';
+  if (!list.length) { $('libbody').innerHTML = ''; return; }
+  const named = list.filter(t => t.title).length;
+  const longest = list.reduce((a, t) => Math.max(a, Number(t.seconds) || 0), 0);
+  const walls = list.map(t => Number(t.wall)).filter(v => v > 0).sort((a, b) => a - b);
+  const median = walls.length
+    ? (walls[Math.floor((walls.length - 1) / 2)] + walls[Math.floor(walls.length / 2)]) / 2
+    : null;
+  $('libbody').innerHTML =
+    '<div class="kv"><span>Tracks</span><b class="num">' + list.length + '</b></div>' +
+    '<div class="kv"><span>Named</span><b class="num">' + named + '</b></div>' +
+    '<div class="kv"><span>Longest</span><b class="num">' + esc(clock(longest)) + '</b></div>' +
+    (median != null
+      ? '<div class="kv"><span>Median render</span><b class="num">' + esc(clock(median)) + '</b></div>'
+      : '') +
+    '<div class="chips">' + chipHtml(totalVerdict(list)) + '</div>';
+  wireTips($('libbody'));
+}
+function renderDiskBlock() {
+  const dir = (S.st || {}).dir || '';
+  const def = (S.st || {}).default_dir || '';
+  $('diskbody').innerHTML =
+    '<div class="chips">' +
+      chipHtml({ chip:'tracks folder', cls:'c-dim', line:'Where finished songs are written.',
+                 math:dir,
+                 hedge:dir && def && dir !== def
+                   ? 'Only this folder is listed here; tracks left in the default one are '
+                     + 'untouched and reappear if you set it back.'
+                   : 'Change it and only that folder is listed; nothing is moved or deleted.' }) +
+      (dir !== def ? chipHtml({ chip:'not the default', cls:'c-dim',
+        line:'The library points somewhere other than the default folder.', math:def }) : '') +
+    '</div>' +
+    '<div class="chips">' +
+      '<span class="chip act" data-act="reveal-dir">Reveal</span>' +
+      '<span class="chip act" data-act="engines">Change ▸</span>' +
+    '</div>';
+  wireTips($('diskbody'));
+}
+function renderDock() {
+  /* P6 (docs/UNFORGET.md): stem separation is the first tool meant to dock here. NONE
+     is built, so no tool is drawn — one honest ghost slot and two reserved ones. */
+  const v = { chip:'reserved · nothing installed', cls:'c-dim',
+    line:'This strip is held open for tools that dock into Compose.',
+    math:'first: stem separation (demucs / UVR class)',
+    hedge:'Nothing is built for it yet, so nothing is drawn — an empty slot that says '
+        + 'so beats a button that cannot work.' };
+  $('dockchip').innerHTML = chipHtml(v);
+  $('dockslotchip').innerHTML = chipHtml(Object.assign({}, v, { chip:'stem separation first' }));
+  wireTips($('dockchip')); wireTips($('dockslotchip'));
+}
+
+/* ── ⑤⑥⑦ THE COMPOSER: the settings pane + the one line ─────────────────────── */
+function secondsNow() {
+  const d = (S.st || {}).seconds_default || 60;
+  return S.form.seconds == null ? d : S.form.seconds;
+}
+function renderComposer() {
+  const e = current();
+  if (e && S.form.engine !== e.engine) S.form.engine = e.engine;
+  const j = job();
+  const live = running();
+  const secs = secondsNow();
+  const inst = installed();
+  const fmts = (((S.st || {}).formats) || {})[S.form.engine] || [];
+  const defFmt = (((S.st || {}).format_default) || {})[S.form.engine] || '';
+  if (fmts.length && S.form.format && !fmts.includes(S.form.format)) S.form.format = '';
+  /* ⚠️ THE DOT MEANS "SOMETHING UNDER HERE DIFFERS FROM THE DEFAULT", so it is measured
+     against THE ENGINE'S OWN DEFAULTS — not against "the field is non-empty". Walked
+     live: after a run the write-back puts the steps that were actually used into the
+     field, and acestep's run used its default 8, so a non-empty test made the page claim
+     a hidden edit that did not exist. A dot that cries wolf is the same class of lie as
+     a dot that stays silent. */
+  const dirty = !!e && !!(
+    (String(S.form.steps || '').trim() &&
+     Number(S.form.steps) !== Number(e && e.default_steps)) ||
+    String(S.form.seed || '').trim() ||
+    (S.form.format && S.form.format !== defFmt));
+
+  /* the two fields on the line — never overwritten under the caret */
+  const prompt = $('f-prompt');
+  if (prompt && document.activeElement !== prompt && (S.form.prompt || '') !== prompt.value)
+    prompt.value = S.form.prompt || '';
+  const lyr = $('f-lyrics');
+  if (lyr && document.activeElement !== lyr && (S.form.lyrics || '') !== lyr.value)
+    lyr.value = S.form.lyrics || '';
+  const pc = $('pcount');
+  if (pc) pc.textContent = (S.form.prompt || '').length
+    ? String((S.form.prompt || '').length) : '';
+
+  /* ⑤ LYRICS — the one promoted field, now standing on the line beside the prompt
+     (spec v2). The [Verse]/[Chorus] teaching stays where it was: on the label's
+     hover, never as a standing sentence. */
+  const lyricTip = { chip:'lyrics', line:'Optional — leave it empty for an instrumental.',
+    math:'section tags like [Verse] / [Chorus] shape the arrangement',
+    hedge:'MiniMax is told [Instrumental] when this is empty, so an empty field is a '
+        + 'real instruction rather than a missing one.' };
+  const ll = $('lyrlabel');
+  if (ll) tipBind(ll, tipHtml(lyricTip), tipPlain(lyricTip));
+
+  /* ⑥ THE SETTINGS PANE: engine · length · format · More ▸ (steps, seed) · presets ·
+     the last run's own numbers. */
+  const lv = lengthVerdict(secs);
+  const mn = (S.st || {}).seconds_min || 10, mx = (S.st || {}).seconds_max || 300;
+  const last = tracks()[0] || null;
+  const settings = $('sbody'), active = document.activeElement;
+  const editingSettings = active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || '')
+    && settings.contains && settings.contains(active);
+  if (!editingSettings) settings.innerHTML =
+    '<div class="sgroup"><span class="caps">Engine</span>' +
+      (inst.length
+        ? '<div class="seg" role="group">' + inst.map(x =>
+            '<button data-act="pick-engine" data-pick="' + esc(x.engine) + '" aria-pressed="' +
+            (x.engine === S.form.engine) + '">' + esc(x.engine) + '</button>').join('') + '</div>'
+        : '') +
+      '<div class="chips"><span class="chip act ' + esc(engineChipVerdict(e).cls) + '" ' +
+        'data-act="engines"' + tipRef(engineChipVerdict(e)) + '>' +
+        esc(engineChipVerdict(e).chip) + '</span></div>' +
+    '</div>' +
+
+    '<div class="sgroup"><span class="caps">Basic</span>' +
+      '<div class="srow"><label for="f-secs">Length</label>' +
+        '<span class="row" style="gap:6px"><input type="range" id="f-secs" min="' + mn +
+          '" max="' + mx + '" step="5" value="' + secs + '" aria-label="length">' +
+        '<span class="chip c-dim" id="lenchip"' + tipRef(lv) + '>' + esc(lv.chip) + '</span></span></div>' +
+      (fmts.length > 1
+        ? '<div class="srow"><label for="f-fmt">Format</label><select id="f-fmt">' +
+          fmts.map(f => '<option value="' + esc(f) + '"' +
+            ((S.form.format || defFmt) === f ? ' selected' : '') + '>' +
+            esc((((S.st || {}).format_label) || {})[f] || f) + '</option>').join('') +
+          '</select></div>'
+        : '') +
+    '</div>' +
+
+    '<div class="sgroup"><span class="caps">Advanced</span>' +
+      '<div class="chips" style="padding-bottom:4px">' +
+        '<button class="btn' + (dirty ? ' dotted' : '') + '" data-act="more">' +
+          '<span class="btn-label">More ' + (S.more ? '▾' : '▸') + '</span></button>' +
+        '<span class="chip act" data-act="presets"' + tipRef({ chip:'presets',
+          line:'Ready-made captions in the structured style both engines read best.',
+          hedge:'Clicking one fills the fields; it never renders by itself. Your own can be '
+              + 'saved there too.' }) + '>Presets</span>' +
+      '</div>' +
+      (S.more && e ? moreRows(e) : '') +
+    '</div>' +
+
+    (last
+      ? '<div class="sgroup"><span class="caps">Last run</span>' +
+          '<div class="kv"><span>Engine</span><b>' + esc(last.engine || '—') + '</b></div>' +
+          '<div class="kv"><span>Length</span><b class="num">' + esc(clock(last.seconds)) + '</b></div>' +
+          (last.steps != null
+            ? '<div class="kv"><span>Steps</span><b class="num">' + esc(String(last.steps)) + '</b></div>' : '') +
+          (last.wall != null
+            ? '<div class="kv"><span>Render</span><b class="num">' + esc(clock(last.wall)) + '</b></div>' : '') +
+          '<div class="kv"><span>File</span><b class="num">' + esc(bytes(last.size_bytes)) + '</b></div>' +
+        '</div>'
+      : '');
+
+  /* ⑦ COMPOSE rides the line; Stop appears only while something is running. */
+  const go = $('go');
+  if (go) {
+    go.disabled = !!(S.busy || S.submitUnknown || !e || live);
+    go.innerHTML = (live ? 'Rendering…' : S.busy ? 'Starting…'
+      : S.submitUnknown ? 'Check queue…' : 'Compose') +
+      (live || S.busy || S.submitUnknown ? '' : '<small>⌘ ⏎</small>');
+  }
+
+  /* THE LIVE STATES THAT DEMAND A DECISION — the only other sanctioned sentences. */
+  $('advisory').innerHTML = advisoryHtml(j);
+  wireTips($('sbody'));
+  wireTips($('advisory'));
+  autogrow($('f-prompt')); autogrow($('f-lyrics'));
+}
+function moreRows(e) {
+  const stepsTip = { chip:'steps',
+    line:'More steps is more compute.',
+    math:'this engine’s default is ' + (e.default_steps || '?') + ' (max ' + (e.max_steps || '?') + ')',
+    hedge:'Leave it empty to use the default. Steps mean different things per engine — '
+        + 'they are each engine’s own design point, not a shared knob.' };
+  const seedTip = { chip:'seed', line:(S.st || {}).seed_help || '',
+    hedge:'Left empty, the bridge draws one and records it with the track, so a song '
+        + 'you like can always be made again.' };
+  return '<div class="srow"><label for="f-steps"' + tipRef(stepsTip) + '>Steps</label>' +
+      '<input id="f-steps" inputmode="numeric" placeholder="' +
+      esc(String(e.default_steps || '')) + '" value="' + esc(S.form.steps || '') + '"></div>' +
+    '<div class="srow"><label for="f-seed"' + tipRef(seedTip) + '>Seed</label>' +
+      '<input id="f-seed" inputmode="numeric" placeholder="random" value="' +
+      esc(S.form.seed || '') + '"></div>';
+}
+
+/* PURE-ish: the composer's decision line. The RAM warning is an OVERRIDE, never a
+   wall (sample's advisory-gates ruling): the bridge states the numbers and the person
+   at the machine decides. */
+function advisoryHtml(j) {
+  if (S.warn)
+    return '<div class="row"><p class="say"><b>Heads up.</b> ' + esc(S.warn) + '</p>' +
+      '<button data-act="go-anyway" class="btn primary">Compose anyway</button>' +
+      '<button class="btn" data-act="dismiss-warn">Not now</button></div>';
+  if (S.jobErr)
+    return '<p class="say bad">' + esc(S.jobErr) + '</p>';
+  if (S.err)
+    return '<p class="say bad">' + esc(S.err) + '</p>';
+  if (j && j.state === 'failed' && j.error)
+    return '<p class="say bad"><b>The last render failed.</b> ' +
+           esc(String(j.error).slice(-300)) + '</p>';
+  if (j && j.state === 'cancelled')
+    return '<p class="say">The last render was stopped, and nothing was saved.</p>';
+  return '';
+}
+
+/* fields grow DOWN only — never wider, which is what keeps the line a line */
+function autogrow(t) {
+  if (!t || !t.style) return;
+  try {
+    t.style.height = 'auto';
+    t.style.height = Math.min(t.scrollHeight || 34, 168) + 'px';
+  } catch (e) { /* the stub DOM has no layout */ }
+}
+
+/* ── ONE TAP: the sheets ────────────────────────────────────────────────────── */
+function renderSheet() {
+  $('scrim').hidden = !S.sheet;
+  if (!S.sheet) { $('sheet').innerHTML = ''; return; }
+  /* ⚠️ A POLL MAY NEVER WIPE WHAT SOMEBODY IS TYPING. Walked live: the 20s poll
+     re-rendered the sheet and deleted the half-typed tracks-folder path — and would
+     have done the same to a half-typed track name. So while the focus is inside a
+     field in this sheet, the sheet is left exactly as it is; the next poll after the
+     field is left redraws it. (The Music view learned this on its composer; it is the
+     same rule, so it is written here as the rule and not as the incident.) */
+  const a = document.activeElement;
+  if (a && (String(a.id || '').indexOf('t-') === 0 ||
+            String(a.id || '').indexOf('dir-') === 0)) return;
+  /* …AND A POLL MAY NOT DISARM A CONFIRMATION EITHER. Delete asks once ("sure?") for
+     three seconds; a redraw inside that window put the plain label back under the
+     pointer, so the second press hit a button that had quietly changed its mind.
+     Same class as the half-typed field above, found while walking the delete path. */
+  const sh = $('sheet');
+  if (sh && sh.querySelector && sh.querySelector('.arm')) return;
+  /* …and a COMMITTED field gives the focus back (blurCommitted below), so the sheet is
+     never left showing a stale row just because the caret is still in a saved field. */
+  if (S.sheet === 'engines') renderEnginesSheet();
+  else if (S.sheet === 'remove-engine') renderRemoveEngineSheet();
+  else if (S.sheet === 'track') renderTrackSheet();
+  else if (S.sheet === 'presets') renderPresetsSheet();
+  wireTips($('sheet'));
+}
+function sheetHead(title, extra) {
+  return '<div class="row"><h2>' + esc(title) + '</h2><span class="grow"></span>' +
+    (extra || '') +
+    '<button class="btn" data-act="close-sheet" aria-label="Close">✕</button></div>';
+}
+/* THE ENGINES SHEET — rows with aligned columns (the Studio Models-page grammar), not
+   the essay cards the Music view opens with. It is also where the tracks folder lives:
+   an absolute path is not standing UI, but it must be reachable. */
+function renderEnginesSheet() {
+  const dir = (S.st || {}).dir || '';
+  const def = (S.st || {}).default_dir || '';
+  $('sheet').innerHTML = sheetHead('Engines') +
+    engines().map(e => {
+      const sv = engineStateVerdict(e);
+      return '<div class="esheet">' +
+        '<span class="ename">' + esc(e.label) + (e.engine === S.form.engine ? ' ✓' : '') + '</span>' +
+        '<span class="row">' + chipHtml(speedVerdict(e)) + chipHtml(ramVerdict(e)) +
+          chipHtml(licenseVerdict(e)) + chipHtml(measuredVerdict(e.engine, S.lib)) + '</span>' +
+        '<span class="chip act ' + esc(sv.cls) + '"' +
+          (sv.act ? ' data-act="' + esc(sv.act) + '" data-pick="' + esc(e.engine) + '"' : '') +
+          tipRef(sv) + '>' + esc(sv.chip) + '</span>' +
+        (e.installed
+          ? '<span class="row"><button class="btn" data-act="pick-engine" data-pick="' +
+            esc(e.engine) + '"' + (e.engine === S.form.engine ? ' disabled' : '') +
+            '>Use</button><button class="btn" data-act="remove-engine" data-pick="' +
+            esc(e.engine) + '">Uninstall…</button></span>'
+          : '<span></span>') +
+      '</div>';
+    }).join('') +
+    '<div class="row" style="border-top:1px solid var(--line);padding-top:10px">' +
+      chipHtml({ chip:'tracks folder', cls:'c-dim', line:'Where finished songs are written.',
+                 math:dir, hedge:dir && def && dir !== def
+                   ? 'Only this folder is listed here; tracks left in the default one are '
+                     + 'untouched and reappear if you set it back.'
+                   : 'Change it and only that folder is listed; nothing is moved or deleted.' }) +
+      '<button class="btn" data-act="reveal-dir">Reveal</button>' +
+      (S.dirEdit
+        ? '<input id="dir-inp" style="width:260px" value="' +
+            esc(S.dirValue == null ? dir : S.dirValue) + '" placeholder="~/Music/MOT Deck">' +
+          '<button class="btn" data-act="set-dir">Set</button>' +
+          '<button class="btn" data-act="cancel-dir">Cancel</button>'
+        : '<button class="btn" data-act="edit-dir">Change ▸</button>') +
+    '</div>';
+}
+function renderRemoveEngineSheet() {
+  const p = S.removePlan;
+  if (!p) {
+    $('sheet').innerHTML = sheetHead('Uninstall engine') +
+      '<p class="say">Building an exact ownership preview…</p>';
+    return;
+  }
+  const rows = (p.paths || []).map(x => '<div class="mono">' +
+    esc((x.state === 'present' ? 'MOVE  ' : 'ABSENT  ') + x.path) + '</div>').join('');
+  $('sheet').innerHTML = sheetHead('Uninstall ' + (p.label || p.target)) +
+    '<p class="say">' + esc(bytes(p.bytes || 0)) +
+      ' moves to Trash. Disk space returns only after Trash is emptied.</p>' +
+    '<div class="utext">' + rows + '</div>' +
+    '<p class="say"><b>Preserved:</b> ' + esc((p.preserve || []).join(' · ')) + '</p>' +
+    (p.note ? '<p class="say bad"><b>Shared-cache effect.</b> ' + esc(p.note) + '</p>' : '') +
+    '<div class="row"><span class="grow"></span>' +
+      '<button class="btn" data-act="engines">Cancel</button>' +
+      '<button class="btn primary" data-act="apply-remove-engine">Move to Trash</button></div>';
+}
+/* THE TRACK SHEET — one tap from the stage or the ledger. Real name editing lives here:
+   a filename is not an identity, and the run's own numbers are written back beside it. */
+function renderTrackSheet() {
+  const t = tracks().find(x => x.name === S.detail);
+  if (!t) { $('sheet').innerHTML = sheetHead('Track') +
+    '<p class="say">That track is no longer in the library.</p>'; return; }
+  const stem = t.name.replace(/\.[^.]+$/, '');
+  const have = tracks().filter(x => x.name.replace(/\.[^.]+$/, '') === stem)
+                       .map(x => String(x.ext || '').toLowerCase());
+  const conv = (((S.st || {}).convert_formats) || []).filter(f => have.indexOf(f) < 0);
+  $('sheet').innerHTML = sheetHead('Track') +
+    '<label><span class="caps"' + tipRef({ chip:'name',
+      line:'What you call this song.',
+      math:'the file on disk stays ' + t.name,
+      hedge:'The name lives beside the track, not in the filename: nothing on disk is '
+          + 'renamed, so the folder and this list can never disagree. Empty it to go '
+          + 'back to no name of its own.' }) + '>name</span>' +
+      '<input id="t-title" maxlength="120" value="' + esc(t.title || '') +
+      '" placeholder="' + esc(titleOf(t)) + '"></label>' +
+    '<div class="row">' +
+      '<button class="btn" data-act="save-title" data-name="' + esc(t.name) + '">Save name</button>' +
+      '<span class="mono">' + esc(t.name) + '</span></div>' +
+    '<div class="row">' + trackChips(t).map(v => chipHtml(v)).join('') +
+      (t.seed != null ? '<span class="chip c-dim act" data-act="reuse-seed" data-seed="' +
+        esc(t.seed) + '"' + tipRef(seedVerdict(t.seed)) + '>seed ' + esc(t.seed) + '</span>' : '') +
+    '</div>' +
+    (t.prompt ? '<div class="utext">' + esc(t.prompt) + '</div>' : '') +
+    (t.lyrics ? '<div class="utext">' + esc(t.lyrics) + '</div>' : '') +
+    '<div class="row" style="border-top:1px solid var(--line);padding-top:10px">' +
+      '<button class="btn" data-act="reuse" data-name="' + esc(t.name) + '">Use these settings</button>' +
+      conv.map(f => '<button class="btn" data-act="convert" data-name="' + esc(t.name) +
+        '" data-fmt="' + esc(f) + '"' + tipRef({ chip:f,
+          line:'Write ' + f.toUpperCase() + ' beside this track.',
+          hedge:'Only formats this build of ffmpeg can actually write are offered, and '
+              + 'only when that sibling does not already exist.' }) + '>' + esc(f) + '</button>').join('') +
+      '<button class="btn" data-act="reveal" data-name="' + esc(t.name) + '">Reveal</button>' +
+      '<span class="grow"></span>' +
+      '<button class="btn" data-act="delete" data-name="' + esc(t.name) + '">Delete</button>' +
+    '</div>';
+}
+/* PRESETS — the Music view's templates, kept whole (built-ins + your own + save +
+   forget), moved one tap away because a gallery of captions is not a standing element
+   of a composer. */
+function renderPresetsSheet() {
+  const tpls = ((S.st || {}).templates) || [];
+  $('sheet').innerHTML = sheetHead('Presets',
+    '<button class="btn" data-act="save-preset">Save what is in the composer</button>') +
+    tpls.map(t => '<div class="prow">' +
+      '<span class="ename">' + esc(t.name) + '</span>' +
+      chipHtml({ chip:(t.tag || '') + (t.builtin ? '' : ' · yours'), cls:'c-dim',
+                 line:String(t.prompt || '').slice(0, 260),
+                 hedge:t.builtin ? 'A starter, written in the structured style both '
+                     + 'engines read best.' : 'Yours, saved from this composer.' }) +
+      '<span class="row"><button class="btn" data-act="use-preset" data-id="' + esc(t.id) + '">Use</button>' +
+      (t.builtin ? '' : '<button class="btn" data-act="forget-preset" data-id="' +
+        esc(t.id) + '">✕</button>') + '</span></div>').join('') +
+    (tpls.length ? '' : '<p class="say">No presets are available from the bridge.</p>');
+}
+
+/* ⚠️ EACH SECTION RENDERS INSIDE ITS OWN try/catch — a walked defect on /comfy, not
+   defensive boilerplate: one throw inside a renderer unwound the whole render and
+   three sections painted EMPTY, which reads as "there is nothing here" rather than
+   "this half is broken". A section that throws says so, in that section, in one line;
+   every other section still draws, and the poll lets a transient fault self-heal. */
+function section(name, el, fn) {
+  try { return fn(); }
+  catch (e) {
+    try {
+      const box = $(el);
+      if (box) box.innerHTML = '<p class="say bad">' + esc(name) + ' failed to draw: ' +
+        esc(String(e && e.message || e)) + ' — retrying on the next poll.</p>';
+    } catch (e2) { /* the error path may never throw */ }
+    return null;
+  }
+}
+
+function render() {
+  TIPS = {};                     /* the registry is per-render: no stale verdicts */
+  section('header', 'pageerr', renderHeader);
+  section('stage', 'stage-body', renderStage);
+  section('tracks', 'strip', renderStrip);
+  section('engines', 'engbody', renderEnginesBlock);
+  section('queue', 'queuebody', renderQueueBlock);
+  section('structure', 'secbody', renderStructure);
+  section('prompts', 'reusebody', renderReuseBlock);
+  section('library', 'libbody', renderLibraryBlock);
+  section('folder', 'diskbody', renderDiskBlock);
+  section('dock', 'dockchip', renderDock);
+  section('composer', 'sbody', renderComposer);
+  section('sheet', 'sheet', renderSheet);
+  writeBack();
+  arm(running() || installing() ? 1000 : 20000);
+}
+
+/* ══ WRITE-BACK (the Pixelmator mechanic) ══════════════════════════════════════
+   When a render finishes, the values ACTUALLY used — the engine, the resolved length,
+   the steps, the format — land in the ordinary controls, so what the user sees is what
+   they can edit and re-run. The seed deliberately does NOT: it stays empty so the next
+   song is a new one, and the drawn seed lives on the finished track's caption chip,
+   which is click-to-reuse. */
+function writeBack() {
+  const j = job();
+  if (!j || j.state !== 'done' || S.wroteBack === j.id) return;
+  S.wroteBack = j.id;
+  if (j.engine) S.form.engine = j.engine;
+  if (j.seconds) S.form.seconds = Number(j.seconds);
+  if (j.steps) S.form.steps = String(j.steps);
+  if (j.format) S.form.format = j.format;
+  S.form.seed = '';
+  S.sel = null;                  /* the newest track is what the stage should show */
+  section('composer', 'sbody', renderComposer);
+}
+
+/* ── the timer ──────────────────────────────────────────────────────────────── */
+let timer = null, cadence = 0;
+/* ⚠️ `timer = null` INSIDE THE CALLBACK IS THE WHOLE MECHANISM, and leaving it out is a
+   LIE-CLASS BUG walked live on this page: a fired setTimeout leaves its handle truthy,
+   so the `already armed at this cadence` guard saw a timer that had already run and
+   returned without re-arming. The page polled ONCE and then went quietly stale — it
+   kept showing a library and an engine state from minutes ago as if they were now.
+   (Same defect and same fix as bridge/panel/comfy.html's arm(), found there in
+   v1.5.41; doctrine 6b — the class is pinned by a test in test_compose_page.js.) */
+function arm(ms) {
+  if (timer && cadence === ms) return;
+  cadence = ms;
+  clearTimeout(timer);
+  timer = setTimeout(() => { timer = null; load(); }, ms);
+}
+
+/* S19 — an event is only a nudge to refetch the existing Music truth. The 1s active
+   timer remains the only live engine-log progress reader; 20s idle remains the
+   recovery backstop when EventSource is absent, dead, or has dropped a frame. */
+let musicEvents = null, musicEventRefresh = null;
+function musicEventsBoot() {
+  if (typeof EventSource === 'undefined') return;
+  try {
+    musicEvents = new EventSource('/api/events');
+    musicEvents.onmessage = ev => {
+      let msg = null; try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      if (!msg || (msg.type !== 'music' && !msg.missed)) return;
+      clearTimeout(musicEventRefresh);
+      musicEventRefresh = setTimeout(load, 120);
+    };
+  } catch (e) { musicEvents = null; }
+}
+
+/* Keep routine status in this page-owned toast. Native JavaScript dialogs exist from
+   S12 onward, but a blocking alert is still the wrong interaction for this path. */
+let toastTimer = null;
+function toast(msg, bad) {
+  let t = $('toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
+  t.className = bad ? 'bad' : '';
+  t.textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.remove(), 9000);
+}
+
+/* ══ THE WORKBENCH: drag, dock, shrink — and the arrangement REMEMBERED ════════
+   THE LIE THIS SECTION MUST NOT TELL: an arrangement that silently resets. A layout
+   the user set by hand and finds undone after a reload is the same class of defect as
+   a lost edit, so the layout is written on every change, read before the first paint,
+   and is TOTAL about surprises — a saved id that no longer exists is skipped, a block
+   the save never heard of keeps its markup position, and a block parked in the spill
+   slot forces the pane back into its shrunk state, because restoring it into a hidden
+   container would make the block vanish. */
+const LAYOUT_KEY = 'compose-layout-v1';
+const CONTAINERS = ['blocks', 'spill'];   /* the dock strip is reserved, never a target */
+/* The authored order is data, not an inference from whichever DOM order happens to be
+   present when Reset is pressed. A user may have moved every block into another slot;
+   this frozen list is the exact fresh-install arrangement in the markup above. */
+const DEFAULT_BLOCKS = ['wave', 'engines', 'ledger', 'queue', 'structure', 'reuse',
+                        'library', 'disk'];
+function readLayout() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    return (j && typeof j === 'object') ? j : null;
+  } catch (e) { return null; }
+}
+function saveLayout() {
+  const out = { v:1, side:document.body.classList.contains('dock-right') ? 'right' : 'left',
+                shrunk:document.body.classList.contains('shrunk') };
+  CONTAINERS.forEach(id => {
+    const c = $(id);
+    out[id] = c && c.querySelectorAll
+      ? Array.prototype.slice.call(c.querySelectorAll(':scope > .block'))
+          .map(n => n.dataset.block).filter(Boolean)
+      : [];
+  });
+  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(out)); } catch (e) { /* private mode */ }
+  return out;
+}
+function applyLayout() {
+  const L = readLayout();
+  if (!L) return;
+  document.body.classList.toggle('dock-right', L.side === 'right');
+  document.body.classList.toggle('dock-left', L.side !== 'right');
+  CONTAINERS.forEach(id => {
+    const c = $(id);
+    if (!c || !c.appendChild) return;
+    (Array.isArray(L[id]) ? L[id] : []).forEach(key => {
+      if (!DEFAULT_BLOCKS.includes(key)) return;
+      const el = document.querySelector && document.querySelector('[data-block="' + key + '"]');
+      if (el) c.appendChild(el);        // moving is idempotent; unknown keys are skipped
+    });
+  });
+  const spill = $('spill');
+  const parked = spill && spill.querySelectorAll
+    ? spill.querySelectorAll(':scope > .block').length : 0;
+  document.body.classList.toggle('shrunk', !!L.shrunk || parked > 0);
+  syncShrinkLabel();
+}
+function resetLayout() {
+  const grid = $('blocks');
+  if (!grid || !grid.appendChild) return;
+  const moving = [$('scol'), $('work')].concat(DEFAULT_BLOCKS.map(key => $(key))).filter(Boolean);
+  flip(moving, () => {
+    /* appendChild MOVES an existing node, so this also empties #spill without cloning,
+       deleting, or reconstructing a panel (and therefore without losing panel state). */
+    DEFAULT_BLOCKS.forEach(key => { const block = $(key); if (block) grid.appendChild(block); });
+    document.body.classList.remove('dock-right', 'shrunk');
+    document.body.classList.add('dock-left');
+  }, 280);
+  try { localStorage.removeItem(LAYOUT_KEY); } catch (e) { /* private mode */ }
+  syncShrinkLabel();
+  toast('Layout restored.');
+  setTimeout(paintHero, 300);
+}
+/* A restored shrunk pane whose button still offered to "Shrink to half height" was a
+   control lying about its own state — small, and exactly the class this page bans. */
+function syncShrinkLabel() {
+  const b = $('shrink');
+  if (!b || !b.setAttribute) return;
+  const on = document.body.classList.contains('shrunk');
+  b.title = on ? 'Restore full height' : 'Shrink to half height';
+  b.setAttribute('aria-label', on ? 'Restore the settings pane' : 'Shrink the settings pane');
+  b.setAttribute('aria-pressed', String(on));
+}
+
+/* FLIP — the only motion in the workbench, and it is the authored one: the slots
+   really move under the pointer instead of teleporting (Emil: transitions, not
+   keyframes, for anything retriggered; transform and opacity only). */
+function flip(nodes, mutate, ms) {
+  const reduce = (typeof matchMedia === 'function')
+    && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const first = new Map();
+  nodes.forEach(n => { if (n.getBoundingClientRect) first.set(n, n.getBoundingClientRect()); });
+  mutate();
+  if (reduce) return;
+  nodes.forEach(n => {
+    const a = first.get(n); if (!a || !n.getBoundingClientRect) return;
+    const b = n.getBoundingClientRect();
+    const dx = a.left - b.left, dy = a.top - b.top;
+    if (!dx && !dy) return;
+    n.style.transition = 'none';
+    n.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+  });
+  if (document.body.getBoundingClientRect) document.body.getBoundingClientRect();
+  nodes.forEach(n => {
+    const a = first.get(n); if (!a) return;
+    n.style.transition = 'transform ' + (ms || 240) + 'ms cubic-bezier(0.23, 1, 0.32, 1)';
+    n.style.transform = '';
+  });
+}
+function siblings() {
+  if (!document.querySelectorAll) return [];
+  return Array.prototype.slice.call(document.querySelectorAll('#blocks > *, #spill > *'));
+}
+function wireWorkbench() {
+  if (!document.addEventListener || !document.querySelector) return;
+  let drag = null, moving = false;
+
+  document.addEventListener('pointerdown', (e) => {
+    if (e.button) return;
+    if (!e.target.closest) return;
+    if (e.target.closest('button,input,textarea,select,a')) return;
+    const bar = e.target.closest('.block > .pbar.grab');
+    if (!bar) return;
+    const it = bar.parentNode;
+    const r = it.getBoundingClientRect();
+    drag = { it, dx:e.clientX - r.left, dy:e.clientY - r.top, ph:document.createElement('div') };
+    drag.ph.className = 'block slot' + (it.classList.contains('w2') ? ' w2' : '');
+    it.parentNode.insertBefore(drag.ph, it);
+    it.classList.add('drag');
+    it.style.cssText = 'position:fixed;pointer-events:none;z-index:60;width:' + r.width +
+      'px;height:' + r.height + 'px;left:' + r.left + 'px;top:' + r.top + 'px';
+    document.body.classList.add('dragging');
+    e.preventDefault();
+  });
+  document.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    drag.it.style.left = (e.clientX - drag.dx) + 'px';
+    drag.it.style.top = (e.clientY - drag.dy) + 'px';
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    if (!under || !under.closest) return;
+    const over = under.closest('.block');
+    const cont = under.closest('#blocks, #spill');
+    const sibs = siblings();
+    if (over && over !== drag.ph && over !== drag.it) {
+      const rr = over.getBoundingClientRect();
+      const after = (e.clientX - rr.left) > rr.width / 2;
+      flip(sibs, () => over.parentNode.insertBefore(drag.ph, after ? over.nextSibling : over));
+    } else if (cont && !cont.contains(drag.ph)) {
+      flip(sibs, () => cont.appendChild(drag.ph));
+    }
+  });
+  document.addEventListener('pointerup', () => {
+    if (!drag) return;
+    const it = drag.it;
+    it.classList.remove('drag'); it.style.cssText = '';
+    drag.ph.parentNode.replaceChild(it, drag.ph);
+    document.body.classList.remove('dragging');
+    drag = null;
+    saveLayout();
+    raf(paintHero);
+  });
+
+  /* the settings pane: grab its label bar and drop it on either edge */
+  const grab = $('sgrab');
+  const place = (e) => {
+    const f = $('floater');
+    if (f && f.style) { f.style.left = (e.clientX + 12) + 'px'; f.style.top = (e.clientY + 12) + 'px'; }
+    const left = e.clientX < window.innerWidth / 2;
+    const l = document.querySelector('#hints .l'), r = document.querySelector('#hints .r');
+    if (l) l.classList.toggle('on', left);
+    if (r) r.classList.toggle('on', !left);
+  };
+  const dock = (side) => {
+    flip([$('scol'), $('work')].concat(siblings()).filter(Boolean), () => {
+      document.body.classList.toggle('dock-right', side === 'right');
+      document.body.classList.toggle('dock-left', side === 'left');
+    }, 280);
+    saveLayout();
+    setTimeout(paintHero, 300);
+  };
+  if (grab && grab.addEventListener) {
+    grab.addEventListener('pointerdown', (e) => {
+      if (e.target.closest && e.target.closest('button')) return;
+      moving = true; document.body.classList.add('moving', 'dragging');
+      place(e); e.preventDefault();
+    });
+  }
+  document.addEventListener('pointermove', (e) => { if (moving) place(e); });
+  document.addEventListener('pointerup', (e) => {
+    if (!moving) return;
+    moving = false; document.body.classList.remove('moving', 'dragging');
+    dock(e.clientX < window.innerWidth / 2 ? 'left' : 'right');
+  });
+  const side = $('side'), shrink = $('shrink');
+  const reset = $('reset-layout');
+  if (reset && reset.addEventListener) reset.addEventListener('click', resetLayout);
+  if (side && side.addEventListener) side.addEventListener('click', () =>
+    dock(document.body.classList.contains('dock-right') ? 'left' : 'right'));
+  if (shrink && shrink.addEventListener) shrink.addEventListener('click', function () {
+    const spill = $('spill');
+    const parked = spill && spill.querySelectorAll
+      ? spill.querySelectorAll(':scope > .block').length : 0;
+    if (document.body.classList.contains('shrunk') && parked) {
+      /* Collapsing the spill slot with blocks in it would hide them: move them back
+         to the grid first, so nothing can disappear behind a control. */
+      const grid = $('blocks');
+      Array.prototype.slice.call(spill.querySelectorAll(':scope > .block'))
+        .forEach(n => grid.appendChild(n));
+      toast('Moved that block back to the grid.');
+    }
+    document.body.classList.toggle('shrunk');
+    syncShrinkLabel();
+    saveLayout();
+    setTimeout(paintHero, 180);
+  });
+}
+
+/* ── input plumbing ─────────────────────────────────────────────────────────── */
+function readForm() {
+  if ($('f-prompt')) S.form.prompt = $('f-prompt').value;
+  if ($('f-lyrics')) S.form.lyrics = $('f-lyrics').value;
+  if ($('f-steps'))  S.form.steps = $('f-steps').value.trim();
+  if ($('f-seed'))   S.form.seed = $('f-seed').value.trim();
+  if ($('f-fmt'))    S.form.format = $('f-fmt').value;
+  if ($('f-secs'))   S.form.seconds = Number($('f-secs').value);
+}
+document.addEventListener('input', (e) => {
+  const id = e.target && e.target.id;
+  if (id === 'dir-inp') { S.dirValue = e.target.value; return; }
+  if (!id || id.indexOf('f-') !== 0) return;
+  readForm();
+  if (id === 'f-prompt' || id === 'f-lyrics') {
+    autogrow(e.target);                 /* grows DOWN; the column never gets wider */
+    const pc = $('pcount');
+    if (id === 'f-prompt' && pc) pc.textContent = (S.form.prompt || '').length
+      ? String((S.form.prompt || '').length) : '';
+    return;
+  }
+  /* The length chip follows the slider WITHOUT a re-render — rebuilding the composer
+     on every drag would fight the thumb the user is holding. */
+  if (id === 'f-secs') {
+    const c = $('lenchip');
+    const v = lengthVerdict(S.form.seconds);
+    if (c) { c.textContent = v.chip; tipBind(c, tipHtml(v), tipPlain(v)); }
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { tipHide(); if (S.sheet) { S.sheet = false; render(); } }
+  /* ⌘⏎ / Ctrl+⏎ composes from anywhere — the shortcut the button advertises. */
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    const go = $('go');
+    if (go && !go.disabled) { e.preventDefault(); startRender(false); }
+  }
+}, true);
+window.addEventListener('scroll', () => tipHide(), true);
+window.addEventListener('resize', () => { tipHide(); raf(paintHero); }, true);
+
+/* Two-step arming for the irreversible ones (delete): a rendered song cannot be made
+   again by accident, so the first press only asks. The same grammar the panel uses. */
+function armed(btn, label) {
+  if (btn._armed) { btn._armed = false; btn.classList.remove('arm'); btn.textContent = label; return true; }
+  btn._armed = true; btn.classList.add('arm'); btn.textContent = 'sure?';
+  setTimeout(() => { if (btn._armed) { btn._armed = false; btn.classList.remove('arm');
+                                       btn.textContent = label; } }, 3000);
+  return false;
+}
+
+/* After a field is COMMITTED (a name saved, a folder set) the caret is released, so the
+   typing guard above stops holding the sheet and the very next render shows the truth. */
+function blurCommitted() {
+  const a = document.activeElement;
+  if (a && a.blur && /^(INPUT|TEXTAREA)$/.test(a.tagName || '')) a.blur();
+}
+
+async function startRender(confirm) {
+  if (S.busy || running()) return;
+  readForm();
+  const e = current();
+  if (!e) { toast('There is no engine on disk yet.', true); return; }
+  if (S.submitUnknown) {
+    toast('The last submission has an unknown outcome. Check Queue or refresh before retrying.', true);
+    return;
+  }
+  if (!(S.form.prompt || '').trim()) { toast('Describe the music first.', true); return; }
+  const body = { engine:e.engine, prompt:S.form.prompt, lyrics:S.form.lyrics || '',
+                 seconds:secondsNow(), steps:S.form.steps || '', seed:S.form.seed || '',
+                 format:S.form.format || '' };
+  if (confirm) body.confirm = true;
+  S.busy = true; S.jobErr = ''; if (!confirm) S.warn = '';
+  render();
+  /* ⚠️ ECHO OF THE LOFFICE STUCK-LATCH BUG (2026-08-29, doctrine 6b). `api()` does NOT
+     wrap its fetch, so a bridge that is down rejects out of this function — and with no
+     catch here, `S.busy` stayed true for the rest of the session: Compose disabled,
+     reading "Starting…", for ever. A rejection is an ANSWER now, in the same inline row
+     every other start failure already uses. */
+  const outcome = await MOTActionLifecycle.run((signal) => api('/api/music/generate', {
+    method:'POST', body:JSON.stringify(body), signal
+  }), 25000);
+  S.busy = false;
+  if (outcome.kind === 'unknown') {
+    S.submitUnknown = true;
+    S.jobErr = 'MOT Deck stopped waiting after 25 seconds. The render request may have '
+      + 'reached Music; check Queue or refresh before trying again.';
+    render();
+    return;
+  }
+  const r = outcome.kind === 'settled' ? outcome.value : {
+    ok:false, error:'the bridge could not be reached: ' + outcome.error
+  };
+  if (!r.ok) {
+    /* A RAM warning is not an error: it goes to the advisory row with a way through.
+       Everything else surfaces inline, in the bridge's own words. */
+    if (r.needs_confirm) { S.warn = r.error || 'that render may not fit'; S.jobErr = ''; }
+    else { S.jobErr = r.error || 'the render could not start'; S.warn = ''; }
+    render();
+    return;
+  }
+  S.warn = '';
+  await load();
+}
+
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest) return;
+  if (!e.target.closest('.tipped') && !e.target.closest('#tip')) tipHide();
+  if (e.target.id === 'scrim') { S.sheet = false; render(); return; }
+  /* the transport lives on the ONE audio element; it is not a data-act */
+  if (e.target.closest('#play')) {
+    if (!_audio) return;
+    if (_audio.paused) { _audio.play().catch(() => toast('That track could not be played.', true)); }
+    else _audio.pause();
+    return;
+  }
+  const cv = e.target.closest && e.target.closest('#bigwave');
+  if (cv) {
+    const r = cv.getBoundingClientRect();
+    const dur = heroDuration();
+    if (_audio && dur) {
+      const to = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur;
+      try { _audio.currentTime = to; } catch (err) { /* not seekable yet */ }
+      S.pos = to; onTime();
+    }
+    return;
+  }
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const act = b.dataset.act;
+  try {
+  if (act === 'engines')      { readForm(); S.sheet = 'engines'; render(); }
+  else if (act === 'presets') { readForm(); S.sheet = 'presets'; render(); }
+  else if (act === 'close-sheet') { S.sheet = null; S.detail = null; render(); }
+  else if (act === 'more')    { readForm(); S.more = !S.more; render(); }
+  else if (act === 'all')     { S.all = !S.all; render(); }
+  else if (act === 'lyrics')  { readForm(); S.lyricsOpen = true; render();
+                                const l = $('f-lyrics'); if (l && l.focus) l.focus(); }
+  else if (act === 'select')  { S.sel = b.dataset.name; render(); }
+  else if (act === 'open-track') { S.detail = b.dataset.name; S.sheet = 'track'; render(); }
+  else if (act === 'pick-engine') { S.form.engine = b.dataset.pick; render(); }
+  else if (act === 'remove-engine') {
+    b.disabled = true;
+    const r = await api('/api/storage/music/plan', { method:'POST',
+      body:JSON.stringify({ engine:b.dataset.pick }) });
+    b.disabled = false;
+    if (!r.ok) { toast(r.error || 'could not build the removal preview', true); return; }
+    S.removePlan = r; S.sheet = 'remove-engine'; render();
+  }
+  else if (act === 'apply-remove-engine') {
+    const p = S.removePlan;
+    if (!p) return;
+    b.disabled = true;
+    const r = await api('/api/storage/music/apply', { method:'POST',
+      body:JSON.stringify({ token:p.token }) });
+    if (!r.ok) { b.disabled = false; toast(r.error || 'the engine was not removed', true); return; }
+    S.removePlan = null; S.sheet = 'engines'; S.form.engine = null;
+    toast('Engine files moved to Trash. Your music library was preserved.');
+    await load();
+  }
+  else if (act === 'use-prompt') {
+    const t = tracks().find(x => x.name === b.dataset.name);
+    if (!t) return;
+    S.form.prompt = t.prompt || '';
+    render();
+    toast('Loaded that prompt.');
+  }
+  else if (act === 'reuse-seed') {
+    S.form.seed = String(b.dataset.seed); S.more = true; render();
+    toast('Seed ' + b.dataset.seed + ' is in the seed field.');
+  }
+  else if (act === 'reuse') {
+    /* THE REPLICATION AFFORDANCE. Everything that made a song is in its sidecar, so
+       "another one like that" is one click plus an edit — the whole reason seeds and
+       steps are recorded at all. */
+    const t = tracks().find(x => x.name === b.dataset.name);
+    if (!t) return;
+    if (t.engine && installed().some(x => x.engine === t.engine)) S.form.engine = t.engine;
+    S.form.prompt = t.prompt || '';
+    S.form.lyrics = t.lyrics || '';
+    if (t.lyrics) S.lyricsOpen = true;
+    if (t.seconds) S.form.seconds = Number(t.seconds);
+    S.form.steps = t.steps == null ? '' : String(t.steps);
+    S.form.seed = t.seed == null ? '' : String(t.seed);
+    S.more = true; S.sheet = null; S.detail = null;
+    render();
+    toast('Loaded the settings from “' + titleOf(t) + '”.');
+  }
+  else if (act === 'save-title') {
+    const el = $('t-title');
+    const r = await api('/api/music/title', { method:'POST',
+      body:JSON.stringify({ name:b.dataset.name, title:(el && el.value) || '' }) });
+    if (!r.ok) { toast(r.error || 'could not save that name', true); return; }
+    blurCommitted();
+    S.lib = r.tracks || S.lib;
+    render();
+    toast((el && el.value.trim()) ? 'Named “' + el.value.trim() + '”.'
+                                  : 'That track has no name of its own again.');
+  }
+  else if (act === 'convert') {
+    b.disabled = true;
+    const r = await api('/api/music/convert', { method:'POST',
+      body:JSON.stringify({ name:b.dataset.name, fmt:b.dataset.fmt }) });
+    b.disabled = false;
+    if (!r.ok) { toast(r.error || 'the conversion failed', true); return; }
+    toast('Wrote ' + (r.name || b.dataset.fmt) + '.');
+    await load();
+  }
+  else if (act === 'reveal') {
+    const t = tracks().find(x => x.name === b.dataset.name);
+    if (!t) return;
+    const r = await api('/api/open', { method:'POST',
+      body:JSON.stringify({ path:t.path, action:'reveal' }) });
+    /* /api/open answers with `log`, not `error`, when it refuses — read both or a
+       real refusal ("path does not exist") would show as "undefined". */
+    if (r && r.ok === false) toast(r.error || r.log || 'could not show that file', true);
+  }
+  else if (act === 'reveal-dir') {
+    const r = await api('/api/open', { method:'POST',
+      body:JSON.stringify({ path:(S.st || {}).dir || '', action:'reveal' }) });
+    if (r && r.ok === false) toast(r.error || r.log || 'could not open that folder', true);
+  }
+  else if (act === 'edit-dir') {
+    /* A TYPED PATH, NOT A PICKER: WKWebView has no folder picker (the recorded
+       silent-no-op class), which is why the voice lane types paths too. The editor is
+       STATE, so a poll that redraws the sheet cannot close it under the user. */
+    S.dirEdit = true; S.dirValue = (S.st || {}).dir || '';
+    render();
+    const i = $('dir-inp'); if (i && i.focus) i.focus();
+  }
+  else if (act === 'cancel-dir') { S.dirEdit = false; S.dirValue = null; render(); }
+  else if (act === 'set-dir') {
+    const v = ($('dir-inp') || {}).value || S.dirValue || '';
+    const r = await api('/api/music/settings', { method:'POST',
+      body:JSON.stringify({ output_dir:v }) });
+    if (!r.ok) { toast(r.error || 'could not set that folder', true); return; }
+    blurCommitted();
+    S.dirEdit = false; S.dirValue = null;
+    S.sel = null;                  /* a different folder is a different library */
+    toast('Tracks are saved to ' + (r.output_dir || 'the default') + '.');
+    await load();
+  }
+  else if (act === 'delete') {
+    if (!armed(b, 'Delete')) return;
+    b.disabled = true;
+    const r = await api('/api/music/delete', { method:'POST',
+      body:JSON.stringify({ name:b.dataset.name }) });
+    b.disabled = false;
+    if (!r.ok) { toast(r.error || 'could not delete that track', true); return; }
+    if (S.sel === b.dataset.name) S.sel = null;
+    delete S.wave[b.dataset.name];
+    S.sheet = null; S.detail = null;
+    await load();
+  }
+  else if (act === 'install') {
+    b.disabled = true;
+    const r = await api('/api/music/install', { method:'POST',
+      body:JSON.stringify({ engine:b.dataset.pick }) });
+    b.disabled = false;
+    if (!r.ok) { toast(r.error || 'could not start that install', true); return; }
+    toast('Installing ' + b.dataset.pick + ' — several GB; you can leave this tab.');
+    await load();
+  }
+  else if (act === 'use-preset') {
+    const t = (((S.st || {}).templates) || []).find(x => x.id === b.dataset.id);
+    if (!t) return;
+    if (t.engine_hint && installed().some(x => x.engine === t.engine_hint))
+      S.form.engine = t.engine_hint;
+    S.form.prompt = t.prompt || '';
+    S.form.lyrics = t.lyrics || '';
+    if (t.lyrics) S.lyricsOpen = true;
+    if (t.seconds) S.form.seconds = Number(t.seconds);
+    if (t.steps != null) S.form.steps = String(t.steps);
+    S.sheet = null;
+    render();
+    toast('Loaded the “' + t.name + '” preset.');
+  }
+  else if (act === 'save-preset') {
+    readForm();
+    const name = (S.form.prompt || '').trim().split(/\s+/).slice(0, 4).join(' ');
+    if (!name) { toast('Describe the music first — a preset needs something to save.', true); return; }
+    const r = await api('/api/music/templates', { method:'POST',
+      body:JSON.stringify({ name, prompt:S.form.prompt, lyrics:S.form.lyrics || '',
+                            seconds:secondsNow(), steps:S.form.steps || '',
+                            engine:S.form.engine }) });
+    if (!r.ok) { toast(r.error || 'could not save that preset', true); return; }
+    if (S.st) S.st.templates = r.templates || S.st.templates;
+    render();
+    toast('Saved “' + name + '”.');
+  }
+  else if (act === 'forget-preset') {
+    if (!armed(b, '✕')) return;
+    const r = await api('/api/music/templates/delete', { method:'POST',
+      body:JSON.stringify({ id:b.dataset.id }) });
+    if (r.ok && S.st) S.st.templates = r.templates || [];
+    render();
+  }
+  else if (act === 'stop') {
+    if (!armed(b, 'Stop')) return;
+    b.disabled = true;
+    const r = await api('/api/music/cancel', { method:'POST', body:'{}' });
+    b.disabled = false;
+    if (!r.ok) { toast(r.error || 'could not stop the render', true); return; }
+    await load();
+  }
+  else if (act === 'dismiss-warn') { S.warn = ''; render(); }
+  else if (act === 'go')           { await startRender(false); }
+  else if (act === 'go-anyway')    { await startRender(true); }
+  } catch (error) {
+    toast(String(error.message || error), true);
+  } finally {
+    if (act !== 'go' && act !== 'go-anyway') b.disabled = false;
+  }
+});
+
+applyLayout();
+wireWorkbench();
+musicEventsBoot();
+load();
+</script>
+</body>
+</html>

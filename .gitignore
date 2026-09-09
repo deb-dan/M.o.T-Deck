@@ -1,0 +1,20 @@
+.env
+data/
+*.log
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+dist/
+app/Config.swift
+motdeck.yaml.lock
+.pytest-cache/
+vendor/searxng/
+# aider is a plain pinned clone made by scripts/install_aider.sh (the searxng
+# precedent, never a submodule) — the PIN lives in motdeck.yaml, the checkout is a
+# build artifact and must never be committed.
+vendor/aider/
+# Phase 2 artifact-renderer libs — fetched at build/install (fetch_vendor_assets.sh),
+# bundled into the FAT seed. A runtime asset, not source.
+bridge/panel/assets/vendor/

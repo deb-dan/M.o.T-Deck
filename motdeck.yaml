@@ -1,0 +1,803 @@
+# MOT Deck — single source of truth for pins, ports, endpoints.
+# Every change to a pin should be a git commit (that's your rollback history).
+
+# ⛔ THERE IS NO `version:` KEY HERE ANY MORE — AND PUTTING ONE BACK IS A BUG (U56,
+# 2026-09-02). It used to read `version: "0.1.0"   # bump on release`; nothing bumped it
+# in 72 releases, and it was the ONLY thing /api/version ever read. So the Version tile
+# showed 0.1.0 at release 1.5.72, and the update check compared GitHub tags against
+# 0.1.0 — which makes ANY tag newer for ever. THE RELEASE VERSION IS THE TOP-LEVEL
+# `VERSION` FILE: QA bumps it in the same commit as the slice, ship.sh copies it into
+# the snapshot, build_app.sh seeds it into the fat app, and
+# bridge/core/procs.py::motdeck_version is its ONE reader. A second copy of a fact is a
+# second answer. Fenced by bridge/contract_tests/test_version_truth_contract.py.
+
+components:
+  hermes:
+    repo: https://github.com/NousResearch/hermes-agent.git
+    pin: v2026.8.16           # release tag — never track a branch.
+                              # 2026-09-05: conservative v0.20.2 bump after isolated dashboard build,
+                              # 70/70 M.O.T Hermes contracts, and upstream WhatsApp/gateway probes.
+                              # It does NOT fix the WhatsApp disable transaction; M.O.T owns that
+                              # reconciliation separately without patching vendored Hermes code.
+                              # ⚠️⚠️ 2026-08-28: THE v2026.8.27 (v0.20.6) BUMP WAS ATTEMPTED, PROVEN
+                              # UNSHIPPABLE AND ROLLED BACK. Do not retry above v2026.8.16 without
+                              # reading docs/handoff/HERMES-v0.20.6-BLOCKED-2026-08-28.md first — the
+                              # blocker is TWO upstream bugs, not our integration, and the whole record
+                              # (including everything that DID pass) is in that file.
+                              #
+                              # ══ 2026-08-28: v2026.8.27 (v0.20.6) ATTEMPTED → ROLLED BACK ══
+                              # The bump was built, shipped, restarted and WALKED on the real stack. It
+                              # is blocked by TWO upstream bugs in Hermes v0.20.3+ (NOT by our
+                              # integration, which passed everything else). Do not retry above
+                              # v2026.8.16 until upstream fixes them.
+                              #
+                              # THE BLOCKER, in one sentence: mcp 2.0.0 renamed every model field to
+                              # snake_case and kept camelCase only as a SERIALIZATION alias — pydantic
+                              # aliases do not apply to attribute access — and Hermes v0.20.6 missed two
+                              # of its own `getattr(obj, "camelCase")` reads:
+                              #   · tools/mcp_tool.py:4643 `_annotation_read_only_hint` reads
+                              #     `getattr(annotations, "readOnlyHint")` → always None on mcp 2.x, so
+                              #     EVERY read-only MCP tool on an `untrusted` server is classified
+                              #     write-capable and gets an approval card. REPRODUCED live: a real 27B
+                              #     turn calling office_list raised "This tool is write-capable (no
+                              #     readOnlyHint=true annotation)" and was denied. That is the whole v2
+                              #     zero-card LOffice consent design inverted.
+                              #   · tools/mcp_tool.py:7374 the schema-cache WRITER reads
+                              #     `getattr(mcp_tool, "inputSchema")` → None, so it persists
+                              #     `inputSchema: {}`. REPRODUCED on disk: ~/.hermes/cache/
+                              #     mcp_schema_cache.json now holds all four loffice tools with an EMPTY
+                              #     schema and readOnlyHint:false. Any cache-registered ("lazy") start
+                              #     hands the model tools with no arguments.
+                              # Upstream built the fix helper for exactly this (`mcp_field(obj, snake,
+                              # camel, default)`, mcp_tool.py:488 — its docstring even names both failure
+                              # modes, "failed tool calls read as successful, tool schemas read as
+                              # empty") and applied it in 19 places. These two, plus :2284
+                              # `requestedSchema`, were missed. There is NO fix from our side: our server
+                              # already sends camelCase on the wire correctly, and pydantic DROPS unknown
+                              # extra keys, so no wire payload can make the SDK object expose a
+                              # `readOnlyHint` attribute. Editing vendor/hermes is out (compose over
+                              # APIs, never fork) and flipping `trust: untrusted` → `full` would disarm a
+                              # documented fence to hide an upstream bug.
+                              #
+                              # WHAT DID PASS AT v0.20.6, and is worth knowing next time:
+                              #  · our HAND-WRITTEN Streamable-HTTP server needs NO change for mcp 2.0.0.
+                              #    The SDK keeps two eras (`mcp_types.version` splits
+                              #    HANDSHAKE_PROTOCOL_VERSIONS …2025-11-25 from MODERN_PROTOCOL_VERSIONS
+                              #    2026-07-28) and Hermes deliberately stays on the handshake era
+                              #    (mcp_tool.py:261-267, :3616-3624 — it never calls `negotiate_auto`, so
+                              #    `server/discover` is never sent to us). All three transport rules hold
+                              #    in the 2.0.0 client: 202-for-a-notification, application/json accepted,
+                              #    405 tolerated on the GET. PROVEN on the wire: the handshake test listed
+                              #    all four tools with correct schemas. NO new bridge dependency — the
+                              #    no-FastMCP ruling stands.
+                              #  · the path-guard fence + approval cards still work: a real turn asking
+                              #    write_file for ~/Desktop raised "path-guard: write outside workspace"
+                              #    and the file was never created.
+                              #  · a real Hermes-lane chat turn streamed end-to-end through the bridge SSE.
+                              #  · the contract gate went 139 → 142 green after five mirror updates; all
+                              #    five are upstream refactor-MOVES, and all five mirrors were written to
+                              #    pass at BOTH tags, so they are KEPT at the rolled-back pin.
+                              # Full record + the retry plan: docs/handoff/HERMES-v0.20.6-BLOCKED-2026-08-28.md
+                              #
+                              # (2026-08-14 bump v2026.7.30 → v2026.8.13 (update sweep; 2565 commits in range).
+                              # Contract-checked against a real v2026.8.13 checkout: 13/14 asserts passed; the ONE
+                              # failure was a COSMETIC import reformat in hermes_cli/plugins.py (the tools.approval
+                              # import became parenthesised multi-line at L5884) — resolve_pre_tool_block still exists
+                              # (L5851) and still CALLS request_tool_approval (L5900), so the path-guard escalation is
+                              # unbroken. The TEST was widened (both forms + the call site) — see
+                              # bridge/contract_tests/test_hermes_ws_contract.py.
+                              # Verified present at the candidate: all 8 /api/ws JSON-RPC methods + all 9 events,
+                              # HERMES_DASHBOARD_SESSION_TOKEN, the approval protocol (choices/_redact/resolve/
+                              # is_interrupted), pre_tool_call in VALID_HOOKS w/ block|approve|message|rule_key,
+                              # mcp_servers config shape, loopback ⇒ no auth, HERMES_DESKTOP cron ticker, web_dist.
+                              # ⚠️ WATCH-ITEM: --port/--host/--insecure/--skip-build moved into a shared
+                              # _add_server_runtime_args(); --no-open is still a real flag on `dashboard` (only the
+                              # `serve` copy is SUPPRESS). A now-hidden --tui compat shim carries a comment saying it
+                              # is "safe to delete once the floor app version is well past 0.16.0" — evidence upstream
+                              # DOES prune dashboard flags. Our contract test pins --no-open/--skip-build.
+                              #
+                              # POST-BUMP RECONCILIATION (2026-08-14, the FULL gate — the pre-bump sweep above ran
+                              # only the WS contract, so it saw 13/14; the whole suite is 102 and found 3 more):
+                              #  1. BEHAVIOURAL — _DEFAULT_OFF_TOOLSETS gained `a2a` (tools_config.py:156). Our mirror
+                              #     HERMES_DEFAULT_OFF_TOOLSETS was stale, so "Hermes's defaults" would have switched
+                              #     a2a ON. Mirror corrected. (Latent in practice: a2a is a deferred-loading bundled
+                              #     platform plugin, so the row is normally absent from the catalog.)
+                              #  2. COSMETIC — _load_enabled_toolsets is now PARAMETERISED (server.py:4267). The arg
+                              #     is the SESSION SOURCE, not the platform_toolsets key: the config read on :4399 is
+                              #     still a hardcoded "cli", so the lever is unchanged. Test re-pinned, plus a NEGATIVE
+                              #     that the session platform is not what selects the key.
+                              #  3. COSMETIC — the `project` fold literal became _gui_surface_toolsets(platform)
+                              #     (server.py:4246/4410). `project` is still unconditional; `desktop_ui` is added for
+                              #     desktop-sourced sessions only, and ours send source="motdeck", so the Check card's
+                              #     count is still complete. Both halves now pinned.
+                              # ⚠️ The one to remember at the NEXT bump: HERMES_DESKTOP=1 (set by start_component.sh
+                              # for the cron ticker) is exactly what makes a source-less session resolve to "desktop".
+                              # Only our explicit session `source` keeps this lane off that surface.
+                              # — end of the v2026.8.13 record.)
+                              # (prev v2026.8.13, before that v2026.7.30, v2026.7.20)
+    installed: true
+    enabled: false
+    port: 9119                # hermes serve REST API (persistent surface)
+    depends_on: [runner]      # needs the model endpoint up first (one-switch closure)
+  odysseus:
+    repo: https://github.com/pewdiepie-archdaemon/odysseus.git
+    # ⚠️ BRANCH FACT (corrected 2026-08-14 by the update sweep — the comment used to imply `main`):
+    # this commit is on the upstream **dev** branch (the repo's default HEAD), NOT `main`.
+    #   merge-base --is-ancestor 25c9e73 origin/main → NO   |   origin/dev → YES
+    #   origin/main cf4e240 (2026-07-23) is a STALE side branch that sits BEHIND us and contains
+    #   at least one change upstream later REVERTED (f06a0a3 restores session URL hash writes).
+    # Anyone bumping "Odysseus to latest main" would silently move us BACKWARD by three weeks —
+    # and every contract test would pass while they did it, because the seams exist on both
+    # branches. Any future bump must be `git -C vendor/odysseus fetch origin dev` + a dev SHA.
+    #   2026-08-28 re-check: origin/main has since moved to 451900f (2026-08-25, "prepare
+    #   v1.0.3 hotfix") and is now a DIVERGENT release/hotfix branch — `merge-base
+    #   --is-ancestor` says it is neither an ancestor nor a descendant of dev. The rule is
+    #   unchanged and now stronger: bump from dev only, never main.
+    # ⚠️ SNAPSHOT RSYNC RULE (learned 2026-08-28): vendor/odysseus/data/ and vendor/odysseus/.env
+    #   are gitignored and hold LIVE STATE inside the checkout (app.db, sessions.json,
+    #   settings.json, auth.json, rag/, chroma/, uploads/, tts_cache/…). A plain
+    #   `rsync -a --delete vendor/odysseus/ $DST/vendor/odysseus/` DESTROYS the user's
+    #   Odysseus database. Always add `--exclude='/data/' --exclude='/.env'`.
+    pin: 934d23c0be29c9721385f34565c0ae2cbd60da04   # dev@934d23c — 2026-09-07 candidate: six commits after c9dd68d. Owner-scope/tool work and psycopg2-binary were audited; login + authenticated root passed in an isolated data dir; 303 focused upstream checks passed and one Docker-image-only check skipped. This does NOT close U72/U139/U142. A pin move requires a rebuilt venv and the native login, Direct history, Agent, attachment and session journeys before release.
+    installed: true
+    enabled: false
+    port: 7860                # native macOS default (7000 often held by AirPlay)
+    depends_on: [runner, searxng]   # model endpoint + private search (one-switch closure)
+    admin_user:               # generated into data/.env.local on first bootstrap
+    admin_password:           # generated into data/.env.local; never committed
+  searxng:
+    repo: https://github.com/searxng/searxng.git
+    pin: c7f3080aac5de13b619c4a5ab36590a2c5165e1c  # exact source commit; not a branch. 2026-09-07 candidate: httpx networking moved substantially to curl_cffi; isolated install plus a real JSON search passed. Rebuild the venv and re-walk private search before release.
+    # Source-only project (not on PyPI). scripts/install_searxng.sh fetches this exact
+    # object and verifies HEAD before installing; upstream's default branch is master.
+    #   2026-08-28 SECURITY bump from 6da6eee2 (2026-07-19), verified by diffing the trees:
+    #     · calculator answer render innerHTML → textContent (XSS #6551)
+    #     · preferences zlib decompression capped at 16 KiB (decompressobj, DoS)
+    #     · X-Forwarded-For / X-Real-IP discarded unless the peer IS a trusted proxy (#6556)
+    #   Requirements moved too (certifi/pygments/typer/httpx-socks), so a bump is
+    #   "git pull + re-run the editable pip install into data/searxng-venv", never
+    #   just a pull. The snapshot copy carries no .git, so its searx.version reads
+    #   1.0.0 — the repo checkout is the SHA of record.
+    installed: true
+    enabled: false
+    port: 8080                # private meta-search; Odysseus SEARXNG_INSTANCE defaults here
+  # OPTIONAL voice component (TTS / voice cloning / transcription / dubbing).
+  # LICENSE: AGPL-3.0-only — same posture as SearXNG: we compose over HTTP and never
+  # modify it, so nothing propagates. Not installed by default and never a dependency
+  # of another component; heavy (~5-8GB venv + ~2.4GB models on first use).
+  # Formerly "OmniVoice Studio" — every internal id/env var still uses the `omnivoice`
+  # prefix (OMNIVOICE_BIND_HOST / OMNIVOICE_PORT / OMNIVOICE_DATA_DIR).
+  voicestudio:
+    repo: https://github.com/debpalash/VoiceStudio.git
+    pin: v0.5.1               # release tag — never track a branch. 2026-09-07 candidate: upstream calls this a patch, but it is a 467-file startup/worker refactor. The isolated source answered /health and /startup/progress with the old venv; release still requires a rebuilt locked venv plus native TTS/STT/MCP journeys.
+                              # 2026-08-28 bump v0.4.2 → v0.5.0. The update audit rated this
+                              # RISKY on two counts and BOTH were checked at the candidate
+                              # (clone of v0.5.0, read before touching vendor/) and found
+                              # FALSE for us:
+                              #  1. "the rebrand may move the omnivoice-prefixed env vars" —
+                              #     it does not. v0.5.0 still ships an `omnivoice/` package and
+                              #     still reads OMNIVOICE_BIND_HOST (main.py:1549),
+                              #     OMNIVOICE_PORT (main.py:1499), OMNIVOICE_API_URL
+                              #     (mcp_server.py:139) and OMNIVOICE_DATA_DIR
+                              #     (core/config.py:6). Upstream's own changelog: "Only the
+                              #     name you see changes — your data folder, settings and the
+                              #     Docker image paths stay put."
+                              #  2. "server-mode API-key auth for admin actions" — gated on
+                              #     OMNIVOICE_SERVER_MODE=1 (the Docker image) or
+                              #     OMNIVOICE_API_KEY being set, and LOOPBACK ALWAYS BYPASSES
+                              #     (api/dependencies.py::_server_mode, main.py::
+                              #     BearerKeyMiddleware). We set neither and bind 127.0.0.1,
+                              #     so the whole gate is inert here.
+                              # Also re-verified at the candidate: backend/main.py entrypoint,
+                              # GET /health (main.py:1349, in _SHELL_PATHS so ungated), the
+                              # /mcp mount with streamable_http_path="/" (mcp_server.py:387),
+                              # all seven MCP tool names bridge/app.py VOICE_MCP displays, the
+                              # TRANSLATE_BASE_URL/MODEL/API_KEY trio, and the migration count
+                              # (10 = 10, so no new alembic revisions to apply).
+    installed: false
+    enabled: false
+    port: 3900                # FastAPI backend + the built SPA on ONE port (binds 127.0.0.1)
+    depends_on: []            # standalone — core TTS/ASR needs no model runner
+  # OPTIONAL second voice component (TTS / voice cloning / transcription / captures).
+  # LICENSE: MIT — clean, nothing propagates.
+  # ⚠️ NO AUTHENTICATION ANYWHERE: /speak, /transcribe and /mcp are open to whatever
+  # can reach the port, so it MUST stay on 127.0.0.1 (never an M5 Tailscale hop).
+  # ⚠️ UPSTREAM IS STALE: last push 2026-04-26, 449 open issues at the time of wiring.
+  # ⚠️ KNOWN-FRAGILE DEPENDENCY GRAPH (five packages need --no-deps / git URLs / a custom
+  # --find-links index) — install is ONLINE-ONLY and is not part of the fat wheelhouse.
+  # Not installed by default and never a dependency of another component.
+  voicebox:
+    repo: https://github.com/jamiepine/voicebox.git
+    pin: v0.5.0               # release tag — never track a branch
+    installed: false
+    enabled: false
+    port: 17493               # NOTE: the backend's own argparse default is 8000 — the
+                              # start script ALWAYS passes --port explicitly
+    depends_on: []            # standalone — core TTS/ASR needs no model runner
+
+  # ── OPTIONAL creative / training components (2026-08-20) ─────────────────────────
+  # Same delivery shape as the voice pair: plain shallow clones made by
+  # install_component.sh (searxng precedent), never submodules, so a default
+  # bootstrap never drags in a multi-GB optional dependency.
+  comfyui:
+    repo: https://github.com/comfyanonymous/ComfyUI.git
+    pin: v0.34.5              # release tag — never track a branch. 2026-09-07 candidate: isolated MPS startup exposed a fresh-base assumption (custom_nodes must already exist); the installer now creates the complete base shape before first launch. Generate image/video must pass before release.
+                              # 2026-08-20: v0.33.3 was newest (sha 4da9e2db…).
+                              # 2026-08-28 bump v0.33.3 → v0.34.1. ⚠️ the update audit said
+                              # "latest = v0.34.0"; `git ls-remote --tags` says v0.34.1 exists
+                              # too, so the pin is the real newest, not the audit's number.
+                              # requirements.txt still ships the SPA as a PIP package
+                              # (comfyui-frontend-package==1.49.6, unchanged) — there is NO
+                              # npm/bun build step here, unlike voicestudio/voicebox.
+                              # ⚠️ TORCH WAS DELIBERATELY NOT TOUCHED at this bump. The
+                              # installer's Apple-Silicon step installs a FLOATING pytorch
+                              # NIGHTLY (upstream README's instruction), so re-running it
+                              # would swap torch under a working install in the same pass and
+                              # confound it — and a bad MPS nightly only shows up in a real
+                              # generation, which is exactly the expensive thing this pass
+                              # cannot cheaply A/B. The bump was done as checkout + `pip
+                              # install -r requirements.txt` (bare `torch` in that file is
+                              # already satisfied, so pip leaves it alone). Installed torch
+                              # stays 2.15.0.dev20260820. A nightly refresh is its own pass,
+                              # with a real image generation before/after.
+    installed: false          # OPTIONAL — nothing depends on it; bootstrap never clones it
+    enabled: false
+    port: 8188                # main.py's own argparse default; passed explicitly anyway
+    depends_on: []            # standalone — its own diffusion models, not our runner
+    # ⚠️ LICENSE: GPL-3.0. Composed at ARM'S LENGTH ONLY — a separate process we talk to over
+    # HTTP, never edited, never lifted from. Same posture as SearXNG's AGPL.
+    # ⚠️ Its models and their RAM are OUTSIDE MOT Deck ledger (memory.budget_gb): diffusion
+    # weights live in its own process, exactly like the voice components' do.
+    # ⚠️ --base-directory is MANDATORY at start (see start_component.sh): the default writes
+    # models/ output/ input/ user/ into the repo dir, i.e. into vendor/. Same class of trap as
+    # voicebox's --data-dir.
+
+  unsloth:
+    repo: https://github.com/unslothai/unsloth.git
+    pin: v0.1.804-beta        # release tag — never track a branch.
+                              # 2026-08-28 bump v0.1.801-beta → v0.1.804-beta (802/803 on
+                              # 08-25, 804 on 08-27), newest tag re-verified LIVE with
+                              # `git ls-remote --tags` at bump time, not taken from the audit
+                              # (sha 8c43aed, "Versioning", 2026-08-27 06:09 -0700). The range
+                              # is 1130 files / ~186k insertions, but almost all of it is
+                              # studio/src-tauri Linux/AppImage/WebKit desktop work we never
+                              # run — our launch is the FastAPI `unsloth studio` server plus
+                              # the bun-built SPA, and both survived (CLI surface re-measured:
+                              # --host/--port/--frontend/--api-only all still present).
+                              # 2026-08-20: v0.1.801-beta was newest, verified the same way
+                              # (sha f3a66cd1844f82feea21bd1b8454a1ff60719c9f, committed
+                              # 2026-08-20 09:55 -0700). Upstream's other tag family is
+                              # month-named (March-2026 …) and older; the v0.1.8xx-beta line is
+                              # the Studio one. MONOREPO: unsloth/ (Apache-2.0 training library)
+                              # + studio/ (AGPL-3.0-only FastAPI server + React SPA).
+                              # 2026-08-28 VERSION-SCHEME NOTE: the in-app updater's feed is
+                              # PyPI (studio/backend/utils/update_status.py →
+                              # pypi.org/pypi/unsloth/json), which publishes CalVer — this tag
+                              # carries unsloth/_version.py __version__ = "2026.8.22", and PyPI
+                              # latest IS 2026.8.22 (uploaded 2026-08-27, same day as the tag).
+                              # So git tag ↔ PyPI release are the same train: v0.1.804-beta ≡
+                              # 2026.8.22, and this pin is feed-current. When bumping, confirm
+                              # BOTH: newest v0.1.8xx-beta tag AND that its _version.py matches
+                              # PyPI's latest — a tag can exist hours before the PyPI upload.
+                              # ISOLATED HOME (2026-08-28; the earlier KNOWN WART is RESOLVED):
+                              # the launch exports UNSLOTH_STUDIO_HOME=data/unsloth-home
+                              # (upstream's documented home override — verified in
+                              # unsloth_cli/commands/studio.py _resolve_studio_home; the
+                              # STUDIO_HOME alias also exists, UNSLOTH_STUDIO_HOME wins), so
+                              # our component NEVER touches ~/.unsloth again. That home is
+                              # 100% sample's STANDALONE Unsloth.app's (:8888); sharing it had
+                              # (a) our /api/health reporting the standalone's stale PyPI dist
+                              # version — the CLI re-exec'd into its ~/.unsloth managed venv —
+                              # and (b) our running process holding that install so the
+                              # standalone's OWN self-updater greyed out. Our venv now lives
+                              # AT data/unsloth-home/unsloth_studio (the CLI's managed-venv
+                              # path), so `unsloth studio` serves in-process from our editable
+                              # install and /api/health reports THIS pin (2026.8.22). Its
+                              # engines (llama.cpp/whisper.cpp) download on demand into
+                              # data/unsloth-home — GB-scale, DATA side, never shipped by
+                              # ship.sh. start_component.sh fences ~/.unsloth (refuses a launch
+                              # that would resolve there) and still sets
+                              # UNSLOTH_DISABLE_UPDATE_CHECK=1 (version banner + probes off).
+                              # Fresh home ⇒ fresh Studio state: its own login/bootstrap
+                              # credential, chats, models — nothing inherited from ~/.unsloth.
+                              # MEASURED at cutover (2026-08-28): install (venv+SPA, warm pip
+                              # cache) 39s; first start from a cold home 10s; warm restart 3s.
+                              # On that first start the backend SELF-HEALED its MLX stack into
+                              # OUR venv (pip mlx/mlx-lm/mlx-vlm, ~6s, enables Train/Export) —
+                              # upstream's own flow, now correctly contained in our home; set
+                              # UNSLOTH_DISABLE_MLX_AUTOREPAIR=1 to forbid it.
+    installed: false          # OPTIONAL
+    enabled: false
+    port: 8899                # ⚠️ DELIBERATELY NOT upstream's default 8888. sample runs a
+                              # STANDALONE Unsloth app on 8888, and start_component.sh clears
+                              # its port (listener-scoped) before launching — on 8888 that
+                              # would kill her other app every time ours starts. 8899 is passed
+                              # explicitly on the launch line, so upstream's default never applies.
+    depends_on: []            # standalone — it serves its OWN models, never our runner
+    # ⚠️ LICENSE: Studio is AGPL-3.0-only (studio/LICENSE.AGPL-3.0); the training library is
+    # Apache-2.0. Arm's length only — separate process, HTTP, never modified.
+    # ⚠️ Its bearer auth is ITS OWN UI's business. Read at the pin (studio/backend/run.py
+    # _terminal_password_gate): the password gate and the 1h bootstrap auto-shutdown BOTH only
+    # apply to an exposed/tunnelled launch, so a loopback launch with no terminal is fine and
+    # the served HTML auto-fills the bootstrap credential.
+    # ⚠️ We deliberately never export HERMES_HOME and never invoke `unsloth start` — that is
+    # the CLI's agent-wiring path and it must not touch ~/.hermes.
+    # ⚠️ It can download its own (forked, floating-tag) llama.cpp into data/unsloth-home.
+    # Contained, but those weights are invisible to MOT Deck RAM ledger.
+
+  # ── OPTIONAL second CODING lane (docs/research/2026-08-21-opencode-omnigent-recon.md) ──
+  # aider stays the PTY lane (it needs no tool-calling and is the only structurally
+  # honest option for a 4B). OpenCode is the CAPABLE one — LSP, subagents, plan mode,
+  # MCP, skills, apply_patch and a real web UI — and it is a TAB, not a PTY, because
+  # its server already serves its own SPA on its own loopback port.
+  opencode:
+    # NOT a git checkout: upstream ships a PREBUILT native binary per platform on npm
+    # (built with Bun; no Node at run time), so `repo` is informational and the pin is
+    # the NPM VERSION, which is unambiguous. scripts/install_opencode.sh fetches the
+    # two tarballs from registry.npmjs.org and extracts ONE Mach-O arm64 file.
+    # ⚠️ upstream's live git repo is sst/opencode but its own README build badge and
+    # brew tap now point at an `anomalyco` org — pin by npm version, never by org.
+    repo: https://github.com/sst/opencode.git
+    pin: "1.18.29"            # = build.opencode_pin (kept here so the manifest is
+                              # self-describing; the installer reads build.opencode_pin)
+                              # 2026-08-28 bump 1.18.19 → 1.18.23 (patch releases only).
+    installed: false          # OPTIONAL — nothing depends on it; bootstrap never clones it
+    enabled: false
+    port: 4096                # ⚠️ upstream's OWN --port DEFAULT IS 0 (an ephemeral port,
+                              # cli/network.ts at the pin) — 4096 is only the number its
+                              # DOCS use. The start script ALWAYS passes --port explicitly;
+                              # without it the tab would point at a port nothing listens on.
+    depends_on: []            # NOT [runner]: it is usable against any provider it has
+                              # configured, and our config fan-out is best-effort. Start
+                              # the runner yourself for the local lane.
+    # ⚠️ LICENSE: MIT. Clean — nothing propagates.
+    # ⚠️ TOOL-CALLING IS REQUIRED. Every mutation is a native tool call and there is NO
+    # aider-style text-edit fallback, so on a model that cannot emit one it looks BROKEN
+    # rather than degraded. That is why chat models now carry a `tools` verdict
+    # (bridge/modeltools.py) and why the start plan warns when the live model lacks it.
+    # ⚠️ NO AUTH by default (OPENCODE_SERVER_PASSWORD unset) — loopback only, forever.
+    #    Never pass --cors and never --mdns (the latter flips the host to 0.0.0.0).
+    # ⚠️ AUTO-UPDATE IS ON BY DEFAULT upstream (cli/upgrade.ts: `if (config.autoupdate
+    #    === false || Flag.OPENCODE_DISABLE_AUTOUPDATE) return`). We nail it shut BOTH
+    #    ways — "autoupdate": false in the config we write AND OPENCODE_DISABLE_AUTOUPDATE=1
+    #    at spawn. Never use its in-app upgrade: that is the pin-discipline rule.
+    # ⚠️ It installs provider packages at RUNTIME with @npmcli/arborist (unpinned, needs
+    #    network on first use). Confined to data/opencode/xdg/cache by the XDG_* env the
+    #    start script sets — see start_component.sh — but it IS a floating dependency and
+    #    it is why this install is ONLINE-ONLY and cannot ride the fat wheelhouse.
+
+  # ── OPTIONAL THIRD CODING lane — DeepSeek Harness (docs/research/2026-09-02-deepseek-harness.md) ──
+  # `dsh` is DeepSeek AI's own agent harness (Claude-Code-shaped, Cordis plugin
+  # architecture). It is a TAB, not a PTY: `dsh web` serves its own SPA + its own
+  # JSON/websocket API on ONE loopback port, the same shape as OpenCode's `serve`.
+  deepseek:
+    # NOT a git checkout and NOT a prebuilt binary. Upstream publishes a TypeScript
+    # monorepo to npm; the install is `npm install @deepseek-ai/dsh@<pin>` into a
+    # private prefix under data/deepseek/, which resolves ~455 packages (~283MB,
+    # MEASURED 2026-09-03; ~7 min on a warm cache). Hermes/Odysseus weight class, not
+    # OpenCode's one-Mach-O class. `repo` is informational — the PIN IS THE NPM VERSION.
+    repo: https://github.com/deepseek-ai/deepseek-harness.git
+    pin: "0.1.1-rc.2"         # = build.dsh_pin (kept here so the manifest is
+                              # self-describing; the installer reads build.dsh_pin).
+    installed: false         # OPTIONAL — nothing depends on it; bootstrap never installs it
+                              # ⚠️ THIS IS THE SHIPPED DEFAULT AND MUST STAY false HERE.
+                              # Install state is PER MACHINE and lives in the SNAPSHOT's
+                              # copy of this file (ship.sh's manifest merge is additive-only
+                              # and never overwrites an existing value). Running the
+                              # installer against the REPO flips this line to true — which
+                              # is correct behaviour AND a red gate
+                              # (test_seam.py::test_motdeck_yaml_parses). Flip it back
+                              # before committing; that is not a bug in either half.
+    enabled: false
+    port: 3080                # upstream's OWN default (dsh-host-webserver: `port:
+                              # ctx.webStartup.port ?? 3080`, verified in the composed
+                              # tree at the pin). Passed EXPLICITLY on the launch line
+                              # anyway, and 3080 collides with nothing else in this file.
+    depends_on: []            # NOT [runner]: same reasoning as OpenCode — it is usable
+                              # against any provider it has configured, and our config
+                              # fan-out is best-effort. The SOFT signal lives in
+                              # bridge/routers/components.py::NEEDS_SOFT, which is what
+                              # puts "the Runner is down" on its card without changing
+                              # what a Start brings up.
+    # ⚠️ LICENSE: MIT (root LICENSE, © DeepSeek 2026). THIRD_PARTY_NOTICES' only
+    #    GPL-family entries are dev-only tooling, not linked into any shipped artifact.
+    # ⚠️ PRE-1.0 DEVELOPER PREVIEW, and it says so itself (SAFETY.md: "experimental
+    #    developer-preview software … has not undergone a security audit"). Fifteen npm
+    #    versions to date, ALL 0.0.x/0.1.x with -rc/-alpha suffixes. PIN HARD.
+    #    ⚠️ THE PIN IS UPSTREAM'S OWN `latest` DIST-TAG, NOT THE HIGHEST VERSION NUMBER.
+    #    Measured 2026-09-03: dist-tags were latest=0.1.1-rc.2 (published 2026-08-21),
+    #    next=0.1.2-rc.1 (published THAT MORNING), alpha=0.1.2-alpha.5. `next` and
+    #    `alpha` are pre-release channels upstream has not promoted; taking the highest
+    #    number would be tracking a branch, which is the thing this file's first line
+    #    forbids. When bumping: read `npm view @deepseek-ai/dsh dist-tags` and take
+    #    `latest` — and re-run the compat measurement in scripts/seed_deepseek_config.py.
+    # ⚠️ NEEDS NODE >= 22.19 (or >= 24). The PUBLISHED package declares NO `engines`
+    #    field (the ^22.19.0 || >=24.0.0 range lives in the monorepo root package.json,
+    #    which npm never sees), so npm will NOT enforce it and a too-old Node fails at
+    #    runtime with a confusing error. scripts/ensure_node.sh is what checks it:
+    #    the user's own node ALWAYS wins, else we fetch build.node_pin into data/node.
+    # ⚠️ FENCED HOME: $DSH_HOME = data/deepseek/home, exported at spawn. Upstream's
+    #    default is ~/.dsh (dsh-home-paths::resolveDshHome — explicit config, then
+    #    $DSH_HOME, then ~/.dsh). VERIFIED on a from-scratch walk: after an install,
+    #    a --help, a web boot and eight headless turns, ~/.dsh, ~/.cache/dsh and
+    #    ~/.config/dsh did not exist. Everything lands under $DSH_HOME.
+    # ⚠️ TELEMETRY IS OFF AT THIS PIN BY DEFAULT — VERIFIED, not assumed. The composed
+    #    tree's session-telemetry-otel row reads
+    #    `mode: process.env.DSH_TELEMETRY_MODE || 'DISABLED'` (the brief's
+    #    FEEDBACK_ONLY was the monorepo's older default). We ALSO export
+    #    DSH_TELEMETRY_DISABLED=1 at spawn — upstream's own authoritative pre-load kill
+    #    switch — so the default moving at a future pin cannot switch it on under us.
+    # ⚠️ NO AUTO-UPDATER. Grepped the whole install for autoupdate/self-update/
+    #    update-notifier/`npm install` machinery: nothing. So unlike OpenCode there is
+    #    no in-app upgrade to nail shut — but the same rule applies to `npm update`.
+    # ⚠️ NO pkill/killall ANYWHERE in the 455-package install (grepped). Clean.
+    # ⚠️ LOOPBACK BY POLICY, not merely by default: the CLI refuses --host 0.0.0.0.
+    #    No auth, by design, exactly like OpenCode's server and Hermes's dashboard.
+    # ⚠️ THE FIRST THING IT ASKS FOR IS A WORKSPACE. Its native macOS osascript chooser
+    #    was proven unreachable from the embedded WKWebView tab. MOT Deck therefore
+    #    composes dsh's OWN browse-host + browse-client plugins through the checked-in
+    #    policies/deepseek-directory-picker.yaml overlay; no vendor file or workspace
+    #    store is patched. The installer creates data/deepseek-workspace as the answer.
+
+# M1 runner slot — the swappable model engine the Bridge manages headless.
+# Components (Hermes/Odysseus) consume runner.endpoint anonymously (never know it's Jan).
+runner:
+  adapter: auto            # auto = engine per model format (gguf→llamacpp, mlx→mlx-lm/mlx-vlm) | llamacpp | mlx  (jan retired 2026-07-23)
+  llamacpp_pin: b10827       # pinned llama.cpp release tag (bNNNN) — scripts/install_llamacpp.sh fetches macos-arm64 binaries into data/llamacpp/. 2026-09-07 candidate: every launch flag, API-key-file enforcement, metrics and authenticated 4B inference passed against the exact asset; the installed 27B+mmproj journey remains the release gate.
+  llamacpp_sha256: 28550b2304a138e72fb5700132917052138aa47895dfa92dfd26a820dd905658  # exact macOS-arm64 release asset bytes
+                             # 2026-08-06: b10094 → b10295. 2026-08-14: b10295 → b10427 (update sweep).
+                             # NOTE release CI lags a fresh tag: b10297 existed but had NO macos-arm64 asset.
+                             # b10427's llama-b10427-bin-macos-arm64.tar.gz WAS verified present (302 to the CDN;
+                             # a bogus tag and a bogus filename both 404, so the check discriminates). Always pin a
+                             # tag whose llama-<tag>-bin-macos-arm64.tar.gz actually exists.
+                             # Every flag we depend on verified in the b10427 source: -a/--alias (arg.cpp:2966),
+                             # --repeat-penalty (:2080), --spec-type (:4139, DRAFT_MTP still an enum member),
+                             # llama-tts -m/-mm/-p/-o (tools/tts/tts.cpp:37), --tts-lang (:4317),
+                             # --tts-speaker-file (:4325); -mv/--vocoder-model still ABSENT (our contract test
+                             # asserts that absence — still correct).
+                             # ⚠️ WATCH-ITEM (new in range, #26118): common_params_apply_system_config() now reads
+                             # /etc/llama.cpp/config.ini then ${XDG_CONFIG_HOME:-~/.config}/llama.cpp/config.ini IF
+                             # THEY EXIST, applied BEFORE env and CLI (our argv still wins). Neither file exists on
+                             # sample's Mac ⇒ no-op today, but llama-server's behaviour is no longer determined by our
+                             # argv alone. ⚠️ install_llamacpp.sh keeps NO backup — copy data/llamacpp aside first.
+                             #
+                             # ── 2026-08-28: b10427 → b10662 (235 builds) ────────────────────────────
+                             # Asset check first, same discriminating shape as before: llama-b10662-bin-
+                             # macos-arm64.tar.gz → 200, and a bogus b99999 → 404. Rollback copies taken
+                             # BEFORE installing: data/llamacpp.b10427.bak in BOTH the repo and the snapshot.
+                             # Flag surface MEASURED, not read: `llama-server --help` diffed b10427 vs
+                             # b10662 → 322 flags → 332. REMOVED: --hf-file-v, --hf-repo-v,
+                             # --model-vocoder, --tts-use-guide-tokens — we use NONE of the four (grepped
+                             # scripts/ + bridge/). ADDED (14, all ignorable): --kv-unified-per-slot,
+                             # --load-mode, --mcp-servers-config, --mcp-servers-json, --mmproj-device,
+                             # --n-cpu-ffn, --reasoning-effort, --spec-synth-len, --spec-synth-rates,
+                             # --tensor-read-lazy, --tools-runtime, --video-ffmpeg-dir, --video-fps,
+                             # --video-timestamp-interval. Every UNGATED flag start_component.sh passes is
+                             # still present (--no-context-shift/--host/--port/--alias/--ctx-size/
+                             # --no-cont-batching/--cache-ram/--fit/--model/--parallel/--mmproj), --spec-type
+                             # still lists draft-mtp, --fit still takes [on|off], --api-key + the
+                             # --repeat-penalty/--repeat-last-n pair intact. llama-tts re-measured too:
+                             # -m/-mm/-p/-o/--tts-lang/--tts-speaker-file/-n all present, and
+                             # -mv/--vocoder-model + --voice still ABSENT (the contract test's assertion of
+                             # that absence is still correct). config.ini watch-item re-checked: neither
+                             # /etc/llama.cpp/config.ini nor ~/.config/llama.cpp/config.ini exists ⇒ still
+                             # a no-op. Live proof after the restart: version self-reports build 10662,
+                             # the same 27B model reloads, a real /v1/chat/completions round-trip answers
+                             # correctly at 14.3 tok/s (b10427 baseline was 12.3–12.6 on long contexts),
+                             # the direct chat lane streams end-to-end, /api/models lists 16 models with
+                             # live_id set, /api/status all green.
+                             # ⚠️⚠️ REGRESSION THIS BUMP INTRODUCED, found and fixed — read before the next one:
+                             # GET /v1/models is now GUARDED BY --api-key. Measured by running both
+                             # binaries model-less with `--api-key testkey`: b10427 → 200 without a key,
+                             # b10662 → 401. bridge/app.py::_runner_loaded_id (THE single source of truth
+                             # for "what is live") sent no Authorization header and its docstring asserted
+                             # that none was needed, so on b10662 it 401'd on every poll → _reconcile_live
+                             # read "nothing loaded" → Mission Control showed the runner running:false /
+                             # loaded:false WHILE IT WAS GENERATING, and runner.log gained one
+                             # "unauthorized: Invalid API Key" per status poll. Fixed: the probe now sends
+                             # the manifest's key (runner.api_key, or aux.api_key when probing the aux
+                             # port). Pinned forever by bridge/contract_tests/test_llama_server_contract.py.
+  binary:                  # explicit path to llama-server; empty = auto-discover (our pin → Jan backends → LM Studio)
+  mlx_venv: data/mlx-venv   # created by scripts/install_mlx.sh
+  port: 6767                 # canonical headless endpoint (jan serve --port)
+  endpoint: http://127.0.0.1:6767/v1
+  api_key:                   # generated into data/.env.local on first bootstrap
+  model: gemma-4-31B-it-uncensored-biproj-q4_k_m
+  ctx_size: 65536            # >=64K (Hermes floor); desktop preset may raise it
+  spec_mtp: auto             # MTP speculative decoding: auto = detect from the model id OR its
+                             # source repo (e.g. unsloth/…-MTP-GGUF, persisted on download) |
+                             # on = force (use for an MTP model acquired before repo tracking) |
+                             # off = never. A failed spec launch auto-retries without the flags.
+
+# OPTIONAL aux runner — a small second model (300MB–10GB class) for Odysseus's
+# Background Tasks (auto-titles, search-query generation, memory extraction) so
+# they stop contending with the main runner's single slot. Pick the model via
+# "Set aux" in the Models pane; start/stop from the same pane. To wire it in:
+# Odysseus admin settings → Background Tasks → endpoint http://127.0.0.1:6768/v1,
+# the generated local aux API key, and the aux model name.
+aux:
+  port: 6768
+  endpoint: http://127.0.0.1:6768/v1
+  api_key:                   # generated into data/.env.local on first bootstrap
+  model:                      # empty = not configured; set from the Models pane
+
+# MOT Deck-native VOICE capability (FABLE-VOICE-CAPABILITY-SPEC, Phase B).
+# NOT the optional voicestudio/voicebox components above — this is the all-MIT
+# agents-can-speak path built on binaries we already ship: llama-tts (rides
+# runner.llamacpp_pin) and mlx-audio (in data/mlx-venv). One-shot subprocesses:
+# no port, no component card, no resident RAM — voice models cost DISK plus
+# transient RAM while a clip renders.
+# Both values are REGISTRY IDS (data/models.json entries with kind: "audio").
+# EMPTY = the capability is off. Set from Models → Audio (the bridge rewrites
+# these two lines in place, so the comments here survive).
+voice:
+  tts_model:                  # id of the default text-to-speech model ("" = off)
+  stt_model:                  # id of the default speech-to-text model ("" = off; Phase D)
+
+# Hermes LANE guard (2026-08-14). A small local thinking model can spiral into a
+# deliberation loop that never terminates — and because it keeps EMITTING tokens,
+# every silence-based watchdog in the relay is blind to it: the turn cooked the CPU
+# until the 600s total-silence guard, and even then only the RELAY gave up while
+# Hermes kept generating. max_turn_s bounds ONE UNBROKEN GENERATION SEGMENT, NOT the
+# whole turn (2026-08-14h revision): the clock is armed at prompt.submit and RESET on
+# every tool.start / tool.complete and on every approval/clarify answer, and it PAUSES
+# while a card waits for you. So a legitimate hour-long research turn that keeps making
+# tool calls is never touched — only a model deliberating for this long with nothing to
+# show for it. On overrun the bridge sends session.interrupt (stopping the GENERATION)
+# and ends the stream with a clear message.
+#   0 = disabled. Absent or unparseable = 600 (a typo must not switch a guard off).
+# NOTE this is a TOP-LEVEL block, deliberately not components.hermes.*: ship.sh's
+# manifest merge is additive at the top level only, so a new sub-key under the
+# already-present components.hermes would never reach the app snapshot.
+hermes:
+  max_turn_s: 600             # seconds in ONE generation segment; 0 = no limit
+
+# Model-memory ledger — Bridge-side RAM accounting so main + aux (+ future voice)
+# model loads can't blow past physical memory. Budget is < 64GB to leave headroom
+# for the OS + apps; enforced (409) on model switch and aux start. Footprint is
+# approximated by weight-file size (KV-cache/overhead absorbed by the headroom).
+memory:
+  budget_gb: 48               # model RAM budget (of 64GB — leave headroom for apps)
+
+bridge:
+  port: 8700                  # control panel + API
+  gearbox_port: 8710          # OpenAI-compatible routing proxy (M2)
+
+# FAT/offline installer (§G-phase3) — build_app.sh --fat reads these. The build bundles
+# uv's standalone CPython + an arm64 wheelhouse so a fresh Mac provisions every component
+# OFFLINE (no PyPI, no npm) on first run. Model weights still download later.
+# ⚠️ PENDING FABLE QA: python_version pin — verify a current python-build-standalone /
+# uv-managed release actually carries this cpython (build_app.sh --fat uses `uv python
+# install <python_version>`; uv resolves the correct standalone tarball URL itself).
+build:
+  python_version: "3.12.11"   # standalone CPython bundled into the fat app (must match wheel tags)
+  python_tag: cp312           # wheel ABI tag for the wheelhouse download (--python-version)
+  # MLX runtime pins — SINGLE SOURCE OF TRUTH, read by scripts/install_mlx.sh (dev install),
+  # scripts/build_app.sh (fat wheelhouse download) and scripts/firstrun_fat.sh (offline provision).
+  # They MUST agree: if the wheelhouse bundles a version the installer doesn't ask for, an
+  # OFFLINE first-run fails ("no matching distribution"). Bump = edit here only, rebuild fat,
+  # then re-verify one MLX chat turn (and re-check the mlx wire-id path in bridge/app.py).
+  mlx_lm_pin: "0.31.3"
+  # 2026-08-14 bump 0.6.10 → 0.6.13 (update sweep): server arg surface changed
+  # ADDITIVELY ONLY (+--kv-key-bits/--kv-value-bits/--kv-key-scheme/--kv-value-scheme/
+  # --max-num-seqs); no removals, requirements.txt identical. Our launch line
+  # (mlx_vlm.server --model/--host/--port) is unaffected.
+  # 2026-08-28 bump 0.6.13 → 0.6.17 (four patch releases, 08-17…08-26). Arg surface
+  # re-measured at the candidate by diffing mlx_vlm/server/cli.py's add_argument set:
+  # ADDITIVE ONLY again — 34 flags → 35, the single new one being --reranker-model,
+  # and NOTHING removed (measured, not assumed: the full add_argument sets were
+  # diffed before/after the install) — so
+  # start_component.sh's launch line (--model/--host/--port) and its source-gated
+  # `--max-tokens` floor both still hold. mlx-lm/mlx-audio/mlx-whisper stay pinned
+  # where they are — install_mlx.sh asks for all four explicitly, so this bump
+  # cannot drag mlx-audio to 0.5.0 (the deliberately-deferred risky one).
+  mlx_vlm_pin: "0.6.17"
+  # mlx-audio powers the MLX half of MOT Deck-native voice capability (the
+  # `voice:` block above). It is ALREADY pulled in transitively as an mlx-vlm dep,
+  # so pinning it here just makes the version deliberate: the provisioned venv had
+  # 0.4.4 while the Phase-0 recon read 0.4.7 sources — install_mlx.sh now asks for
+  # the recon'd version so installed reality matches the argv surface we build.
+  # 2026-08-14 bump 0.4.7 → 0.4.8 (update sweep). The CLI_PARITY_KWARGS re-derivation
+  # rule was DISCHARGED by measurement, not assumption: mlx_audio/tts/generate.py and
+  # mlx_audio/stt/generate.py are md5-IDENTICAL between 0.4.7 and 0.4.8, and
+  # tts/models/omnivoice/ is identical too — so the argparse default dict that
+  # bridge/voice_worker.py mirrors cannot have changed. The rule still stands for
+  # every FUTURE bump (a drift there is silently-wrong audio, not an error).
+  # 0.4.8 is a RESAMPLING-QUALITY release (new mlx_audio/resample.py replacing the
+  # scipy resample_poly path, streaming miniaudio downsample, istftnet changes).
+  # ⚠️ The honest risk is AUDIO, not API — istftnet is the Kokoro/kitten vocoder and
+  # the resample path feeds every reference clip. Also: RenderCache keys do NOT
+  # include the engine version, so 0.4.7-era cached renders keep being served after
+  # the bump — A/B with fresh text or after a bridge restart.
+  mlx_audio_pin: "0.4.8"
+  # mlx-whisper: the STT half (Phase D dictation). One-shot `mlx_whisper` console
+  # script out of the SAME data/mlx-venv — no second venv, no torch. Pin per the
+  # Fable spec amendment §6.
+  mlx_whisper_pin: "0.4.3"
+  # ── build-time toolchain MOT Deck provisions for ITSELF (never brew, never sudo) ──
+  # bun: compiles the Vite SPAs of the two OPTIONAL voice components. Read by
+  # scripts/ensure_bun.sh, which lands it at data/bun/bin/bun (~35MB download) ONLY if
+  # the user has no bun of their own. Build-time only — nothing at runtime needs it, and
+  # the FAT/offline installer never touches it (voice components are online-only).
+  # Pin = the latest oven-sh/bun release as of 2026-08-07 (published 2026-05-13); the
+  # bun-darwin-aarch64.zip asset was verified present at this tag before pinning.
+  bun_pin: "bun-v1.3.14"
+  # SHA-256 values published on the GitHub release assets and independently re-hashed.
+  # All four platforms ensure_bun.sh accepts are pinned; a pin bump moves this set too.
+  bun_darwin_arm64_sha256: "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620"
+  bun_darwin_x64_sha256: "4183df3374623e5bab315c547cfa0974533cd457d86b73b639f7a87974cd6633"
+  bun_linux_arm64_sha256: "a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b"
+  bun_linux_x64_sha256: "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f"
+  # imageio-ffmpeg: a pip wheel that BUNDLES a static ffmpeg binary (macos arm64 wheel
+  # 21.1MB, BSD-2-Clause). scripts/ensure_ffmpeg.sh installs it into the calling
+  # component's venv and copies the binary to data/ffmpeg/bin/ffmpeg — this is how we
+  # satisfy voicebox/voicestudio's ffmpeg need with no `brew install ffmpeg`.
+  # ⚠️ bundles ffmpeg only, NOT ffprobe.
+  imageio_ffmpeg_pin: "0.6.0"
+  # Voicebox v0.5.0's requirements carry two bare Git URLs and its installer adds a
+  # third. These are exact upstream commits measured on 2026-09-07. The installer
+  # rewrites only the two expected requirement lines, force-reinstalls Qwen3-TTS, and
+  # verifies each installed direct_url provenance; a changed upstream line fails closed.
+  voicebox_linacodec_pin: "c0ae7c7285e121475c27592cfbb600624b714290"
+  voicebox_luxtts_pin: "28ae6a61151684fffc9d1a7aa15eafa02286fe0b"
+  voicebox_qwen3_tts_pin: "022e286b98fbec7e1e916cb940cdf532cd9f488e"
+  # mlx-audio is installed --no-deps because its Transformers 5 floor conflicts with
+  # Voicebox's tested <=4.57.6 graph. These direct runtime dependencies therefore have
+  # to be explicit: a fresh v0.5.0 venv otherwise starts green but /transcribe fails
+  # with ModuleNotFoundError: mlx_lm (reproduced on the real cached Whisper model).
+  voicebox_mlx_lm_pin: "0.31.1"
+  voicebox_sentencepiece_pin: "0.2.2"
+  voicebox_sounddevice_pin: "0.5.3"
+  # ── MUSIC LANE (FABLE-MUSIC-LANE-SPEC, 2026-08-20) ──────────────────────────
+  # Both engines were MEASURED on sample's Mac before adoption (numbers in
+  # docs/handoff/MUSIC-MEASUREMENT-RUNBOOK.md) and both passed the ear test, so both
+  # ship. Read by scripts/install_music.sh (awk, same pattern as the mlx pins) and by
+  # bridge/music.py's install DETECTION — the minimax pin is half of the HF cache path
+  # a snapshot lands at, so changing it here really does mean "a different install".
+  #
+  # MiniMax-Music3, pure-MLX port. The "pin" is an HF REVISION SHA, not a git tag:
+  # code and weights ship together in one HF repo (~11.9GB int8). Read live from the
+  # HF API 2026-08-20. ⚠️ the port pins mlx==0.30.6 in its own requirements.txt, which
+  # is WHY it gets data/music-venv — data/mlx-venv ships mlx 0.32.0 and must never be
+  # downgraded under the runner. Weights: MiniMax-Music3 Community License (amber, see
+  # LICENSE_OVERRIDES in bridge/app.py — several repacks mistag it apache-2.0).
+  music_minimax_pin: "0505e3f04ddfb883e0a2fbd8ad1a34c2f313e514"
+  # acestep.cpp (GGML/Metal, MIT) — a git COMMIT sha, recorded from the clone that
+  # produced the measured number. Built with a direct `cmake`, NOT upstream's
+  # buildcpu.sh (that script calls `nproc`, which does not exist on macOS, and forces
+  # -DGGML_BLAS=ON which upstream only asks for on Linux). ⚠️ NEVER run its server.sh:
+  # it binds 0.0.0.0. We only ever exec ./build/ace-lm and ./build/ace-synth.
+  acestep_pin: "9761469d95fc204b5468623c68a1a2203e50b1f9"
+  # Exact Hugging Face snapshot containing the four GGUF filenames above. Code and
+  # weights have independent pins because they come from independent repositories.
+  music_acestep_gguf_pin: "9b3707625776cc4cf775e9b12ab82f9fe48335ff"
+  # ── AIDER coding agent (docs/research/2026-08-20-aider-recon.md, slice 1) ────
+  # A git COMMIT on `main`, deliberately NOT the v0.86.0 tag: that tag is ~1 year old
+  # and predates the Feb-2026 dependency refresh (openai 2.x / litellm 1.82) that a
+  # current OpenAI-compatible endpoint wants. A bare-commit pin is native here —
+  # components.odysseus is pinned the same way, on a non-default branch.
+  # Verified LIVE 2026-08-21: this sha is a real merge commit on Aider-AI/aider
+  # ("Merge pull request #5173 …", authored by paul-gauthier) — i.e. upstream is slow,
+  # not dead. The fork cecli-dev/cecli was REJECTED: it re-introduces agent-mode
+  # tool-calling, which is exactly the property aider was chosen for NOT having
+  # (a 4B cannot tool-call reliably; aider's edit formats are plain text).
+  # Plan B, documented not adopted: if main goes >6 months without a commit, move to
+  # cecli-dev/cecli at a release tag (Apache-2.0 verified) keeping --edit-format whole.
+  # Read by scripts/install_aider.sh (awk, same pattern as the other pins).
+  aider_pin: "5dc9490bb35f9729ef2c95d00a19ccd30c26339c"
+  # ── GOOSE, the third agent lane (docs/research/2026-08-28-goose-source-verify.md) ──
+  # ⚠️ THESE FOUR KEYS ARE DOCUMENTATION, NOT THE PIN THE INSTALLER READS. Every other
+  # *_pin here is read back out of this file by its installer's `_yb` awk; goose's
+  # constants live in scripts/install_goose.sh instead, because the pin is FOUR values
+  # that must move TOGETHER (tag, asset size, asset sha256, extracted-binary sha256) and
+  # a manifest edit that moved one of them without the others would be a way to install
+  # bytes nobody measured. bridge/contract_tests/test_goose_contract.py asserts these
+  # values and the script's agree, so this block can never quietly go stale.
+  # LICENSE: Apache-2.0, verified at source at this sha; no NOTICE file exists upstream.
+  # github.com/block/goose HTTP-301s to aaif-goose/goose — a redirect, not a fork.
+  # ⚠️ v2.0 RELEASE CANDIDATE tags exist upstream (v2-rc.1, v2.0.0-rc-04-27-0). The sha
+  # pin insulates us; evaluating v2 is its own sitting, not a bump.
+  # ⚠️ TOOL-CALLING IS REQUIRED and there is NO text-edit fallback, so on a model that
+  # cannot emit one goose looks BROKEN rather than degraded — the same property that
+  # gives the opencode lane its `tools` verdict. The Goose tab carries the same warning.
+  #   The experimental "toolshim" does NOT change this: its interpreter backends are
+  #   ollama / goose's own bundled llama.cpp only, so it cannot point at our :6767.
+  # ⚠️ NOT A COMPONENT: no `components.goose` block, no port, no card, no daemon. It is
+  # a PTY lane (bridge/pty_goose.py), because goose has NO browser UI — verified at
+  # source: no `web` and no `ui` subcommand, and `goose serve` is an ACP client API.
+  goose_pin: "v1.48.0"
+  goose_src_sha: "25021517f12cab87c94bed0874fe7d28168dc264"
+  goose_asset_sha256: "d502945fca78d8e58c8f56932973f454ad57d0754b272f5d44f696a4722da49a"
+  goose_bin_sha256: "e900f1b96662818791ee599c58ea0e44204ca29579dd182ecc238b732ef5d768"
+  # ── OPENCODE, the second coding lane (recon 2026-08-21, slice 2026-08-21) ────
+  # An NPM VERSION, not a git sha: upstream publishes a prebuilt native binary per
+  # platform and `npm i` is just a download. Verified LIVE against registry.npmjs.org
+  # 2026-08-21: opencode-ai@1.18.19 is MIT, declares optionalDependencies including
+  # opencode-darwin-arm64@1.18.19, and THAT package's tarball contains exactly two
+  # files — package.json and `package/bin/opencode`, a 143.7MB Mach-O 64-bit arm64
+  # executable already mode 0755, with the web SPA EMBEDDED (thousands of vite
+  # `assets/…` entries in its strings, so the tab needs no network for its UI).
+  # The old installer trusted npm's live SHA-1 metadata alone. The current installer
+  # requires both the recorded platform SHA-256 below and npm's live SHA-512 integrity;
+  # a bump must deliberately update the pin and the platform digests together.
+  # A bump = edit here, re-run the installer, and re-check three things in the new
+  # source: the `serve` subcommand's network options (--port/--hostname), the
+  # `autoupdate` config key + OPENCODE_DISABLE_AUTOUPDATE flag, and that the four
+  # XDG_* variables still drive packages/core/src/global.ts (they are the ONLY thing
+  # keeping its config/cache/data/state inside data/opencode). The shipped artifact is
+  # a stripped Mach-O with the SPA embedded, so at a bump those three are verified
+  # BEHAVIOURALLY (serve --help + the live /provider check + where files actually land),
+  # not by reading source we do not have.
+  # 2026-08-28 bump 1.18.19 → 1.18.23 (four patch releases). Verified live against
+  # registry.npmjs.org: opencode-ai@1.18.23 is MIT and declares
+  # opencode-darwin-arm64@1.18.23; both macOS platform archives were downloaded and
+  # independently hashed for the entries below.
+  opencode_pin: "1.18.29"
+  # SHA-256 of the platform tarballs, recorded from the pinned npm artifacts. npm's
+  # live dist.integrity is checked too, but it is not allowed to be the sole authority.
+  opencode_darwin_arm64_sha256: "1fc08fee8b4984c1306c826b8c0e2c367fd9eeb4d4c3707469194e3fea047e72"
+  opencode_darwin_x64_sha256: "d9e2270b9040d7ce140df629773c68f15222c7a6c882f16921d36aa4c9200ae2"
+  # ── DEEPSEEK HARNESS lane (components.deepseek above carries the reasoning) ──
+  # The npm version of @deepseek-ai/dsh. Read LIVE from registry.npmjs.org 2026-09-03:
+  # `npm view @deepseek-ai/dsh dist-tags` → latest=0.1.1-rc.2, next=0.1.2-rc.1,
+  # alpha=0.1.2-alpha.5. THIS IS `latest` — the channel upstream promotes — not the
+  # highest number. dist.shasum 1a5112369f1c46b13a6e6f21de8af5e6afd45074;
+  # dist.integrity sha512-UP1UIh6q3Gme/yXRn/QL2P8IsVlv8Shpg22TRJIZPsCRWLm4CBiA1MUvXmJAfsOEETBMLAl+xWPtFw6ICsN3wg==.
+  # npm itself verifies that integrity hash on every fetch of the top-level package;
+  # the TRANSITIVE tree is checked in at scripts/deepseek-npm/package-lock.json
+  # (lockfileVersion 3, 513 entries, MEASURED). First install and every repair use
+  # `npm ci`; installation date is not allowed to choose a different dependency tree.
+  dsh_pin: "0.1.1-rc.2"
+  # Node: the RUNTIME @deepseek-ai/dsh needs (>= 22.19, or >= 24). Same three-step
+  # resolution and single-source-of-truth idiom as bun_pin — the user's own node on
+  # PATH ALWAYS wins and is never shadowed; this pin is only the download fallback
+  # (scripts/ensure_node.sh → data/node, verified against nodejs.org's own
+  # SHASUMS256.txt, no sudo, nothing written outside the tree).
+  # Pin = the newest Node LTS as of 2026-09-03, read live from nodejs.org/dist/index.json
+  # (v24.20.0, "Krypton", released 2026-08-26), which satisfies the >= 24 half of the
+  # range. MEASURED on this machine: the node already on PATH is v22.23.1, which
+  # satisfies the ^22.19 half, so the fallback did not fire on the walk.
+  node_pin: "v24.20.0"
+  # ── OFFICE lane (docs/research/2026-08-20-office-lane-recon.md, slice 1: SHEETS) ──
+  # Univer, Apache-2.0, vendored as UMD assets our OWN bridge serves — no new process,
+  # no port, no component card. Read by scripts/fetch_vendor_assets.sh (awk, same
+  # pattern as the other pins) which fetches five files into
+  # bridge/panel/assets/vendor/univer/ (~10.5MB: presets 7.1MB + preset-sheets-core
+  # 3.2MB + 82KB css + the en-US locale + the rxjs peer bundle).
+  # Pin = the npm `latest` of @univerjs/presets and @univerjs/preset-sheets-core,
+  # read LIVE from registry.npmjs.org 2026-08-21 (a 1.0.0-beta.1 exists and is
+  # deliberately NOT taken). BOTH packages must move together — they are one release
+  # train and the preset is loaded into the presets runtime.
+  # ⚠️ Univer's own .xlsx import/export is Univer Pro (a Docker server + a commercial
+  # licence) and we do not use it: bridge/office.py owns the round-trip via openpyxl,
+  # which is the escape hatch Univer's own docs name. A bump here is a UI-surface
+  # bump only — but re-check IWorkbookData/IStyleData key names and the CellValueType
+  # / HorizontalAlign / VerticalAlign enums bridge/office.py mirrors, because a
+  # renumbered enum is a silently wrong cell, not an error.
+  univer_pin: "0.25.1"
+  # uv: the venv/installer the PORTABLE first-run bootstraps with (scripts/firstrun.sh).
+  # It used to curl|sh the UNPINNED astral.sh installer — i.e. a fresh Mac provisioned
+  # against whatever uv shipped that day. Pinned = the same idiom as bun_pin: the URL
+  # form https://astral.sh/uv/<version>/install.sh is documented by upstream, and the
+  # install lands in data/uv/bin via UV_UNMANAGED_INSTALL (no ~/.local/bin, no shell
+  # profile edits, no self-update — the same no-writes-outside rule as ensure_bun.sh).
+  # A uv the user already has ALWAYS wins; this is only the download path.
+  # Pin = the current uv release as of 2026-08-08 (crates/uv-version/Cargo.toml).
+  uv_pin: "0.12.3"
+  # SHA-256 of https://astral.sh/uv/0.12.3/install.sh. The installer embeds and checks
+  # the platform-binary digests; this separately pins the code we allow to perform it.
+  uv_installer_sha256: "a7e3924ea1cd06bf1518c577d635c624ae2e2db030e0fc8ff8cf426224384e17"
+
+inference:
+  # hermes_llm block removed 2026-07-20 (M1-B): Hermes + Odysseus now consume the `runner`
+  # block above (endpoint + api_key), so the runner is the single source for the model endpoint.
+  endpoints:
+    cookbook:  { url: "http://127.0.0.1:8000/v1",  kind: local }   # Odysseus Cookbook serve
+    ollama:    { url: "http://127.0.0.1:11434/v1", kind: local }   # optional
+    lmstudio:  { url: "http://127.0.0.1:1234/v1",  kind: local }   # optional (MLX models)
+  cloud: []                   # e.g. anthropic, openrouter — keys live in .env, never here
+
+paths:
+  vendor: ./vendor
+  skills: ./skills
+  data: ./data                # gitignored: venvs, logs, staging checkouts
