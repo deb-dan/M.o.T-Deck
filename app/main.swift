@@ -689,10 +689,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // (they cost nothing until something loads a URL into them, and lazy-load means an
     // entry that is never selected never loads).
     var wvById: [String: WKWebView] = [:]
-    var primaries: [WKWebView] { return tabs.map { webViewForId($0.id) } }
+    var primaries: [WKWebView] { return tabs.map { wvById[$0.id] ?? panelWV } }
     var panelWV: WKWebView!      // == wvById[panelId]
-    var odyWV: WKWebView? { return wvById[odysseusId] }
-    var hermesWV: WKWebView? { return wvById[hermesId] }
+    var odyWV: WKWebView!        // == wvById[odysseusId]
+    var hermesWV: WKWebView!     // == wvById[hermesId]
     // Lazy-load bookkeeping, one Set instead of a flag per tab (a flag per tab is
     // exactly the hardcoded-count shape the standing rule forbids). By ID, so a rebuilt
     // strip cannot make the shell think a loaded page is unloaded (or the reverse).
@@ -700,8 +700,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var hermesLoaded: Bool { return loadedTabs.contains(hermesId) }
     var failedLoads = Set<ObjectIdentifier>()   // webviews whose last load failed → retry on select/⌘R
     var crashedOnce = Set<ObjectIdentifier>()   // webviews whose content process died since their last good load
-    var tabParkedAt: [String: Date] = [:]
-    var idleCheckTimer: Timer?
     // Staleness auto-reload (Hermes tab only): WebKit tears down a BACKGROUNDED
     // webview's sockets, and Hermes's dashboard misclassifies the resulting
     // close-without-status (WS 1005) as a terminal "session ended" and refuses to
@@ -1490,17 +1488,112 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // registering it on any other webview would let a THIRD-PARTY component page
         // drive our tab strip, so those configurations are deliberately bare.
         //
-        // ── web views ──
-        // DropWebView: native drag-destination so Finder image drops reach the chat.
-        // Mission Control (panelId) is instantiated immediately at launch. All other tabs
-        // are instantiated lazily on-demand when selected (see webViewForId).
+        // The self-description above, as a user script. Injected at documentStart so it
+        // is there before any of the panel's own code runs. Every id is a literal from
+        // `tabRegistry`, so there is nothing here to escape.
+        let shellIds = tabRegistry.map { "\"\($0.id)\"" }.joined(separator: ",")
+        let shellScript = WKUserScript(
+            source: "window.motdeckShell={api:\(shellAPI),tabs:[\(shellIds)]};",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        // The live WebKit store is moved with the bundle-identity migration. Rename
+        // only MOT Deck-owned keys before page code reads them; preserve new values.
+        let identityMigrationScript = WKUserScript(source: """
+          (function(){
+            try {
+              Object.keys(localStorage).forEach(function(oldKey){
+                var newKey = oldKey.indexOf('harness.') === 0
+                  ? 'motdeck.' + oldKey.slice(8)
+                  : (oldKey.indexOf('harness-') === 0
+                      ? 'motdeck-' + oldKey.slice(8) : '');
+                if (!newKey) return;
+                if (localStorage.getItem(newKey) === null)
+                  localStorage.setItem(newKey, localStorage.getItem(oldKey));
+                localStorage.removeItem(oldKey);
+              });
+            } catch (_) {}
+          })();
+        """, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+
         let panelCfg = WKWebViewConfiguration()
         panelCfg.userContentController.add(self, name: "motdeck")
-        panelCfg.userContentController.addUserScript(identityMigrationScript())
-        panelCfg.userContentController.addUserScript(shellScript())
+        panelCfg.userContentController.addUserScript(identityMigrationScript)
+        panelCfg.userContentController.addUserScript(shellScript)
         panelWV = DropWebView(frame: .zero, configuration: panelCfg)
-        configureWebView(panelWV)
-        wvById = [panelId: panelWV!]
+
+        // "MOT Deck skin" for Odysseus: override its base --font-family (unset → falls back to
+        // Fira Code monospace everywhere) with a refined sans for prose/UI. Code blocks use an
+        // explicit 'Fira Code' rule, so they stay mono. Colors are left to Odysseus's Theme editor.
+        let odyCfg = WKWebViewConfiguration()
+        let skin = ":root{--font-family:-apple-system,'SF Pro Text','Segoe UI',system-ui,sans-serif;} body{line-height:1.5;} .msg,.message,p{letter-spacing:0.1px;}"
+        let inject = "(function(){var s=document.getElementById('motdeck-skin')||document.createElement('style');s.id='motdeck-skin';s.textContent=`\(skin)`;document.documentElement.appendChild(s);})();"
+        let userScript = WKUserScript(source: inject, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        odyCfg.userContentController.addUserScript(userScript)
+        odyWV = WKWebView(frame: .zero, configuration: odyCfg)
+
+        // Hermes runs its own polished dark UI — no skin injection (unlike Odysseus).
+        hermesWV = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+
+        // Build the id-keyed primaries FROM THE REGISTRY (not from `tabs`: an entry the
+        // user has hidden still needs its webview, so that un-hiding it — or the ⋯ menu
+        // — shows the page it already had). Every entry that is not one of the three
+        // named above is a plain webview: no skin, no drag handling. Adding a row to
+        // `tabRegistry` therefore adds a fully-working tab with no edit here.
+        wvById = [:]
+        for t in tabRegistry {
+            // explicit `!` on the three named ones: they are stored as implicitly
+            // unwrapped optionals, and being explicit here keeps the type unambiguous.
+            if t.id == panelId { wvById[t.id] = panelWV! }
+            else if t.id == odysseusId { wvById[t.id] = odyWV! }
+            else if t.id == hermesId { wvById[t.id] = hermesWV! }
+            // LOffice + Aider + Goose CLI + Generate + Compose + Goose UI are OUR OWN
+            // pages served by the bridge (first-party, same origin as the panel) — they
+            // get the "motdeck" handler too, so their own menus can ask the shell to
+            // switch tabs. Third-party pages never do. The list is EXPLICIT rather than
+            // "anything on :8700": a page earns the handler by being one we wrote, and
+            // that has to be stated once per page.
+            //
+            // ⚠️ `gooseui` EARNS IT ON A NARROWER ARGUMENT THAN THE OTHERS, AND THE
+            // ARGUMENT IS THE ORIGIN, NOT THE AUTHORSHIP. The bundle inside that tab is
+            // goose Desktop's own renderer, vendored unmodified — we did not write it.
+            // What we own is the ORIGIN it is served from (:8700, ours, digest-pinned on
+            // disk and re-verified by the contract suite) and the ONE script injected
+            // into it (bridge/gooseui.py's preload). A page reaching `window.webkit`
+            // here is a page we provisioned byte-for-byte; a third-party page fetched
+            // over the network still never gets this handler.
+            // OPENCODE gets NO handler and NO shellScript — it is a third-party page.
+            // What it gets is ONE cosmetic user script that renames its auto-minted
+            // draft tabs, and nothing else. See openCodeDraftScript().
+            else if t.id == "opencode" {
+                let c = WKWebViewConfiguration()
+                if let s = openCodeDraftScript() { c.userContentController.addUserScript(s) }
+                wvById[t.id] = WKWebView(frame: .zero, configuration: c)
+            }
+            else if t.id == "loffice" || t.id == "aider" || t.id == "goose"
+                    || t.id == "comfy" || t.id == "compose" || t.id == "gooseui" {
+                let c = WKWebViewConfiguration()
+                c.userContentController.add(self, name: "motdeck")
+                c.userContentController.addUserScript(identityMigrationScript)
+                c.userContentController.addUserScript(shellScript)
+                // The sidebar's per-chat ✕ — see gooseSidebarDeleteScript(). Fenced;
+                // any fence unreadable ⇒ nothing injected and the tab is upstream's.
+                if t.id == "gooseui", let s = gooseSidebarDeleteScript() {
+                    c.userContentController.addUserScript(s)
+                }
+                wvById[t.id] = WKWebView(frame: .zero, configuration: c)
+            }
+            else { wvById[t.id] = WKWebView(frame: .zero, configuration: WKWebViewConfiguration()) }
+        }
+
+        for wv in wvById.values {
+            wv.translatesAutoresizingMaskIntoConstraints = false
+            wv.uiDelegate = self          // route target=_blank links to the default browser
+            wv.navigationDelegate = self  // detect failed loads → placeholder + retry
+            if #available(macOS 12.0, *) {
+                wv.underPageBackgroundColor = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1)
+            }
+            // NOT added to the container here any more: applyPanes() owns every
+            // webview's parent from now on (a pane, or the hidden park view).
+        }
 
         // drop-catcher above the panel's webview; applyPanes() moves it to whichever
         // pane Mission Control currently lives in (it is the only drop target).
@@ -1676,7 +1769,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // asking, cheaply, so a layout saved in the panel reaches the strip on its own.
         updateOverflowButton()
         startNavPoll()
-        startIdleMonitor()
     }
 
     // ── §G-phase2 portable first-run ──
@@ -2209,9 +2301,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let leftShowsHermes = currentTab == hermesTab
         let rightShowsHermes = splitOn && rightTab == hermesTab
         if hermesLoaded,
-           (leftShowsHermes && !leftIsGhost) || (rightShowsHermes && !rightIsGhost),
-           let h = hermesWV {
-            out.append(h)
+           (leftShowsHermes && !leftIsGhost) || (rightShowsHermes && !rightIsGhost) {
+            out.append(hermesWV)
         }
         if (leftShowsHermes && leftIsGhost) || (rightShowsHermes && rightIsGhost),
            let g = secondInstances[hermesId] {
@@ -2768,105 +2859,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }.resume()
     }
 
-    // ── WebKit Idle Tab Sleeping ──
-    // Automatically releases WebKit WebContent processes for off-screen, inactive tabs
-    // based on the per-runtime idle policy in data/idle_prefs.json (auto, awake, sleep).
-    func startIdleMonitor() {
-        guard idleCheckTimer == nil else { return }
-        idleCheckTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-            self?.checkIdleTabs()
-        }
-    }
-
-    func readIdlePrefs() -> [String: String] {
-        let prefsFile = URL(fileURLWithPath: resolvedRoot).appendingPathComponent("data/idle_prefs.json")
-        guard let data = try? Data(contentsOf: prefsFile),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return [:]
-        }
-        if let prefs = json["prefs"] as? [String: String] {
-            return prefs
-        }
-        var result: [String: String] = [:]
-        for (k, v) in json {
-            if let s = v as? String { result[k] = s }
-        }
-        return result
-    }
-
-    func checkIdleTabs() {
-        let prefs = readIdlePrefs()
-        let now = Date()
-        let isLowMemHost = ProcessInfo.processInfo.physicalMemory <= 17_179_869_184 // <= 16GB
-
-        for (id, wv) in wvById {
-            guard id != panelId else { continue }
-            if tabs.indices.contains(currentTab) && tabs[currentTab].id == id { continue }
-            if splitOn && tabs.indices.contains(rightTab) && tabs[rightTab].id == id { continue }
-            guard wv.superview === park else { continue }
-
-            let policy = prefs[id] ?? "auto"
-            if policy == "awake" { continue }
-
-            let threshold: TimeInterval = (policy == "sleep") ? 30.0 : (isLowMemHost ? 300.0 : 900.0)
-            let parkedAt = tabParkedAt[id] ?? now
-            guard now.timeIntervalSince(parkedAt) >= threshold else { continue }
-
-            let js = """
-            (function() {
-                try {
-                    var mediaPlaying = Array.from(document.querySelectorAll('audio, video')).some(function(el) {
-                        return !el.paused && !el.ended && el.currentTime > 0;
-                    });
-                    if (mediaPlaying) return "media";
-                    var hasDraft = Array.from(document.querySelectorAll('textarea, input[type="text"]')).some(function(el) {
-                        return el.value && el.value.trim().length > 0;
-                    });
-                    if (hasDraft) return "draft";
-                } catch(e) {}
-                return "ok";
-            })()
-            """
-            wv.evaluateJavaScript(js) { [weak self, weak wv] res, _ in
-                guard let self = self, let wv = wv else { return }
-                guard wv.superview === self.park else { return }
-                if tabs.indices.contains(self.currentTab) && tabs[self.currentTab].id == id { return }
-                if self.splitOn && tabs.indices.contains(self.rightTab) && tabs[self.rightTab].id == id { return }
-
-                let state = (res as? String) ?? "ok"
-                if state == "media" {
-                    self.tabParkedAt[id] = Date()
-                    return
-                }
-                if state == "draft" && policy == "auto" {
-                    self.tabParkedAt[id] = Date()
-                    return
-                }
-
-                self.putTabToSleep(id: id)
-            }
-        }
-    }
-
-    func putTabToSleep(id: String) {
-        guard id != panelId else { return }
-        if tabs.indices.contains(currentTab) && tabs[currentTab].id == id { return }
-        if splitOn && tabs.indices.contains(rightTab) && tabs[rightTab].id == id { return }
-        guard let wv = wvById[id] else { return }
-        guard wv.superview === park else { return }
-
-        slog("[idle] Sleeping background tab: \(id)")
-        wv.stopLoading()
-        wv.uiDelegate = nil
-        wv.navigationDelegate = nil
-        wv.removeFromSuperview()
-        wvById.removeValue(forKey: id)
-        loadedTabs.remove(id)
-        failedLoads.remove(ObjectIdentifier(wv))
-        crashedOnce.remove(ObjectIdentifier(wv))
-        tabParkedAt.removeValue(forKey: id)
-    }
-
     @objc func tabChanged(_ sender: NSSegmentedControl) {
         let idx = sender.selectedSegment
         routeTab(idx, toPane: (splitOn && focusedPane == 1) ? 1 : 0)
@@ -3374,108 +3366,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // corrupt UserDefaults value would be a far worse failure than showing the panel.
     func webViewFor(_ idx: Int) -> WKWebView {
         guard idx >= 0 && idx < tabs.count else { return panelWV }
-        return webViewForId(tabs[idx].id)
+        if let wv = wvById[tabs[idx].id] { return wv }
+        // UNREACHABLE BY CONSTRUCTION: wvById is built from tabRegistry and `tabs` is
+        // always a subset of it. If it ever happens it is a real defect, and its symptom
+        // is precisely "this tab shows Mission Control" — so it gets a log line rather
+        // than looking like a rendering quirk. Still returns the panel: a nil here would
+        // be a crash, and a crash is worse than the wrong page.
+        slog("BUG: no webview for tab id \(tabs[idx].id) — showing the panel instead")
+        return panelWV
     }
     // EVERY primary, not only the ones on the strip: applyPanes parks whatever neither
     // pane is showing, and a webview for a hidden entry must be parked too (it may
     // still hold a loaded page from before it was hidden).
     func allWebViews() -> [WKWebView] { return Array(wvById.values) }
 
-    // Lazy-load rule: a webview is instantiated and loaded on FIRST borrow, by either pane,
-    // and exactly once. Unselected tabs consume 0 MB RAM and 0 WebContent processes.
-    // Mission Control (panelTab) is loaded by ensureBridgeThenLoad, never here.
+    // Lazy-load rule unchanged: a webview loads on FIRST borrow, by either pane, and
+    // exactly once. Mission Control (panelTab) is loaded by ensureBridgeThenLoad, never
+    // here. Every OTHER tab is handled identically — an optional component that is not
+    // running simply fails into the shared "Not reachable yet" placeholder and retries
+    // on re-select / ⌘R via failedLoads. No per-tab special cases except Hermes's
+    // config-generation bookkeeping.
     func ensureLoaded(_ idx: Int) {
         guard idx >= 0, idx < tabs.count else { return }
         let id = tabs[idx].id
         guard id != panelId else { return }
         guard !loadedTabs.contains(id) else { return }
-        let wv = webViewForId(id)
+        // NO `?? panelWV` HERE, deliberately: loading another tab's URL into the PANEL's
+        // webview would replace Mission Control with that page — the bridge-wait surface
+        // and the file-drop target — and leave the tab that asked for it showing the
+        // panel. Refuse loudly instead, and do not mark it loaded, so a later attempt
+        // (⌘R, re-select) can still succeed if whatever went wrong was transient.
+        guard let wv = wvById[id] else {
+            slog("BUG: no webview for tab id \(id) — refusing to load \(urlForTab(idx)) into the panel")
+            return
+        }
         loadedTabs.insert(id)
         wv.load(URLRequest(url: urlForTab(idx)))
         // The first Hermes load records the generation it is loading against, so the
         // first tab switch back compares like with like instead of making no claim.
         if id == hermesId { syncHermesGen(reloadIfNewer: false) }
-    }
-
-    func configureWebView(_ wv: WKWebView) {
-        wv.translatesAutoresizingMaskIntoConstraints = false
-        wv.uiDelegate = self          // route target=_blank links to the default browser
-        wv.navigationDelegate = self  // detect failed loads → placeholder + retry
-        if #available(macOS 12.0, *) {
-            wv.underPageBackgroundColor = NSColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1)
-        }
-    }
-
-    func webViewForId(_ id: String) -> WKWebView {
-        if let existing = wvById[id] { return existing }
-        let wv = createWebView(forId: id)
-        configureWebView(wv)
-        wvById[id] = wv
-        return wv
-    }
-
-    func createWebView(forId id: String) -> WKWebView {
-        guard let t = tabRegistry.first(where: { $0.id == id }) else {
-            return WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
-        }
-        if t.id == panelId {
-            let panelCfg = WKWebViewConfiguration()
-            panelCfg.userContentController.add(self, name: "motdeck")
-            panelCfg.userContentController.addUserScript(identityMigrationScript())
-            panelCfg.userContentController.addUserScript(shellScript())
-            return DropWebView(frame: .zero, configuration: panelCfg)
-        } else if t.id == odysseusId {
-            let odyCfg = WKWebViewConfiguration()
-            let skin = ":root{--font-family:-apple-system,'SF Pro Text','Segoe UI',system-ui,sans-serif;} body{line-height:1.5;} .msg,.message,p{letter-spacing:0.1px;}"
-            let inject = "(function(){var s=document.getElementById('motdeck-skin')||document.createElement('style');s.id='motdeck-skin';s.textContent=`\(skin)`;document.documentElement.appendChild(s);})();"
-            let userScript = WKUserScript(source: inject, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
-            odyCfg.userContentController.addUserScript(userScript)
-            return WKWebView(frame: .zero, configuration: odyCfg)
-        } else if t.id == hermesId {
-            return WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
-        } else if t.id == "opencode" {
-            let c = WKWebViewConfiguration()
-            if let s = openCodeDraftScript() { c.userContentController.addUserScript(s) }
-            return WKWebView(frame: .zero, configuration: c)
-        } else if t.id == "loffice" || t.id == "aider" || t.id == "goose"
-                    || t.id == "comfy" || t.id == "compose" || t.id == "gooseui" {
-            let c = WKWebViewConfiguration()
-            c.userContentController.add(self, name: "motdeck")
-            c.userContentController.addUserScript(identityMigrationScript())
-            c.userContentController.addUserScript(shellScript())
-            if t.id == "gooseui", let s = gooseSidebarDeleteScript() {
-                c.userContentController.addUserScript(s)
-            }
-            return WKWebView(frame: .zero, configuration: c)
-        } else {
-            return WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
-        }
-    }
-
-    func shellScript() -> WKUserScript {
-        let shellIds = tabRegistry.map { "\"\($0.id)\"" }.joined(separator: ",")
-        return WKUserScript(
-            source: "window.motdeckShell={api:\(shellAPI),tabs:[\(shellIds)]};",
-            injectionTime: .atDocumentStart, forMainFrameOnly: true)
-    }
-
-    func identityMigrationScript() -> WKUserScript {
-        return WKUserScript(source: """
-          (function(){
-            try {
-              Object.keys(localStorage).forEach(function(oldKey){
-                var newKey = oldKey.indexOf('harness.') === 0
-                  ? 'motdeck.' + oldKey.slice(8)
-                  : (oldKey.indexOf('harness-') === 0
-                      ? 'motdeck-' + oldKey.slice(8) : '');
-                if (!newKey) return;
-                if (localStorage.getItem(newKey) === null)
-                  localStorage.setItem(newKey, localStorage.getItem(oldKey));
-                localStorage.removeItem(oldKey);
-              });
-            } catch (_) {}
-          })();
-        """, injectionTime: .atDocumentStart, forMainFrameOnly: true)
     }
 
     // Called from every path that makes the Hermes tab visible (routeTab + the
@@ -3495,14 +3424,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // call site stays so that a tab switch checks IMMEDIATELY instead of waiting a tick.
     func maybeReloadStaleHermes(_ idx: Int) {
         guard idx == hermesTab, hermesLoaded,
-              let hwv = hermesWV,
-              !failedLoads.contains(ObjectIdentifier(hwv)),
-              hwv.url?.scheme == "http" else { return }
+              !failedLoads.contains(ObjectIdentifier(hermesWV)),
+              hermesWV.url?.scheme == "http" else { return }
         if let since = hermesLastActive, Date().timeIntervalSince(since) > staleAfter {
             // Backgrounded long enough that WebKit will have dropped its sockets →
             // reload so the dashboard reconnects instead of showing "session ended".
             hermesLastActive = nil
-            hwv.reload()
+            hermesWV.reload()
             // A reload for ANY reason re-reads the generation, so a later compare
             // cannot fire against a value from before this page.
             syncHermesGen(reloadIfNewer: false)
@@ -3620,23 +3548,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
         // Park every primary neither pane is showing (ghosts are never parked — they are
         // destroyed instead, above).
-        let now = Date()
-        let activeIds: Set<String> = {
-            var s = Set<String>()
-            if tabs.indices.contains(leftIdx) { s.insert(tabs[leftIdx].id) }
-            if splitOn && rightWV != nil && tabs.indices.contains(rightTab) { s.insert(tabs[rightTab].id) }
-            return s
-        }()
-
-        for (id, wv) in wvById {
-            if !activeIds.contains(id) && wv !== leftWV && wv !== rightWV {
-                attach(wv, to: park)     // park is hidden → same effect as the old isHidden
-                if tabParkedAt[id] == nil {
-                    tabParkedAt[id] = now
-                }
-            } else {
-                tabParkedAt.removeValue(forKey: id)
-            }
+        for wv in allWebViews() where wv !== leftWV && wv !== rightWV {
+            attach(wv, to: park)     // park is hidden → same effect as the old isHidden
         }
         attach(leftWV, to: leftHost)
         if let r = rightWV {
@@ -4223,7 +4136,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        idleCheckTimer?.invalidate()
         if spawnedBridge { bridgeProcess?.terminate() }   // only stop what we started
     }
 

@@ -98,7 +98,7 @@ def catalog(registry):
         if isinstance(t, bool):
             entry["tool_call"] = t
         try:
-            ctx = int(m.get("ctx") or 0)
+            ctx = int((m.get("load") or {}).get("ctx") or m.get("ctx") or 0)
         except (TypeError, ValueError):
             ctx = 0
         if ctx > 0:

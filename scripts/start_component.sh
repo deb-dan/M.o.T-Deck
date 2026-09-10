@@ -627,12 +627,15 @@ PYRESOLVE
       fi
     fi
     # CTX preference: the model's SAVED load.ctx (Models → Load, v2) wins, then the
-    # registry ctx, then motdeck.yaml ctx_size, then 65536.
+    # registry ctx, then motdeck.yaml ctx_size, then adaptive default.
     L_CTX=$(_lv ctx)
     if [[ "$L_CTX" =~ ^[0-9]+$ ]]; then CTX="$L_CTX"
     elif [[ "$REG_CTX" =~ ^[0-9]+$ ]]; then CTX="$REG_CTX"
     else CTX="$R_CTX"; fi
     [[ "$CTX" =~ ^[0-9]+$ ]] || CTX=65536
+    if [[ "$SYS_MEM_GB" -le 16 && -z "$L_CTX" && "$CTX" -gt "$ADAPTIVE_DEFAULT_CTX" ]]; then
+      CTX="$ADAPTIVE_DEFAULT_CTX"
+    fi
     # Capture the binary's flags to decide whether its secret-file interface is
     # supported (cheap; every start ok). The key must never appear in process argv.
     "$BIN" --help > data/llama-server.help.txt 2>&1 || true
@@ -1892,9 +1895,24 @@ PYOCCHK
     fi
     _require_secret "$KEY" runner.api_key || exit 1
     [[ -n "$BASE_URL" ]] || BASE_URL="http://127.0.0.1:6767/v1"
-    CTXLEN=$(_manifest_value runner.ctx_size int)
+    SYS_MEM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 17179869184)
+    SYS_MEM_GB=$(( SYS_MEM_BYTES / 1073741824 ))
+    if [[ "$SYS_MEM_GB" -le 16 ]]; then
+      H_ADAPTIVE_CTX=4096
+    elif [[ "$SYS_MEM_GB" -le 32 ]]; then
+      H_ADAPTIVE_CTX=16384
+    else
+      H_ADAPTIVE_CTX=65536
+    fi
+    CTXLEN=$(_manifest_value runner.ctx_size int 2>/dev/null || true)
     [[ "$MODEL" == \#* ]] && MODEL=""   # guard: never treat a stray comment as a model name
-    [[ "$CTXLEN" =~ ^[0-9]+$ ]] || CTXLEN=65536
+    if [[ "$CTXLEN" =~ ^[0-9]+$ ]]; then
+      if [[ "$SYS_MEM_GB" -le 16 && "$CTXLEN" -eq 65536 ]]; then
+        CTXLEN="$H_ADAPTIVE_CTX"
+      fi
+    else
+      CTXLEN="$H_ADAPTIVE_CTX"
+    fi
     # Launch provenance outranks motdeck.yaml intent. A first-row `/v1/models` probe
     # is NOT used here: llama.cpp reports its alias, but MLX may enumerate cache rows
     # unrelated to the model this child was launched with. `_runner_active_model`

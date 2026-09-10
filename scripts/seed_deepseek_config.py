@@ -230,7 +230,7 @@ def catalog(registry) -> list:
         seen.add(wire)
         entry = {"id": wire, "name": mid or wire}
         try:
-            ctx = int(m.get("ctx") or 0)
+            ctx = int((m.get("load") or {}).get("ctx") or m.get("ctx") or 0)
         except (TypeError, ValueError):
             ctx = 0
         if ctx > 0:

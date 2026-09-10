@@ -300,7 +300,11 @@ def max_input_tokens(runner: dict) -> int:
     except (TypeError, ValueError, OverflowError):
         ctx = 0
     if ctx <= 0:
-        return _INPUT_BUCKETS[3]        # 32k — the plugin's own default
+        try:
+            from .core import fit as _fit
+            ctx = _fit.default_ctx()
+        except Exception:
+            ctx = 4096
     half = ctx // 2
     # Small supported windows (1024+) need a smaller cap than the first bucket.
     # The pinned plugin reserves 500 tokens for chunk headers; <=500 can reset

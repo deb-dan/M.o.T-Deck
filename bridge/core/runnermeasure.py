@@ -212,8 +212,12 @@ def _prediction(entry: dict, parsed: dict) -> dict:
     """Re-price at the runner's observed context, preserving honest provenance."""
     try:
         from . import fit
-        override = {"ctx": parsed["ctx"]} if parsed.get("ctx") else None
-        settings = fit.settings_for(entry, override)
+        override = {}
+        if parsed.get("ctx"):
+            override["ctx"] = parsed["ctx"]
+        if parsed.get("kv_k"):
+            override["kv_quant"] = parsed["kv_k"]
+        settings = fit.settings_for(entry, override or None)
         estimated = fit.estimate(entry, settings)
     except Exception:                                            # noqa: BLE001
         return {}

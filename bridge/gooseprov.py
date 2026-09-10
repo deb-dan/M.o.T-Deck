@@ -188,12 +188,24 @@ def model_entries(registry, wire_of=None) -> list:
             continue
         seen.add(wire)
         try:
-            ctx = int(m.get("ctx") or 0)
+            ctx = int((m.get("load") or {}).get("ctx") or m.get("ctx") or 0)
         except (TypeError, ValueError):
             ctx = 0
+        if ctx <= 0:
+            try:
+                from .core import fit as _fit
+                def_c = _fit.default_ctx()
+            except Exception:
+                def_c = 4096
+            max_c = 0
+            try:
+                max_c = int(m.get("max_ctx") or 0)
+            except (TypeError, ValueError):
+                max_c = 0
+            ctx = min(def_c, max_c) if max_c > 0 else def_c
         out.append({
             "name": wire,
-            "context_limit": ctx if ctx > 0 else DEFAULT_CONTEXT,
+            "context_limit": ctx,
             "input_token_cost": None,
             "output_token_cost": None,
             "currency": None,

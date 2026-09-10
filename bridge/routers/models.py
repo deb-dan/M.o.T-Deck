@@ -534,7 +534,7 @@ def api_models() -> JSONResponse:
                 # a missing pill must never read as "this model cannot".
                 "tools": (m.get("tools") if isinstance(m.get("tools"), bool) else None),
                 "format": m.get("format", "gguf"),
-                "ctx": m.get("ctx"), "source": m.get("source"), "path": m.get("path"),
+                "ctx": m.get("ctx"), "max_ctx": m.get("max_ctx"), "source": m.get("source"), "path": m.get("path"),
                 "source_membership": (m.get("source_membership")
                                       if m.get("source_membership") in ("listed", "unlisted")
                                       else "unknown"),

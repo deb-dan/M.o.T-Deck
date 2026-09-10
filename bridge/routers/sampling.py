@@ -540,8 +540,23 @@ def load_view(entry: dict) -> dict:
     for canon in LOAD_ORDER:
         if canon not in wire:
             continue
+        def_val = LOAD_DEFAULTS.get(canon)
+        if canon == "ctx":
+            try:
+                from ..core import fit as _fit
+                dctx = _fit.default_ctx()
+                def_val = f"{dctx} (adaptive)"
+            except Exception:
+                def_val = "4096 (adaptive)"
+        elif canon == "kv_quant":
+            try:
+                from ..core import fit as _fit
+                dkv = _fit.default_kv_quant()
+                def_val = f"{dkv} (adaptive)" if dkv != "off" else "f16 / off"
+            except Exception:
+                def_val = "q8_0 (adaptive)"
         row = {"key": canon, "label": wire[canon],
-               "default": LOAD_DEFAULTS.get(canon), "value": saved.get(canon),
+               "default": def_val, "value": saved.get(canon),
                "help": LOAD_HELP.get(canon, "")}
         if canon in LOAD_RANGES:
             row["min"], row["max"], cast = LOAD_RANGES[canon]

@@ -216,10 +216,21 @@ def _aux_start_locked(req: Request) -> JSONResponse:
         except Exception:
             pass
         # Aux tasks are short — small ctx keeps the second model light in RAM.
-        ctx = m.get("ctx") or 8192
+        try:
+            from ..core import fit as _fit
+            def_c = _fit.default_ctx()
+        except Exception:
+            def_c = 4096
+        try:
+            raw_c = int((m.get("load") or {}).get("ctx") or m.get("ctx") or def_c)
+        except (TypeError, ValueError):
+            raw_c = def_c
+        ctx = min(def_c, raw_c) if raw_c > 0 else def_c
         cmd = [binp, "--no-context-shift", "--host", "127.0.0.1", "--port", str(port),
                "--alias", model, "--ctx-size", str(ctx), "--no-cont-batching",
                "--cache-ram", "-1", "--fit", "off", "--model", path, "--parallel", "1"]
+        if "--cache-type-k" in helptxt:
+            cmd += ["--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]
         if mmproj:
             cmd += ["--mmproj", mmproj]
         if "--api-key" in helptxt:

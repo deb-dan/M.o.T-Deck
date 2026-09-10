@@ -231,9 +231,16 @@ def registry_models(root: str, current_wire: str, ctxlen: int) -> "dict[str, dic
         fmt = str(m.get("format") or "gguf").strip().lower()
         wire = ((m.get("path") or "").strip() or mid) if fmt == "mlx" else mid
         try:
-            ctx = int(m.get("ctx") or 0)
+            ctx = int((m.get("load") or {}).get("ctx") or m.get("ctx") or 0)
         except (TypeError, ValueError):
             ctx = 0
+        if ctx <= 0 and ctxlen > 0:
+            max_c = 0
+            try:
+                max_c = int(m.get("max_ctx") or 0)
+            except (TypeError, ValueError):
+                max_c = 0
+            ctx = min(ctxlen, max_c) if max_c > 0 else ctxlen
         meta = {}
         if ctx > 0:
             meta["context_length"] = ctx

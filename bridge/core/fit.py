@@ -600,6 +600,24 @@ def default_ctx() -> int:
 DEFAULT_CTX = default_ctx()
 
 
+def default_kv_quant(ctx: int = 0) -> str:
+    """Adaptive KV cache quantization default:
+    <= 16.5 GB RAM or context > 8192: "q8_0"
+    Otherwise: "off" (f16)
+    """
+    try:
+        from . import memory as _mem
+        sysv = _mem.system_view()
+        total_gb = (sysv.get("total_bytes") or 0) / (1024 ** 3)
+        if total_gb <= 0:
+            return "q8_0"
+        if total_gb <= 16.5 or ctx > 8192:
+            return "q8_0"
+        return "off"
+    except Exception:
+        return "q8_0"
+
+
 MIN_CTX = 256
 MAX_CTX = 1024 * 1024            # nothing this engine runs goes past 1M cells
 
@@ -641,7 +659,11 @@ def settings_for(entry: dict, override: "dict | None" = None) -> dict:
         cap = 0
     asked = _clean_ctx(over.get("ctx"), cap)
     saved = _clean_ctx(load.get("ctx"), cap)
-    ctx = asked or saved or _clean_ctx(e.get("ctx"), cap) or default_ctx()
+    def_ctx = default_ctx()
+    if cap and def_ctx > cap:
+        def_ctx = cap
+    reg_ctx = _clean_ctx(e.get("ctx"), cap)
+    ctx = asked or saved or (reg_ctx if (reg_ctx and reg_ctx <= def_ctx) else None) or def_ctx
     # ⚠️ THE SAME CLASS AS U23, ONE FUNCTION LATER, and the adversarial pass caught it:
     # `?ctx=abc` on the live route raised ValueError here. `_clean_ctx` above already
     # answers junk with None — this line then re-read the RAW value with a bare int()
@@ -656,9 +678,13 @@ def settings_for(entry: dict, override: "dict | None" = None) -> dict:
                             or _asked(load.get("ctx")) > cap))
     # A cache type we do not have a byte size for is NOT passed through: the oracle
     # rejects it and we would silently fall back to a formula estimate wearing the
-    # oracle's confidence. Unknown → the saved value, or off.
-    raw_kv = str(over.get("kv_quant") or load.get("kv_quant") or "off").strip().lower()
-    kvq = raw_kv if (raw_kv in KV_BYTES or raw_kv == "off") else "off"
+    # oracle's confidence. Unknown → the saved value, or adaptive default.
+    explicit_kv = over.get("kv_quant") or load.get("kv_quant")
+    if explicit_kv is not None and str(explicit_kv).strip():
+        raw_kv = str(explicit_kv).strip().lower()
+        kvq = raw_kv if (raw_kv in KV_BYTES or raw_kv == "off") else "off"
+    else:
+        kvq = default_kv_quant(int(ctx))
     return {"ctx": int(ctx), "kv_quant": kvq,
             "flash_attn": load.get("flash_attn", "auto"),
             "parallel": max(1, _asked(load.get("parallel"))) or 1,
@@ -666,7 +692,7 @@ def settings_for(entry: dict, override: "dict | None" = None) -> dict:
             "hand_set_ctx": bool(saved or asked),
             "ctx_source": ("you set it" if saved else
                            ("this question" if asked else
-                            ("the model" if e.get("ctx") else "the default")))}
+                            ("the model" if (e.get("ctx") and e.get("ctx") <= def_ctx) else "the default")))}
 
 
 # ── the whole verdict ────────────────────────────────────────────────────────
@@ -879,7 +905,7 @@ def remedies(entry: dict, s: dict, est: dict, bud: dict, holders: list,
     if not b or need <= BAND_FITS * b:
         return out
     # 1. a smaller context (the cheapest, most reversible knob)
-    for ctx in (32768, 16384, 8192, 4096):
+    for ctx in (32768, 16384, 8192, 4096, 2048):
         if ctx >= int(s["ctx"]):
             continue
         alt = price({**s, "ctx": ctx})
@@ -895,7 +921,8 @@ def remedies(entry: dict, s: dict, est: dict, bud: dict, holders: list,
                                  f"{_gb(tot)} GB — that fits.")})
             break
     # 2. quantise the KV cache
-    if str(s.get("kv_quant") or "off").lower() in ("", "off"):
+    current_kv = str(s.get("kv_quant") or "off").lower()
+    if current_kv in ("", "off"):
         alt = price({**s, "kv_quant": "q8_0"})
         if alt.get("known"):
             tot = int(alt["total_bytes"])
@@ -905,6 +932,17 @@ def remedies(entry: dict, s: dict, est: dict, bud: dict, holders: list,
                             "saves_bytes": need - tot,
                             "fits_after": tot <= b,
                             "text": (f"A q8_0 KV cache saves about "
+                                     f"{_gb(need - tot)} GB, for a slight quality cost.")})
+    elif current_kv == "q8_0":
+        alt = price({**s, "kv_quant": "q4_0"})
+        if alt.get("known"):
+            tot = int(alt["total_bytes"])
+            if tot < need:
+                out.append({"kind": "kv_quant", "value": "q4_0",
+                            "label": "q4_0 KV cache", "need_bytes": tot,
+                            "saves_bytes": need - tot,
+                            "fits_after": tot <= b,
+                            "text": (f"A q4_0 KV cache saves about "
                                      f"{_gb(need - tot)} GB, for a slight quality cost.")})
     # 3. free what somebody else is holding — BY NAME, from the live ledger
     for h in sorted(holders, key=lambda x: -int(x.get("footprint_bytes") or 0))[:2]:
@@ -1034,7 +1072,7 @@ def remote_fit(hp: "dict | None", file_bytes: int, bud: dict,
     cap = int(_num(hp, "context_length"))
     want = int(ctx or default_ctx())
     use = min(want, cap) if cap else want
-    s = {"ctx": int(use), "kv_quant": "off", "flash_attn": "auto", "parallel": 1,
+    s = {"ctx": int(use), "kv_quant": default_kv_quant(int(use)), "flash_attn": "auto", "parallel": 1,
          "ctx_capped_at": (cap if (cap and want > cap) else 0),
          "hand_set_ctx": False, "ctx_source": "the default"}
     est = dict(formula_estimate(hp, fb, s), oracle=False, known=True)

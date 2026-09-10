@@ -112,6 +112,8 @@ def lmstudio_inventory(models_root: str, *, run=subprocess.run) -> dict:
                 "size_bytes": row.get("sizeBytes") if isinstance(row.get("sizeBytes"), int) else None,
                 "ctx": (row.get("maxContextLength")
                         if isinstance(row.get("maxContextLength"), int) else None),
+                "max_ctx": (row.get("maxContextLength")
+                            if isinstance(row.get("maxContextLength"), int) else None),
                 "vision": row.get("vision") if isinstance(row.get("vision"), bool) else None,
                 "tools": (row.get("trainedForToolUse")
                           if isinstance(row.get("trainedForToolUse"), bool) else None),

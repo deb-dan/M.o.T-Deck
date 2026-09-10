@@ -166,7 +166,8 @@ def scan_jan(jan_dir, preset_path=JAN_PRESET_INI):
             "path": os.path.abspath(model_path),
             "mmproj": os.path.abspath(mmproj) if mmproj else None,
             "size_bytes": size_bytes,
-            "ctx": ctx_by_id.get(name),
+            "ctx": None,
+            "max_ctx": ctx_by_id.get(name),
             "vision": bool(mmproj),
             "source": "jan-import",
         }
@@ -627,7 +628,8 @@ def _lmstudio_member_entry(member, root):
     entry = {
         "id": model_id, "name": member.get("display_name") or model_id,
         "format": fmt, "path": path, "mmproj": None,
-        "size_bytes": member.get("size_bytes"), "ctx": member.get("ctx"),
+        "size_bytes": member.get("size_bytes"), "ctx": None,
+        "max_ctx": member.get("max_ctx") or member.get("ctx"),
         "vision": member.get("vision") is True, "source": "lmstudio-import",
         "source_membership": "listed",
         "source_observation": MODEL_SOURCES.source_observation(member, root),
@@ -693,8 +695,10 @@ def reconcile_lmstudio(existing, scanned, inventory, protect=()):
         row = dict(scanned_row) if scanned_row else _lmstudio_member_entry(member, root)
         if scanned_row and member.get("display_name"):
             row["name"] = member["display_name"]
-        if scanned_row and isinstance(member.get("ctx"), int):
-            row["ctx"] = member["ctx"]
+        if member.get("max_ctx") or member.get("ctx"):
+            row["max_ctx"] = member.get("max_ctx") or member.get("ctx")
+        if scanned_row and scanned_row.get("ctx") is not None:
+            row["ctx"] = scanned_row["ctx"]
         if old:
             # Registry ids are public references used by pins and transcripts. A
             # manager display-name change must not silently retarget those references.
@@ -860,6 +864,8 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
     # id -> ctx from the current registry (any source), for the preservation rule.
     existing_ctx = {m.get("id"): m.get("ctx")
                     for m in existing if m.get("ctx") not in (None, "")}
+    existing_max_ctx = {m.get("id"): (m.get("max_ctx") or m.get("ctx"))
+                        for m in existing if (m.get("max_ctx") or m.get("ctx")) not in (None, "")}
     # id -> pinned TTS voice, same preservation rule as ctx and for the same reason:
     # a fresh scan reads FILES, and the chosen voice is a USER decision that lives
     # nowhere on disk. Without this, hitting RESCAN would silently un-pin the voice
@@ -889,8 +895,15 @@ def merge(existing, jan_entries, lmstudio_entries=None, local_entries=None,
         return dict(m, artifact_evidence=evidence) if same else m
     def fill_local(m):
         # Fill after collision resolution: the final id owns these user choices.
-        if m.get("ctx") in (None, "") and existing_ctx.get(m.get("id")) not in (None, ""):
-            m = dict(m, ctx=existing_ctx[m["id"]])
+        mid = m.get("id")
+        if m.get("max_ctx") in (None, "") and existing_max_ctx.get(mid) not in (None, ""):
+            m = dict(m, max_ctx=existing_max_ctx[mid])
+        if m.get("ctx") in (None, "") and existing_ctx.get(mid) not in (None, ""):
+            old_c = existing_ctx[mid]
+            if isinstance(old_c, int) and old_c <= 65536:
+                m = dict(m, ctx=old_c)
+            elif m.get("max_ctx") in (None, ""):
+                m = dict(m, max_ctx=old_c)
         return carry_evidence(_keep_user(m, existing_user))
     fresh_keys = {(str(m.get("source") or ""), str(m.get("id") or ""))
                   for m in list(jan_entries) + list(local_entries)
