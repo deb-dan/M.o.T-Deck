@@ -97,7 +97,7 @@ if [[ -f "$DEST/motdeck.yaml" ]]; then
 fi
 
 # ---------- 1. extract the seed → runtime root ----------
-progress 10 "Unpacking application payload into $DEST…"
+progress 10 "Unpacking application payload into ${DEST}…"
 mkdir -p "$DEST"
 # A failed first run can leave a usable manifest, credentials, and conversations.
 # macOS bsdtar's keep-old-files resumes missing seed files without replacing any

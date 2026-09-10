@@ -27,7 +27,8 @@ let memAudioFits = {};       // audio model id → verdict (the Audio tab's chip
 let fitMathOpen = false;     // detail pane: is the arithmetic disclosed?
 
 function advisorPrefs(){
-  return (memLedger && memLedger.advisor) || {mode:'advise', custom_headroom_gb:4,
+  const defaultHead = (memLedger && memLedger.total_bytes) ? Math.min(4, Math.max(1, Math.round((memLedger.total_bytes / MEM_GB) * 0.12 * 10) / 10)) : 4;
+  return (memLedger && memLedger.advisor) || {mode:'advise', custom_headroom_gb:defaultHead,
                                               remember_overrides:true};
 }
 

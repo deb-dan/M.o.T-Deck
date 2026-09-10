@@ -60,7 +60,7 @@ APP = ROOT / "bridge" / "appsrc.py"
 # The base ARGS block in start_component.sh's runner branch — passed with NO --help
 # gate, so each one is load-bearing on its own.
 UNGATED = (
-    "--no-context-shift", "--host", "--port", "--alias", "--ctx-size",
+    "--context-shift", "--host", "--port", "--alias", "--ctx-size",
     "--no-cont-batching", "--cache-ram", "--fit", "--model", "--parallel",
     "--mmproj",
 )

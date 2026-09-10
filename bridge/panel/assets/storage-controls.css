@@ -35,8 +35,26 @@
 #chat-menu { position:fixed; z-index:90; min-width:210px; padding:6px; }
 #chat-menu button { width:100%; display:block; text-align:left; background:transparent;
   border:0; padding:8px 10px; }
-#chat-menu button:hover { background:var(--line); }
+#storage-dlg .storage-row-actions { display:inline-flex; align-items:center; gap:8px; justify-self:end; }
+#storage-dlg .storage-idle-btn {
+  font-size:11px; padding:4px 10px; border-radius:6px; background:var(--surface, #1e1b2e);
+  color:var(--dim, #a39eb8); border:1px solid var(--line, #3b3652); cursor:pointer;
+  transition:all 0.15s ease; white-space:nowrap;
+}
+#storage-dlg .storage-idle-btn:hover {
+  color:var(--cream, #fff); border-color:var(--gold, #e0b06a);
+}
+#storage-dlg .storage-idle-btn[data-policy="awake"] {
+  color:var(--ok, #4ade80); border-color:rgba(74, 222, 128, 0.4);
+}
+#storage-dlg .storage-idle-btn[data-policy="sleep"] {
+  color:var(--warn, #f59e0b); border-color:rgba(245, 158, 11, 0.4);
+}
+#storage-dlg .storage-idle-btn[data-policy="auto"] {
+  color:var(--dim, #a39eb8); border-color:var(--line, #3b3652);
+}
 @media (max-width:720px) {
   #storage-dlg .storage-row { grid-template-columns:1fr; }
   #storage-dlg .storage-row button { justify-self:start; }
+  #storage-dlg .storage-row-actions { justify-self:start; flex-wrap:wrap; }
 }

@@ -576,7 +576,28 @@ def band(total: int, budget_bytes: int) -> str:
 
 
 # ── settings resolution ──────────────────────────────────────────────────────
-DEFAULT_CTX = 65536
+def default_ctx() -> int:
+    """Hardware-adaptive context default:
+    <= 16 GB RAM: 4096
+    <= 32 GB RAM: 16384
+    > 32 GB RAM: 65536
+    """
+    try:
+        from . import memory as _mem
+        sysv = _mem.system_view()
+        total_gb = (sysv.get("total_bytes") or 0) / (1024 ** 3)
+        if total_gb <= 0:
+            return 4096
+        if total_gb <= 16.5:
+            return 4096
+        if total_gb <= 32.5:
+            return 16384
+        return 65536
+    except Exception:
+        return 4096
+
+
+DEFAULT_CTX = default_ctx()
 
 
 MIN_CTX = 256
@@ -620,7 +641,7 @@ def settings_for(entry: dict, override: "dict | None" = None) -> dict:
         cap = 0
     asked = _clean_ctx(over.get("ctx"), cap)
     saved = _clean_ctx(load.get("ctx"), cap)
-    ctx = asked or saved or _clean_ctx(e.get("ctx"), cap) or DEFAULT_CTX
+    ctx = asked or saved or _clean_ctx(e.get("ctx"), cap) or default_ctx()
     # ⚠️ THE SAME CLASS AS U23, ONE FUNCTION LATER, and the adversarial pass caught it:
     # `?ctx=abc` on the live route raised ValueError here. `_clean_ctx` above already
     # answers junk with None — this line then re-read the RAW value with a bare int()
@@ -1011,7 +1032,7 @@ def remote_fit(hp: "dict | None", file_bytes: int, bud: dict,
                                   f"cannot price yet ({bad}). The download is "
                                   f"unaffected.")}}
     cap = int(_num(hp, "context_length"))
-    want = int(ctx or DEFAULT_CTX)
+    want = int(ctx or default_ctx())
     use = min(want, cap) if cap else want
     s = {"ctx": int(use), "kv_quant": "off", "flash_attn": "auto", "parallel": 1,
          "ctx_capped_at": (cap if (cap and want > cap) else 0),
@@ -1053,7 +1074,7 @@ def remote_mlx_fit(conf: "dict | None", total_bytes: int, bud: dict,
                          "line": "The hub did not list this repo's weight sizes, so "
                                  "there is no honest number to show."}}
     c = _mlx_language_config(conf if isinstance(conf, dict) else {})
-    use = int(ctx or DEFAULT_CTX)
+    use = int(ctx or default_ctx())
     cap = 0
     for k in ("max_position_embeddings", "max_seq_len"):
         try:

@@ -52,9 +52,9 @@ def value(root: Path, dotted: str, kind: str):
     if cur is None:
         return None
     if kind == "str":
-        if not isinstance(cur, str):
-            raise ValueError("expected a string")
-        return cur
+        if isinstance(cur, (str, int, float)) and not isinstance(cur, bool):
+            return str(cur)
+        raise ValueError("expected a string")
     if kind == "int":
         if isinstance(cur, bool) or not isinstance(cur, int):
             raise ValueError("expected an integer")

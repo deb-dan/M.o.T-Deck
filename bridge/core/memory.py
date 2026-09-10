@@ -310,9 +310,15 @@ def system_view() -> dict:
     wired = vm.get("pages wired down", 0)
     ratio = round(stored / occupied, 2) if occupied else None
     kernel_avail = int(total * level / 100.0) if (total and level is not None) else None
-    used_am = (vm.get("pages active", 0) + vm.get("pages inactive", 0)
-               + vm.get("pages speculative", 0) + wired + occupied
-               - vm.get("pages purgeable", 0) - vm.get("file-backed pages", 0))
+    if "anonymous pages" in vm:
+        anon = vm.get("anonymous pages", 0)
+        purgeable = vm.get("pages purgeable", 0)
+        app_mem = max(0, anon - purgeable)
+        used_am = app_mem + wired + occupied
+    else:
+        used_am = (vm.get("pages active", 0) + vm.get("pages inactive", 0)
+                   + vm.get("pages speculative", 0) + wired + occupied
+                   - vm.get("pages purgeable", 0) - vm.get("file-backed pages", 0))
     am_avail = max(0, total - used_am) if (total and used_am) else None
     cands = [v for v in (kernel_avail, am_avail) if v]
     avail = min(cands) if cands else None

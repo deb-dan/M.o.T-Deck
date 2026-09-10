@@ -160,11 +160,21 @@ def _model_size(models: list, mid: str) -> int:
 
 
 def _budget_bytes() -> int:
+    from bridge.core import memory as _mem
+    sysv = _mem.system_view()
+    total_gb = (sysv.get("total_bytes") or 0) / (1024 ** 3)
+    dynamic_default = min(48.0, round(total_gb * 0.70, 1)) if total_gb > 0 else 48.0
     mem = cfg().get("memory", {}) or {}
-    try:
-        gb = float(mem.get("budget_gb"))
-    except (TypeError, ValueError):
-        gb = 48.0
+    raw_gb = mem.get("budget_gb")
+    if raw_gb == "auto" or raw_gb is None:
+        gb = dynamic_default
+    else:
+        try:
+            gb = float(raw_gb)
+            if total_gb > 0 and gb > total_gb:
+                gb = dynamic_default
+        except (TypeError, ValueError):
+            gb = dynamic_default
     return int(gb * (1024 ** 3))
 
 

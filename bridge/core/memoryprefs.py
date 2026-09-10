@@ -18,10 +18,23 @@ import threading
 from .appctx import ROOT
 
 
+def default_headroom_gb() -> float:
+    """Hardware-adaptive headroom: ~12% of RAM, clamped between 1.0 and 4.0 GB."""
+    try:
+        from . import memory as _mem
+        sysv = _mem.system_view()
+        total_gb = (sysv.get("total_bytes") or 0) / (1024 ** 3)
+        if total_gb > 0:
+            return round(min(4.0, max(1.0, total_gb * 0.12)), 1)
+    except Exception:
+        pass
+    return 4.0
+
+
 STORE_NAME = "memory_advisor.json"
 STORE_VERSION = 1
 MODES = ("quiet", "advise", "early", "custom")
-DEFAULTS = {"mode": "advise", "custom_headroom_gb": 4.0,
+DEFAULTS = {"mode": "advise", "custom_headroom_gb": default_headroom_gb(),
             "remember_overrides": True, "overridden_models": []}
 MAX_BYTES = 16 * 1024
 MAX_OVERRIDES = 128

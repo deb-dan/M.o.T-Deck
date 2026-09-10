@@ -380,7 +380,7 @@ def test_the_models_view_keeps_them_but_sorts_them_last():
     """The Models view is the pane that owes the user the bad news AND the RESCAN
     button, so it must not hide these rows — only stop putting them first."""
     i = PANEL.index("function renderList(r)")
-    body = PANEL[i:i + 1600]
+    body = PANEL[i:i + 2400]
     assert "sort(" in body and "a.file === 'gone'" in body
     assert "for (const m of rows)" in body, "the sorted list is what is rendered"
     # the chip is drawn from EITHER the live debounce or the persisted flag

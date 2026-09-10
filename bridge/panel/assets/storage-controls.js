@@ -145,7 +145,44 @@
         const action = el('button', row.installed ? 'danger' : '', row.installed ? 'Uninstall…' : 'Not installed');
         action.disabled = !row.installed;
         action.onclick = () => runtimePreview(row.id);
-        line.append(action); group.append(line);
+        const actions = el('div', 'storage-row-actions');
+        if (row.installed) {
+          const idleBtn = el('button', 'storage-idle-btn');
+          const policies = ['auto', 'awake', 'sleep'];
+          const labels = {
+            'auto': 'Idle: Auto',
+            'awake': 'Idle: Always Awake',
+            'sleep': 'Idle: Sleep when Hidden'
+          };
+          const titles = {
+            'auto': 'Auto — sleeps when hidden for > 15 minutes or memory pressure is elevated',
+            'awake': 'Always Awake — stays resident in background; never suspended',
+            'sleep': 'Sleep when Hidden — frees webview memory as soon as you switch away'
+          };
+          let curPolicy = row.idle_policy || (data.idle_prefs && data.idle_prefs[row.id]) || 'auto';
+          const updateBtn = (pol) => {
+            curPolicy = pol;
+            idleBtn.textContent = labels[pol] || 'Idle: Auto';
+            idleBtn.title = titles[pol] || '';
+            idleBtn.dataset.policy = pol;
+          };
+          updateBtn(curPolicy);
+          idleBtn.onclick = async (e) => {
+            e.stopPropagation();
+            const nextIndex = (policies.indexOf(curPolicy) + 1) % policies.length;
+            const nextPol = policies[nextIndex];
+            updateBtn(nextPol);
+            try {
+              await api('/api/storage/idle_prefs', { id: row.id, policy: nextPol });
+            } catch (err) {
+              console.error('Failed to update idle preference', err);
+            }
+          };
+          actions.append(idleBtn);
+        }
+        actions.append(action);
+        line.append(actions);
+        group.append(line);
       }
       const sections = [group, optionalView(optional, current), resetView(data.reset)];
       if ((optional.job || {}).running || (optional.job || {}).receipts?.length) sections.splice(2, 0, jobView(optional.job));

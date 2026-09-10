@@ -440,9 +440,28 @@ case "$NAME" in
     esac
     # adapter is llamacpp | mlx | auto — all consult OUR registry. Resolve the active
     # model's path / mmproj / ctx / format / vision FIRST, then pick the engine.
+    SYS_MEM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo 17179869184)
+    SYS_MEM_GB=$(( SYS_MEM_BYTES / 1073741824 ))
+    if [[ "$SYS_MEM_GB" -le 16 ]]; then
+      ADAPTIVE_DEFAULT_CTX=4096
+    elif [[ "$SYS_MEM_GB" -le 32 ]]; then
+      ADAPTIVE_DEFAULT_CTX=16384
+    else
+      ADAPTIVE_DEFAULT_CTX=65536
+    fi
     R_PORT=$(_manifest_value runner.port int)
     R_KEY=$(_manifest_value runner.api_key str)
-    R_CTX=$(_manifest_value runner.ctx_size int)
+    R_CTX_RAW=$(_manifest_value runner.ctx_size int 2>/dev/null || _manifest_value runner.ctx_size str 2>/dev/null || true)
+    if [[ "$R_CTX_RAW" =~ ^[0-9]+$ ]]; then
+      # If legacy 65536 from default template on <=16GB Mac, scale adaptively unless explicitly chosen
+      if [[ "$SYS_MEM_GB" -le 16 && "$R_CTX_RAW" -eq 65536 ]]; then
+        R_CTX="$ADAPTIVE_DEFAULT_CTX"
+      else
+        R_CTX="$R_CTX_RAW"
+      fi
+    else
+      R_CTX="$ADAPTIVE_DEFAULT_CTX"
+    fi
     R_MODEL=$(_manifest_value runner.model str)
     R_BIN=$(_manifest_value runner.binary str)
     _require_secret "$R_KEY" runner.api_key || exit 1
@@ -619,9 +638,14 @@ PYRESOLVE
     "$BIN" --help > data/llama-server.help.txt 2>&1 || true
     # Build argv as an ARRAY — paths contain spaces ("Application Support"); unquoted
     # expansion would split them. (Fable QA fix on the builder's draft.)
-    ARGS=(--no-context-shift --host 127.0.0.1 --port "$R_PORT" --alias "$R_MODEL"
+    ARGS=(--context-shift --host 127.0.0.1 --port "$R_PORT" --alias "$R_MODEL"
           --ctx-size "$CTX" --no-cont-batching --cache-ram -1 --fit off
           --model "$MODEL_PATH" --parallel 1)
+    L_CS=$(_lv context_shift)
+    if [[ "$L_CS" == "off" || "$L_CS" == "no" ]] \
+       && grep -q -- "--no-context-shift" data/llama-server.help.txt; then
+      ARGS=("${ARGS[@]/--context-shift/--no-context-shift}")
+    fi
     # S5 — llama.cpp emits its exact model/KV/compute/output buffer allocations only
     # at trace level.  Keep the exact child as `$!` (no parser wrapper or pipe) and let
     # the bridge parse the latest completed startup segment from runner.log.  A live
@@ -743,6 +767,12 @@ PYRESOLVE
       ARGS+=(--flash-attn "$L_FA")
     fi
     L_KV=$(_lv kv_quant)
+    if [[ -z "$L_KV" ]]; then
+      # Adaptive default: on <=16GB machines or when CTX > 8192, default to q8_0
+      if [[ "$SYS_MEM_GB" -le 16 || "$CTX" -gt 8192 ]]; then
+        L_KV="q8_0"
+      fi
+    fi
     if [[ -n "$L_KV" && "$L_KV" != "off" ]] \
        && grep -q -- "--cache-type-k" data/llama-server.help.txt; then
       ARGS+=(--cache-type-k "$L_KV" --cache-type-v "$L_KV")

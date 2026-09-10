@@ -503,7 +503,7 @@ runner:
   endpoint: http://127.0.0.1:6767/v1
   api_key:                   # generated into data/.env.local on first bootstrap
   model: gemma-4-31B-it-uncensored-biproj-q4_k_m
-  ctx_size: 65536            # >=64K (Hermes floor); desktop preset may raise it
+  ctx_size: auto             # auto = hardware-adaptive (4096 on <=16GB, 16384 on <=32GB, 65536 on >32GB); number overrides
   spec_mtp: auto             # MTP speculative decoding: auto = detect from the model id OR its
                              # source repo (e.g. unsloth/…-MTP-GGUF, persisted on download) |
                              # on = force (use for an MTP model acquired before repo tracking) |
@@ -557,7 +557,7 @@ hermes:
 # for the OS + apps; enforced (409) on model switch and aux start. Footprint is
 # approximated by weight-file size (KV-cache/overhead absorbed by the headroom).
 memory:
-  budget_gb: 48               # model RAM budget (of 64GB — leave headroom for apps)
+  budget_gb: auto             # auto = dynamic scale (~70% of RAM, up to 48GB); number overrides
 
 bridge:
   port: 8700                  # control panel + API

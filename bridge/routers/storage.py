@@ -274,15 +274,91 @@ def _refusal(exc: Exception, status: int = 409) -> JSONResponse:
     return JSONResponse({"ok": False, "error": str(exc)}, status_code=status)
 
 
+IDLE_PREFS_FILE = "idle_prefs.json"
+VALID_IDLE_POLICIES = {"auto", "awake", "sleep"}
+_IDLE_LOCK = threading.RLock()
+
+
+def _read_idle_prefs(root: Path = ROOT) -> dict[str, str]:
+    path = Path(root) / "data" / IDLE_PREFS_FILE
+    with _IDLE_LOCK:
+        try:
+            if not path.is_file():
+                return {}
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                raw = data.get("prefs") if "prefs" in data else data
+                if isinstance(raw, dict):
+                    return {str(k): str(v) for k, v in raw.items() if str(v) in VALID_IDLE_POLICIES}
+        except Exception:
+            pass
+        return {}
+
+
+def _write_idle_prefs(patch: dict, root: Path = ROOT) -> dict[str, str]:
+    with _IDLE_LOCK:
+        current = _read_idle_prefs(root)
+        for k, v in patch.items():
+            k_clean = str(k).strip().lower()
+            v_clean = str(v).strip().lower()
+            if v_clean in VALID_IDLE_POLICIES:
+                current[k_clean] = v_clean
+        path = Path(root) / "data" / IDLE_PREFS_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".idle-prefs-", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump({"version": 1, "prefs": current}, fh, indent=2)
+                fh.write("\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        return current
+
+
+@app.get("/api/storage/idle_prefs")
+def get_idle_prefs() -> JSONResponse:
+    return JSONResponse({"ok": True, "prefs": _read_idle_prefs(ROOT)})
+
+
+@app.post("/api/storage/idle_prefs")
+async def update_idle_prefs(req: Request) -> JSONResponse:
+    try:
+        body = await req.json()
+        if not isinstance(body, dict):
+            return JSONResponse({"ok": False, "error": "payload must be an object"}, status_code=400)
+        patch = {}
+        if "id" in body and "policy" in body:
+            patch[str(body["id"])] = str(body["policy"])
+        elif "prefs" in body and isinstance(body["prefs"], dict):
+            patch = body["prefs"]
+        else:
+            patch = body
+        updated = _write_idle_prefs(patch, ROOT)
+        publish("storage", operation="idle_prefs", prefs=updated)
+        return JSONResponse({"ok": True, "prefs": updated})
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
 @app.get("/api/storage/runtimes")
 def storage_runtimes() -> JSONResponse:
     rows = []
+    idle_prefs = _read_idle_prefs(ROOT)
     for key, spec in RUNTIME_SPECS.items():
         rows.append({"id": key, "label": spec.label,
                      "installed": runtime_installed(ROOT, key),
+                     "idle_policy": idle_prefs.get(key, "auto"),
                      "preserve": list(spec.preserve), "note": spec.note})
     return JSONResponse({"ok": True, "runtimes": rows, "count": len(rows),
-                         "reset": _reset_capability()})
+                         "reset": _reset_capability(),
+                         "idle_prefs": idle_prefs})
 
 
 @app.post("/api/storage/runtime/plan")
