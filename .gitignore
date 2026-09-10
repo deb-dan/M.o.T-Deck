@@ -18,3 +18,4 @@ vendor/aider/
 # Phase 2 artifact-renderer libs — fetched at build/install (fetch_vendor_assets.sh),
 # bundled into the FAT seed. A runtime asset, not source.
 bridge/panel/assets/vendor/
+Public Sept September motdeck/
