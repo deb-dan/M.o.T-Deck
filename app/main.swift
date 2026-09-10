@@ -700,6 +700,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     var hermesLoaded: Bool { return loadedTabs.contains(hermesId) }
     var failedLoads = Set<ObjectIdentifier>()   // webviews whose last load failed → retry on select/⌘R
     var crashedOnce = Set<ObjectIdentifier>()   // webviews whose content process died since their last good load
+    var tabParkedAt: [String: Date] = [:]
+    var idleCheckTimer: Timer?
     // Staleness auto-reload (Hermes tab only): WebKit tears down a BACKGROUNDED
     // webview's sockets, and Hermes's dashboard misclassifies the resulting
     // close-without-status (WS 1005) as a terminal "session ended" and refuses to
@@ -1769,6 +1771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // asking, cheaply, so a layout saved in the panel reaches the strip on its own.
         updateOverflowButton()
         startNavPoll()
+        startIdleMonitor()
     }
 
     // ── §G-phase2 portable first-run ──
@@ -2768,6 +2771,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             return ev
         }
     }
+
+    // ── WebKit Idle Tab Sleeping ──
+    // Automatically releases WebKit WebContent processes for off-screen, inactive tabs
+    // based on the per-runtime idle policy in data/idle_prefs.json (auto, awake, sleep).
+    func startIdleMonitor() {
+        guard idleCheckTimer == nil else { return }
+        idleCheckTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+            self?.checkIdleTabs()
+        }
+    }
+
+    func readIdlePrefs() -> [String: String] {
+        let prefsFile = URL(fileURLWithPath: resolvedRoot).appendingPathComponent("data/idle_prefs.json")
+        guard let data = try? Data(contentsOf: prefsFile),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        var out: [String: String] = [:]
+        if let tabsObj = json["tabs"] as? [String: Any] {
+            for (k, v) in tabsObj {
+                if let s = v as? String { out[k] = s }
+            }
+        }
+        return out
+    }
+
+    func checkIdleTabs() {
+        let now = Date()
+        let prefs = readIdlePrefs()
+        let isLowMemHost = ProcessInfo.processInfo.physicalMemory <= 17_179_869_184 // <= 16GB
+
+        for (id, wv) in wvById {
+            guard id != panelId else { continue }
+            if tabs.indices.contains(currentTab) && tabs[currentTab].id == id { continue }
+            if splitOn && tabs.indices.contains(rightTab) && tabs[rightTab].id == id { continue }
+            guard wv.superview === park else { continue }
+
+            let policy = prefs[id] ?? "auto"
+            if policy == "awake" { continue }
+
+            let threshold: TimeInterval = (policy == "sleep") ? 30.0 : (isLowMemHost ? 300.0 : 900.0)
+            let parkedAt = tabParkedAt[id] ?? now
+            guard now.timeIntervalSince(parkedAt) >= threshold else { continue }
+
+            let js = """
+            (function() {
+                try {
+                    var mediaPlaying = Array.from(document.querySelectorAll('audio, video')).some(function(el) {
+                        return !el.paused && !el.ended && el.currentTime > 0;
+                    });
+                    if (mediaPlaying) return "media";
+                    var hasDraft = Array.from(document.querySelectorAll('textarea, input[type="text"]')).some(function(el) {
+                        return el.value && el.value.trim().length > 0;
+                    });
+                    if (hasDraft) return "draft";
+                } catch(e) {}
+                return "ok";
+            })()
+            """
+            wv.evaluateJavaScript(js) { [weak self, weak wv] res, _ in
+                guard let self = self, let wv = wv else { return }
+                guard wv.superview === self.park else { return }
+                if tabs.indices.contains(self.currentTab) && tabs[self.currentTab].id == id { return }
+                if self.splitOn && tabs.indices.contains(self.rightTab) && tabs[self.rightTab].id == id { return }
+
+                let state = (res as? String) ?? "ok"
+                if state == "media" {
+                    self.tabParkedAt[id] = Date()
+                    return
+                }
+                if state == "draft" && policy == "auto" {
+                    self.tabParkedAt[id] = Date()
+                    return
+                }
+
+                self.putTabToSleep(id: id)
+            }
+        }
+    }
+
+    func putTabToSleep(id: String) {
+        guard id != panelId else { return }
+        if tabs.indices.contains(currentTab) && tabs[currentTab].id == id { return }
+        if splitOn && tabs.indices.contains(rightTab) && tabs[rightTab].id == id { return }
+        guard let wv = wvById[id] else { return }
+        guard wv.superview === park else { return }
+
+        slog("[idle] Sleeping background tab: \(id)")
+        wv.stopLoading()
+        wv.load(URLRequest(url: URL(string: "about:blank")!))
+        loadedTabs.remove(id)
+        failedLoads.remove(ObjectIdentifier(wv))
+        crashedOnce.remove(ObjectIdentifier(wv))
+        tabParkedAt.removeValue(forKey: id)
+    }
     @objc func overflowPick(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         touchWindow(id)        // …the swap sample asked for: in at the front, oldest out
@@ -2993,7 +3091,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // pane, so the geometric halves of the content area are what "left" and "right" mean.
     func paneTarget(for wp: NSPoint) -> Int? {
         let c = contentRectInWindow()
-        guard c.contains(wp) else { return nil }
+        guard c.insetBy(dx: -4, dy: -6).contains(wp) else { return nil }
         if splitOn, rightPane.superview === splitView {
             if rightPane.bounds.contains(rightPane.convert(wp, from: nil)) { return 1 }
             if leftPane.bounds.contains(leftPane.convert(wp, from: nil)) { return 0 }
@@ -3174,6 +3272,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             maybeReloadStaleHermes(tab)
             setSplit(true, persist: true)
             setFocus(1)
+            retryIfFailed(webViewFor(tab))
+            slog("drag -> opened split: left=\(currentTab) right=\(rightTab)")
+            return
+        }
+        if p == 0 && !splitOn && tab != currentTab {
+            rightTab = currentTab
+            currentTab = tab
+            persistTabs()
+            ensureLoaded(currentTab)
+            ensureLoaded(rightTab)
+            maybeReloadStaleHermes(tab)
+            setSplit(true, persist: true)
+            setFocus(0)
             retryIfFailed(webViewFor(tab))
             slog("drag -> opened split: left=\(currentTab) right=\(rightTab)")
             return
@@ -3548,13 +3659,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
         // Park every primary neither pane is showing (ghosts are never parked — they are
         // destroyed instead, above).
+        let now = Date()
         for wv in allWebViews() where wv !== leftWV && wv !== rightWV {
             attach(wv, to: park)     // park is hidden → same effect as the old isHidden
+            for (id, val) in wvById where val === wv {
+                if tabParkedAt[id] == nil {
+                    tabParkedAt[id] = now
+                }
+            }
         }
         attach(leftWV, to: leftHost)
+        for (id, val) in wvById where val === leftWV {
+            tabParkedAt.removeValue(forKey: id)
+        }
         if let r = rightWV {
             if rightPlaceholder.superview != nil { rightPlaceholder.removeFromSuperview() }
             attach(r, to: rightHost)
+            for (id, val) in wvById where val === r {
+                tabParkedAt.removeValue(forKey: id)
+            }
         } else if splitOn {
             attach(rightPlaceholder, to: rightHost)
         }
@@ -4136,6 +4259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        idleCheckTimer?.invalidate()
         if spawnedBridge { bridgeProcess?.terminate() }   // only stop what we started
     }
 

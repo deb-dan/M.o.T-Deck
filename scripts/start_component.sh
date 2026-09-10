@@ -994,8 +994,13 @@ PYRESOLVE
     R_ENDPOINT=$(_manifest_value runner.endpoint str)
     R_KEY=$(_manifest_value runner.api_key str)
     _require_secret "$R_KEY" runner.api_key || exit 1
-    [[ -n "$R_ENDPOINT" ]] || R_ENDPOINT="http://127.0.0.1:6767/v1"
     ( cd vendor/odysseus && JAN_BASE_URL="$R_ENDPOINT" JAN_API_KEY="$R_KEY" python "$ROOT/scripts/seed_odysseus_jan.py" ) || true
+    # Ensure generated admin credentials match auth.json on start/restart
+    ODY_USER="$("$ROOT/data/bridge-venv/bin/python" "$ROOT/scripts/local_secrets.py" get "$ROOT" MOT_DECK_ODYSSEUS_ADMIN_USER 2>/dev/null || true)"
+    ODY_PASSWORD="$("$ROOT/data/bridge-venv/bin/python" "$ROOT/scripts/local_secrets.py" get "$ROOT" MOT_DECK_ODYSSEUS_ADMIN_PASSWORD 2>/dev/null || true)"
+    if [[ -n "$ODY_USER" && -n "$ODY_PASSWORD" ]]; then
+      ( cd vendor/odysseus && ODYSSEUS_ADMIN_USER="$ODY_USER" ODYSSEUS_ADMIN_PASSWORD="$ODY_PASSWORD" python setup.py ) >>"$ROOT/data/logs/odysseus_setup.log" 2>&1 || true
+    fi
     # Start server. cd applies to the whole subshell (Odysseus expects cwd=vendor/odysseus);
     # pid + log use ABSOLUTE paths so the earlier '../../ from wrong cwd' bug can't recur.
     (

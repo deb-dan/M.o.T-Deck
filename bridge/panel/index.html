@@ -7627,14 +7627,23 @@ async function initChat() {
   }
   try {
     const list = await loadSessions();
-    if (list === null) { stamp.textContent = 'ODYSSEUS OFFLINE — START IT FROM MOT DECK'; return; }
+    if (list === null) {
+      stamp.textContent = 'ODYSSEUS OFFLINE — START IT FROM MOT DECK';
+      if (chatPane.mode === 'chat' && !chatPane.sid) chatPane.sid = 'local-chat';
+      loadChatModels();
+      return;
+    }
     const want = localStorage.getItem('motdeck-chat-sid');
     const pick = (want && list.find(s => s.id === want)) || list[0];
     if (pick) await selectSession(pick.id);
     else await newSession();
     refreshBrowse();
     loadChatModels();
-  } catch { stamp.textContent = 'BRIDGE PROXY UNAVAILABLE'; }
+  } catch {
+    stamp.textContent = 'BRIDGE PROXY UNAVAILABLE';
+    if (chatPane.mode === 'chat' && !chatPane.sid) chatPane.sid = 'local-chat';
+    loadChatModels();
+  }
 }
 
 /* ---------- vision capability + image attach (ALL THREE LANES) ----------
@@ -13665,9 +13674,14 @@ async function sendChat() {
     if (chatPane.mode === 'hermes' || (chatPane.curTurn && chatPane.curTurn.lane === 'hermes')) hermesStop('panel stop');
     else stopTurnNow('panel stop');
     return;
+  if (chatPane.mode !== 'hermes' && !chatPane.sid) {
+    if (chatPane.mode === 'chat') {
+      chatPane.sid = 'local-chat';
+    } else {
+      attachNote('Odysseus is offline — start it from Mission Control to use Agent mode');
+      return;
+    }
   }
-  if (chatPane.mode !== 'hermes' && !chatPane.sid) return;
-  const inp = document.getElementById('chat-input');
   const text = inp.value.trim();
   if (!text){
     // ADVERSARIAL PASS (2026-08-28): attach an image, type nothing, press Send —

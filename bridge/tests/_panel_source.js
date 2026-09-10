@@ -9,7 +9,11 @@ function extractFunction(source, name) {
   if (!match) throw new Error('missing function: ' + name);
   for (let end = source.indexOf('}', match.index); end >= 0; end = source.indexOf('}', end + 1)) {
     const candidate = source.slice(match.index, end + 1);
-    try { new vm.Script(candidate); return candidate; } catch (error) {
+    try {
+      new vm.Script(candidate);
+      new Function(candidate);
+      return candidate;
+    } catch (error) {
       if (!(error instanceof SyntaxError)) throw error;
     }
   }

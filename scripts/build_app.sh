@@ -269,6 +269,10 @@ if [[ $FAT -eq 1 ]]; then
     --exclude='.git' --exclude='.gitmodules' --exclude='node_modules' \
     --exclude='bridge/tests' --exclude='bridge/contract_tests' \
     --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' \
+    --exclude='vendor/*/data' --exclude='vendor/**/data' \
+    --exclude='vendor/*/logs' --exclude='vendor/**/logs' \
+    --exclude='vendor/**/.venv' --exclude='vendor/**/venv' \
+    --exclude='vendor/**/*.db' --exclude='vendor/**/*.sqlite*' \
     vendor scripts bridge app skills policies motdeck.yaml VERSION "$STAGE/" 2>/dev/null || {
       echo "ERROR (fat): rsync of the seed failed."; exit 1; }
   # ⚠️ VERSION is in that list on purpose (2026-09-02): the seed shipped WITHOUT it for

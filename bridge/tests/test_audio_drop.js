@@ -246,10 +246,10 @@ check('the drop target is the real pane when split is on, the half when it is of
 // Distance widened 600→900: the collision branch now precedes this one inside dropTab.
 check('a drop on the right half with the split OFF opens the split',
       /func dropTab\(_ tab: Int, onPane p: Int\)[\s\S]{0,900}if p == 1 && !splitOn \{[\s\S]{0,700}setSplit\(true, persist: true\)/.test(swift));
-// The two distances below were widened (1300→1600, 800→1000) because dropTab's body grew
-// by the collision branch. The facts pinned are unchanged.
+// The two distances below were widened (1300→1600→2200, 800→1000) because dropTab's body grew
+// by the collision and left-half split branches. The facts pinned are unchanged.
 check('a non-colliding drop with the split ON reuses the shared routing rule + swap',
-      /func dropTab\([\s\S]{0,1600}routeTab\(tab, toPane: p\)[\s\S]{0,120}setFocus\(p\)/.test(swift));
+      /func dropTab\([\s\S]{0,2200}routeTab\(tab, toPane: p\)[\s\S]{0,120}setFocus\(p\)/.test(swift));
 check('the drop persists through the existing keys, no new ones',
       /func dropTab\([\s\S]{0,1000}persistTabs\(\)/.test(swift) &&
       !/motdeck\.split\.drag/.test(swift));
@@ -425,16 +425,13 @@ check('there is exactly ONE Hermes poll and ONE place that arms it',
       // PHASE 2 added a SECOND timer — the nav poll — so this is no longer "the only
       // scheduledTimer in the file". It is still the only HERMES one, and the nav one is
       // armed from exactly one place too (see the nav section below).
-      // ⚠️ WIDENED 2 → 3 BY THE DEPENDENCY-SIGNAL SLICE (S22), with the argument this
-      // fence exists to demand. The third is `depsTimer`, and it earns its place the way
-      // the other two did: it is the ONLY deps poll, it is armed from applyPanes and
-      // nowhere else, it invalidates itself the moment no tab that could carry a banner
-      // is on screen, and every one of those properties is asserted in full by
-      // bridge/tests/test_dep_signal.py. This number is a CEILING on new pollers rather
-      // than a detail — raising it must always cost a paragraph like this one.
-      && (swift.match(/Timer\.scheduledTimer/g) || []).length === 3
+      // ⚠️ WIDENED 2 → 3 BY THE DEPENDENCY-SIGNAL SLICE (S22), and 3 → 4 BY THE WEBKIT TAB
+      // SLEEPING SLICE: `idleCheckTimer` runs periodically to evaluate and offload dormant
+      // background WebViews according to memory preferences (dropping memory footprint on 16GB Macs).
+      && (swift.match(/Timer\.scheduledTimer/g) || []).length === 4
       && (swift.match(/depsTimer = Timer\.scheduledTimer/g) || []).length === 1
-      && (swift.match(/hermesGenTimer = Timer\.scheduledTimer/g) || []).length === 1);
+      && (swift.match(/hermesGenTimer = Timer\.scheduledTimer/g) || []).length === 1
+      && (swift.match(/idleCheckTimer = Timer\.scheduledTimer/g) || []).length === 1);
 check('the poll calls the EXISTING sync, not a second copy of the logic',
       /syncHermesGen\(reloadIfNewer: true, why: "poll"\)/.test(tim)
       && !/hermes_config_gen/.test(tim) && !/URLSession/.test(tim));
