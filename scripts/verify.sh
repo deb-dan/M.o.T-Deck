@@ -61,7 +61,7 @@ echo "[verify] repository: ${REPO_SUITE}"
 # is CANNOT RUN rather than a silent partial pass (U49's original failure mode).
 SNAP_NODE="${HOME}/Library/Application Support/MOT Deck/data/node/bin/node"
 NODE=""
-for _n in "${ROOT}/data/node/bin/node" "$SNAP_NODE" node; do
+for _n in "${ROOT}/data/node/bin/node" "$SNAP_NODE" /opt/homebrew/bin/node node /opt/homebrew/bin/bun bun; do
   if "$_n" --version >/dev/null 2>&1; then NODE="$_n"; break; fi
 done
 if [[ -z "$NODE" ]]; then

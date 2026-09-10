@@ -31,6 +31,27 @@ esac; shift; done
 command -v swiftc >/dev/null || {
   echo "swiftc not found. Install Command Line Tools first:  xcode-select --install"; exit 1; }
 
+# ── PRE-FLIGHT VERIFICATION GATES ──────────────────────────────────────────
+# Refuse to compile or package if any web asset in bridge/panel has a syntax error
+# or if any UI contract fails. This structurally prevents shipping a blank page.
+echo "[motdeck] running pre-flight web asset verification..."
+JS_RUNNER=""
+for _r in /opt/homebrew/bin/bun bun /opt/homebrew/bin/node node; do
+  if command -v "$_r" >/dev/null 2>&1; then JS_RUNNER="$_r"; break; fi
+done
+if [[ -n "$JS_RUNNER" && -f "bridge/tests/test_panel_syntax_gate.js" ]]; then
+  "$JS_RUNNER" bridge/tests/test_panel_syntax_gate.js || {
+    echo "ERROR: Web asset syntax verification failed! Refusing to build." >&2
+    exit 1
+  }
+  if [[ -f "bridge/tests/test_audio_drop.js" ]]; then
+    "$JS_RUNNER" bridge/tests/test_audio_drop.js || {
+      echo "ERROR: test_audio_drop.js contract verification failed! Refusing to build." >&2
+      exit 1
+    }
+  fi
+fi
+
 if [[ "$CUSTOM_OUT" -eq 1 ]]; then
   mkdir -p "$(dirname "$OUT")"
   mkdir "$OUT" || {

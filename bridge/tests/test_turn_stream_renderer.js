@@ -178,7 +178,7 @@ async function main(){
     await window.MOTDeckTurnStream.consume(utf8Response,
       {turn:{lane:'chat',lastSeq:0,timer:null,done:false}, holder:new El('article'),
        body:new El('div'), think:new El('div')});
-  } catch (error) { utf8Failed = /encoding|encoded data|utf-8/i.test(error.message); }
+  } catch (error) { utf8Failed = error instanceof TypeError || /encoding|encoded data|utf-8|byte sequence|invalid byte/i.test(error.message); }
   if (!utf8Failed) throw new Error('incomplete UTF-8 was silently accepted');
   console.log('OK — M.O.T-supported Agent event grammar survives the shared live/replay renderer');
 }

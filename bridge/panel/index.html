@@ -13674,6 +13674,7 @@ async function sendChat() {
     if (chatPane.mode === 'hermes' || (chatPane.curTurn && chatPane.curTurn.lane === 'hermes')) hermesStop('panel stop');
     else stopTurnNow('panel stop');
     return;
+  }
   if (chatPane.mode !== 'hermes' && !chatPane.sid) {
     if (chatPane.mode === 'chat') {
       chatPane.sid = 'local-chat';
@@ -13682,6 +13683,7 @@ async function sendChat() {
       return;
     }
   }
+  const inp = document.getElementById('chat-input');
   const text = inp.value.trim();
   if (!text){
     // ADVERSARIAL PASS (2026-08-28): attach an image, type nothing, press Send —
